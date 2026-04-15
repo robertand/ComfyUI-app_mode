@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ComfyUI Generator</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: 'Segoe UI', 'Roboto', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+            font-weight: 300;
+            background: linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%);
+            min-height: 100vh;
+            color: #e8e8e8;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            position: relative;
+        }
+        
+        .workflow-selector {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        .workflow-dropdown {
+            background: #2c3e66;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            cursor: pointer;
+            font-weight: 400;
+            min-width: 200px;
+        }
+        
+        .workflow-dropdown:hover {
+            background: #3a5a8c;
+        }
+        
+        h1 {
+            font-size: 2rem;
+            font-weight: 300;
+            background: linear-gradient(90deg, #5a7fc2, #2c4c8c);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .status {
+            text-align: center;
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 6px;
+            background: rgba(18, 22, 32, 0.8);
+        }
+        
+        .status-online { color: #4a9eff; }
+        .status-offline { color: #ff6b6b; }
+        
+        .card {
+            background: rgba(18, 22, 32, 0.85);
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(52, 109, 219, 0.15);
+        }
+        
+        .card h2 { 
+            color: #4a9eff; 
+            margin-bottom: 20px; 
+            font-size: 1.2rem; 
+            font-weight: 400;
+        }
+        
+        .card h3 { 
+            color: #6c8fc7; 
+            margin-bottom: 15px; 
+            font-size: 0.95rem; 
+            font-weight: 400;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .input-container {
+            margin-bottom: 25px;
+            border: 1px solid rgba(74, 158, 255, 0.2);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .input-header {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 12px 15px;
+            border-bottom: 1px solid rgba(74, 158, 255, 0.2);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .input-header .name { 
+            flex: 1; 
+            font-weight: 400; 
+            font-size: 1rem;
+        }
+        
+        .upload-area {
+            border: 1px dashed #3a4a6a;
+            border-radius: 6px;
+            padding: 20px;
+            text-align: center;
+            cursor: pointer;
+            margin: 15px;
+            background: rgba(0, 0, 0, 0.2);
+            transition: all 0.2s;
+        }
+        
+        .upload-area:hover { 
+            border-color: #4a9eff; 
+            background: rgba(74, 158, 255, 0.08);
+        }
+        
+        .upload-area.dragover { 
+            border-color: #4a9eff; 
+            background: rgba(74, 158, 255, 0.15);
+        }
+        
+        .image-preview {
+            margin: 15px;
+            text-align: center;
+        }
+        
+        .image-preview img,
+        .image-preview video {
+            max-width: 100%;
+            max-height: 150px;
+            border-radius: 6px;
+            object-fit: cover;
+        }
+        
+        .preset-section {
+            margin: 15px;
+            padding: 12px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 6px;
+        }
+        
+        .preset-title {
+            font-size: 0.75rem;
+            color: #8a9ec0;
+            margin-bottom: 8px;
+        }
+        
+        .preset-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        
+        .preset-thumb {
+            width: 50px;
+            height: 50px;
+            border-radius: 6px;
+            cursor: pointer;
+            object-fit: cover;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+            background: #0a0e16;
+        }
+        
+        .preset-thumb:hover {
+            border-color: #4a9eff;
+            transform: scale(1.05);
+        }
+        
+        .input-group {
+            margin-bottom: 15px;
+        }
+        
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 0.8rem;
+            color: #9aaec9;
+        }
+        
+        .seed-control {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .seed-control input[type="number"] {
+            flex: 2;
+            min-width: 150px;
+        }
+        
+        .seed-control .random-btn {
+            background: #3a6cb0;
+            padding: 10px 15px;
+            width: auto;
+            white-space: nowrap;
+        }
+        
+        .seed-control .auto-random-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        
+        .seed-control .auto-random-checkbox input {
+            width: auto;
+            margin: 0;
+            cursor: pointer;
+        }
+        
+        .seed-control .auto-random-checkbox label {
+            margin: 0;
+            cursor: pointer;
+            font-size: 0.8rem;
+            color: #8abaff;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.4);
+            border: 1px solid #2a3a55;
+            border-radius: 6px;
+            color: #e8e8e8;
+            font-size: 14px;
+            font-weight: 300;
+        }
+        
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #4a9eff;
+            background: rgba(0, 0, 0, 0.6);
+        }
+        
+        textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background: #2c5a9e;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-size: 14px;
+            font-weight: 400;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        button:hover:not(:disabled) {
+            background: #3a6cb0;
+            transform: translateY(-1px);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .generate-btn {
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            margin-top: 20px;
+            background: #2c5a9e;
+        }
+        
+        .results {
+            background: rgba(18, 22, 32, 0.85);
+            border-radius: 8px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        
+        .results h2 {
+            color: #4a9eff;
+            margin-bottom: 20px;
+            font-weight: 400;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 2px solid #2a3a55;
+            border-top-color: #4a9eff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        
+        .image-card {
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 6px;
+            overflow: hidden;
+            border: 1px solid rgba(74, 158, 255, 0.2);
+        }
+        
+        .image-card img,
+        .image-card video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        .image-card .caption {
+            padding: 8px;
+            text-align: center;
+            font-size: 0.75rem;
+            color: #8a9ec0;
+        }
+        
+        .error {
+            background: rgba(255, 107, 107, 0.1);
+            border: 1px solid #ff6b6b;
+            padding: 12px;
+            border-radius: 6px;
+            color: #ff9e9e;
+        }
+        
+        .success {
+            background: rgba(74, 158, 255, 0.1);
+            border: 1px solid #4a9eff;
+            padding: 12px;
+            border-radius: 6px;
+            color: #8abaff;
+            margin-bottom: 15px;
+        }
+        
+        .workflow-info {
+            background: rgba(74, 158, 255, 0.1);
+            padding: 10px 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 0.85rem;
+            text-align: center;
+        }
+        
+        @media (max-width: 768px) {
+            .workflow-selector {
+                position: static;
+                text-align: center;
+                margin-bottom: 20px;
+            }
+            
+            .workflow-dropdown {
+                width: 100%;
+            }
+            
+            .header {
+                margin-top: 20px;
+            }
+            
+            .seed-control {
+                flex-direction: column;
+            }
+            
+            .seed-control .random-btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="workflow-selector">
+                <select id="workflowSelect" class="workflow-dropdown">
+                    <option value="">-- Selectează un workflow --</option>
+                </select>
+            </div>
+            <h1>ComfyUI Generator</h1>
+            <div class="status" id="status"><span>🔌 Verific conexiunea...</span></div>
+        </div>
+        
+        <div id="workflowContainer">
+            <div class="card" style="text-align: center; padding: 60px;">
+                <p>📁 Selectează un workflow din meniul din stânga sus</p>
+                <small style="color: #8a9ec0;">Workflow-urile sunt configurate de administrator</small>
+            </div>
+        </div>
+        
+        <div class="results" id="resultsContainer" style="display: none;">
+            <h2>🎨 Rezultat</h2>
+            <div id="resultArea"></div>
+        </div>
+    </div>
+    
+    <script>
+        let currentWorkflowId = null;
+        let workflowAnalysis = null;
+        let mediaFiles = {};
+        let currentParameters = {};
+        let workflowPresets = [];
+        let uiConfig = { inputOrder: [], inputNames: {}, visibleParams: {} };
+        let autoRandomSeed = {}; // Stochează starea checkbox-ului pentru fiecare seed
+        
+        const workflowSelect = document.getElementById('workflowSelect');
+        const statusDiv = document.getElementById('status');
+        const workflowContainer = document.getElementById('workflowContainer');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const resultArea = document.getElementById('resultArea');
+        
+        // Încarcă lista de workflow-uri
+        async function loadWorkflows() {
+            try {
+                const response = await fetch('/api/workflows/list');
+                const data = await response.json();
+                
+                if (data.success && data.workflows && data.workflows.length > 0) {
+                    workflowSelect.innerHTML = '<option value="">-- Selectează un workflow --</option>' + 
+                        data.workflows.map(wf => `<option value="${wf.id}">${escapeHtml(wf.name)}${wf.description ? ' - ' + escapeHtml(wf.description) : ''}</option>`).join('');
+                } else {
+                    workflowSelect.innerHTML = '<option value="">-- Nu există workflow-uri --</option>';
+                }
+            } catch (error) {
+                console.error('Error loading workflows:', error);
+                workflowSelect.innerHTML = '<option value="">-- Eroare la încărcare --</option>';
+            }
+        }
+        
+        // Când se schimbă workflow-ul selectat
+        workflowSelect.addEventListener('change', async () => {
+            const id = workflowSelect.value;
+            if (!id) {
+                workflowContainer.innerHTML = '<div class="card" style="text-align: center; padding: 60px;"><p>📁 Selectează un workflow din meniu</p></div>';
+                resultsContainer.style.display = 'none';
+                return;
+            }
+            
+            await loadWorkflow(id);
+        });
+        
+        // Încarcă workflow-ul selectat
+        async function loadWorkflow(id) {
+            try {
+                showLoading('Se încarcă workflow-ul...');
+                
+                const response = await fetch(`/api/workflows/load/${id}`, { method: 'POST' });
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentWorkflowId = id;
+                    workflowAnalysis = data.analysis;
+                    workflowPresets = data.presets || [];
+                    uiConfig = data.uiConfig || { inputOrder: [], inputNames: {}, visibleParams: {} };
+                    
+                    // Inițializează autoRandomSeed pentru toți parametrii seed
+                    if (workflowAnalysis.advancedInputs) {
+                        for (const group of workflowAnalysis.advancedInputs) {
+                            for (const param of group.inputs) {
+                                if (param.key.includes('seed') || param.title?.toLowerCase().includes('seed')) {
+                                    autoRandomSeed[param.key] = true; // Default: true (bifat)
+                                }
+                            }
+                        }
+                    }
+                    
+                    renderInterface();
+                } else {
+                    workflowContainer.innerHTML = `<div class="card error">❌ ${data.error || 'Eroare la încărcare'}</div>`;
+                }
+            } catch (error) {
+                console.error('Error loading workflow:', error);
+                workflowContainer.innerHTML = `<div class="card error">❌ Eroare: ${error.message}</div>`;
+            }
+        }
+        
+        // Afișează loading
+        function showLoading(message) {
+            workflowContainer.innerHTML = `<div class="card" style="text-align: center; padding: 40px;"><div class="spinner"></div><p>${message}</p></div>`;
+        }
+        
+        // Upload media
+        async function handleMediaUpload(file, inputKey) {
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('media', file);
+            
+            try {
+                const response = await fetch(`/api/upload/media/${inputKey}`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    mediaFiles[inputKey] = data.filename;
+                    
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const previewDiv = document.getElementById(`preview_${inputKey}`);
+                        if (previewDiv) {
+                            if (data.type === 'video') {
+                                previewDiv.innerHTML = `<video controls><source src="${e.target.result}"></video>`;
+                            } else {
+                                previewDiv.innerHTML = `<img src="${e.target.result}" alt="Preview">`;
+                            }
+                        }
+                    };
+                    reader.readAsDataURL(file);
+                } else {
+                    alert('Eroare la upload: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Upload error:', error);
+                alert('Eroare la upload: ' + error.message);
+            }
+        }
+        
+        // Folosește o imagine presetată
+        async function usePreset(preset, inputKey) {
+            const blob = await fetch(preset.dataUrl).then(r => r.blob());
+            const file = new File([blob], preset.filename || `${preset.name}.png`, { type: 'image/png' });
+            
+            const formData = new FormData();
+            formData.append('media', file);
+            
+            try {
+                const response = await fetch(`/api/upload/media/${inputKey}`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    mediaFiles[inputKey] = data.filename;
+                    const previewDiv = document.getElementById(`preview_${inputKey}`);
+                    if (previewDiv) {
+                        previewDiv.innerHTML = `<img src="${preset.dataUrl}" alt="${preset.name}">`;
+                    }
+                }
+            } catch (error) {
+                console.error('Error using preset:', error);
+                alert('Eroare la încărcarea presetului');
+            }
+        }
+        
+        // Generează seed random
+        function generateRandomSeed() {
+            return Math.floor(Math.random() * 1000000000000);
+        }
+        
+        // Rulează generarea
+        async function runWorkflow() {
+            if (!currentWorkflowId) {
+                alert('Selectează un workflow mai întâi');
+                return;
+            }
+            
+            // Colectează parametrii
+            const parameters = {};
+            for (const [key, value] of Object.entries(currentParameters)) {
+                parameters[key] = value;
+            }
+            
+            // Adaugă flag-ul pentru auto-random seed
+            parameters['_autoRandomSeed'] = autoRandomSeed;
+            
+            resultsContainer.style.display = 'block';
+            resultArea.innerHTML = `<div class="loading"><div class="spinner"></div><p>Se procesează... (poate dura 30-60 secunde)</p></div>`;
+            
+            const generateBtn = document.getElementById('generateBtn');
+            if (generateBtn) generateBtn.disabled = true;
+            
+            try {
+                const response = await fetch('/api/workflow/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        mediaFiles: mediaFiles,
+                        parameters: parameters,
+                        workflowId: currentWorkflowId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    resultArea.innerHTML = `<div class="error">❌ ${data.error}</div>`;
+                } else if (data.files && data.files.length > 0) {
+                    let filesHtml = '<div class="success">✅ Generare completă!</div><div class="image-grid">';
+                    data.files.forEach(file => {
+                        if (file.type === 'video') {
+                            filesHtml += `
+                                <div class="image-card">
+                                    <video controls>
+                                        <source src="${file.url}" type="video/mp4">
+                                        Browserul nu suportă video
+                                    </video>
+                                    <div class="caption">${file.filename}</div>
+                                </div>
+                            `;
+                        } else {
+                            filesHtml += `
+                                <div class="image-card">
+                                    <img src="${file.url}" alt="Result">
+                                    <div class="caption">${file.filename}</div>
+                                </div>
+                            `;
+                        }
+                    });
+                    filesHtml += '</div>';
+                    resultArea.innerHTML = filesHtml;
+                } else {
+                    resultArea.innerHTML = '<div class="error">Nu s-a primit niciun fișier</div>';
+                }
+            } catch (error) {
+                resultArea.innerHTML = `<div class="error">❌ Eroare: ${error.message}</div>`;
+            } finally {
+                if (generateBtn) generateBtn.disabled = false;
+            }
+        }
+        
+        // Render interfața principală
+        function renderInterface() {
+            if (!workflowAnalysis) return;
+            
+            let html = '';
+            
+            // Colectează toate inputurile într-un array plat
+            const allInputs = [];
+            for (const group of workflowAnalysis.inputs) {
+                for (const input of group.inputs) {
+                    allInputs.push({
+                        ...input,
+                        groupTitle: group.title
+                    });
+                }
+            }
+            
+            // Sortează după inputOrder
+            const inputOrder = uiConfig.inputOrder || [];
+            const sortedInputs = [...allInputs].sort((a, b) => {
+                const indexA = inputOrder.indexOf(a.key);
+                const indexB = inputOrder.indexOf(b.key);
+                if (indexA === -1 && indexB === -1) return 0;
+                if (indexA === -1) return 1;
+                if (indexB === -1) return -1;
+                return indexA - indexB;
+            });
+            
+            // Afișează informații despre workflow
+            html += `<div class="workflow-info">📁 Workflow: <strong>${escapeHtml(workflowAnalysis.title || 'Workflow')}</strong></div>`;
+            
+            // Inputuri media
+            if (sortedInputs.length > 0) {
+                html += `<div class="card"><h2>📸 Încarcă media</h2>`;
+                
+                for (const input of sortedInputs) {
+                    const isVideo = input.valueType === 'video';
+                    const icon = isVideo ? '🎬' : '🖼️';
+                    const acceptType = isVideo ? 'video/*' : 'image/*';
+                    const displayName = uiConfig.inputNames?.[input.key] || input.title || input.groupTitle;
+                    
+                    const associatedPresets = workflowPresets.filter(preset => 
+                        !preset.assignedInputs || preset.assignedInputs.length === 0 || preset.assignedInputs.includes(input.key)
+                    );
+                    
+                    html += `
+                        <div class="input-container">
+                            <div class="input-header">
+                                <span class="icon">${icon}</span>
+                                <span class="name">${escapeHtml(displayName)}</span>
+                            </div>
+                            <div class="upload-area" onclick="document.getElementById('file_${input.key}').click()">
+                                <div>📁 Click sau trage ${isVideo ? 'video' : 'imagine'}</div>
+                                <input type="file" id="file_${input.key}" accept="${acceptType}" style="display: none">
+                            </div>
+                            <div id="preview_${input.key}" class="image-preview"></div>
+                    `;
+                    
+                    if (!isVideo && associatedPresets.length > 0) {
+                        html += `
+                            <div class="preset-section">
+                                <div class="preset-title">🖼️ Imagini presetate</div>
+                                <div class="preset-list">
+                        `;
+                        associatedPresets.forEach(preset => {
+                            html += `<img class="preset-thumb" src="${preset.dataUrl}" title="${escapeHtml(preset.name)}" onclick="usePreset(${JSON.stringify(preset).replace(/"/g, '&quot;')}, '${input.key}')">`;
+                        });
+                        html += `</div></div>`;
+                    }
+                    
+                    html += `</div>`;
+                }
+                
+                html += `</div>`;
+            }
+            
+            // Parametri - CU CHECKBOX PENTRU RANDOM SEED AUTOMAT
+            if (workflowAnalysis.advancedInputs && workflowAnalysis.advancedInputs.length > 0) {
+                html += `<div class="card"><h2>⚙️ Parametri</h2>`;
+                
+                for (const group of workflowAnalysis.advancedInputs) {
+                    let hasVisibleParams = false;
+                    let groupHtml = `<div style="margin-bottom: 20px;"><h3>${group.title}</h3>`;
+                    
+                    for (const param of group.inputs) {
+                        const isVisible = uiConfig.visibleParams?.[param.key] !== false;
+                        if (!isVisible) continue;
+                        
+                        hasVisibleParams = true;
+                        const defaultValue = param.defaultValue !== undefined ? param.defaultValue : param.value;
+                        currentParameters[param.key] = defaultValue;
+                        
+                        let inputHtml = '';
+                        
+                        // VERIFICĂ DACĂ ESTE PARAMETRU SEED
+                        const isSeedParam = param.key.includes('seed') || 
+                                            param.title?.toLowerCase().includes('seed') ||
+                                            param.inputName === 'seed';
+                        
+                        if (isSeedParam) {
+                            const isAutoRandom = autoRandomSeed[param.key] !== false; // Default true
+                            inputHtml = `
+                                <div class="seed-control">
+                                    <input type="number" id="param_${param.key}" value="${defaultValue}" step="any" ${isAutoRandom ? 'disabled' : ''} style="${isAutoRandom ? 'opacity: 0.6;' : ''}">
+                                    <button type="button" class="random-btn" data-param="${param.key}" style="padding: 10px 15px; width: auto; white-space: nowrap;">🎲 Random</button>
+                                    <label class="auto-random-checkbox">
+                                        <input type="checkbox" class="auto-random-check" data-param="${param.key}" ${isAutoRandom ? 'checked' : ''}>
+                                        <span>🤖 Auto-random la fiecare generare</span>
+                                    </label>
+                                </div>
+                            `;
+                        } else if (param.valueType === 'boolean') {
+                            inputHtml = `
+                                <select id="param_${param.key}">
+                                    <option value="true" ${defaultValue === true ? 'selected' : ''}>Da</option>
+                                    <option value="false" ${defaultValue === false ? 'selected' : ''}>Nu</option>
+                                </select>
+                            `;
+                        } else if (param.valueType === 'number' || param.valueType === 'float') {
+                            inputHtml = `<input type="number" id="param_${param.key}" value="${defaultValue}" step="any">`;
+                        } else {
+                            inputHtml = `<input type="text" id="param_${param.key}" value="${defaultValue}">`;
+                        }
+                        
+                        groupHtml += `
+                            <div class="input-group">
+                                <label>${param.title || param.key}</label>
+                                ${inputHtml}
+                            </div>
+                        `;
+                    }
+                    
+                    groupHtml += `</div>`;
+                    if (hasVisibleParams) html += groupHtml;
+                }
+                
+                html += `</div>`;
+            }
+            
+            html += `<button class="generate-btn" id="generateBtn">✨ Generează</button>`;
+            workflowContainer.innerHTML = html;
+            
+            // Setup event listeners pentru upload
+            for (const input of sortedInputs) {
+                const fileInput = document.getElementById(`file_${input.key}`);
+                if (fileInput) {
+                    fileInput.addEventListener('change', (e) => {
+                        if (e.target.files[0]) handleMediaUpload(e.target.files[0], input.key);
+                    });
+                    
+                    const uploadArea = fileInput.parentElement;
+                    uploadArea.addEventListener('dragover', (e) => {
+                        e.preventDefault();
+                        uploadArea.classList.add('dragover');
+                    });
+                    uploadArea.addEventListener('dragleave', () => {
+                        uploadArea.classList.remove('dragover');
+                    });
+                    uploadArea.addEventListener('drop', (e) => {
+                        e.preventDefault();
+                        uploadArea.classList.remove('dragover');
+                        const file = e.dataTransfer.files[0];
+                        if (file) handleMediaUpload(file, input.key);
+                    });
+                }
+            }
+            
+            // Setup event listener pentru butonul de generare
+            const generateBtn = document.getElementById('generateBtn');
+            if (generateBtn) {
+                generateBtn.addEventListener('click', runWorkflow);
+            }
+            
+            // Setup event listeners pentru parametri
+            for (const group of workflowAnalysis.advancedInputs || []) {
+                for (const param of group.inputs) {
+                    const isVisible = uiConfig.visibleParams?.[param.key] !== false;
+                    if (!isVisible) continue;
+                    
+                    const input = document.getElementById(`param_${param.key}`);
+                    if (input && !input.classList.contains('random-btn')) {
+                        input.addEventListener('change', (e) => {
+                            currentParameters[param.key] = e.target.value;
+                        });
+                    }
+                }
+            }
+            
+            // Setup event listeners pentru butoanele random
+            document.querySelectorAll('.random-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const paramKey = btn.dataset.param;
+                    const randomSeed = generateRandomSeed();
+                    const input = document.getElementById(`param_${paramKey}`);
+                    if (input) {
+                        input.value = randomSeed;
+                        currentParameters[paramKey] = randomSeed;
+                        input.style.borderColor = '#4ade80';
+                        setTimeout(() => { input.style.borderColor = ''; }, 1000);
+                    }
+                });
+            });
+            
+            // Setup event listeners pentru checkbox-urile auto-random
+            document.querySelectorAll('.auto-random-check').forEach(checkbox => {
+                checkbox.addEventListener('change', (e) => {
+                    const paramKey = checkbox.dataset.param;
+                    const isChecked = checkbox.checked;
+                    autoRandomSeed[paramKey] = isChecked;
+                    
+                    const seedInput = document.getElementById(`param_${paramKey}`);
+                    if (seedInput) {
+                        seedInput.disabled = isChecked;
+                        if (isChecked) {
+                            seedInput.style.opacity = '0.6';
+                            // Generează un seed random acum
+                            const randomSeed = generateRandomSeed();
+                            seedInput.value = randomSeed;
+                            currentParameters[paramKey] = randomSeed;
+                        } else {
+                            seedInput.style.opacity = '1';
+                        }
+                    }
+                });
+            });
+        }
+        
+        // Escape HTML
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        // Health check
+        async function checkHealth() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                if (data.status === 'ok') {
+                    statusDiv.innerHTML = '<span class="status-online">✅ Conectat la server</span>';
+                } else {
+                    statusDiv.innerHTML = '<span class="status-offline">❌ Server indisponibil</span>';
+                }
+            } catch (error) {
+                statusDiv.innerHTML = '<span class="status-offline">❌ Nu mă pot conecta la server</span>';
+            }
+        }
+        
+        // Expune funcții global
+        window.usePreset = usePreset;
+        
+        // Inițializare
+        loadWorkflows();
+        checkHealth();
+        setInterval(checkHealth, 30000);
+    </script>
+</body>
+</html>

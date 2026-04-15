@@ -1,0 +1,874 @@
+{
+  "file_type": "view_comfy",
+  "file_version": "1.0.0",
+  "version": "0.0.1",
+  "appTitle": "",
+  "appImg": "",
+  "workflows": [
+    {
+      "viewComfyJSON": {
+        "title": "Face_SWAP",
+        "description": "",
+        "viewcomfyEndpoint": "",
+        "previewImages": [],
+        "inputs": [
+          {
+            "title": "Load Image",
+            "inputs": [
+              {
+                "title": "Load Image",
+                "placeholder": "Load Image",
+                "value": null,
+                "workflowPath": [
+                  "10",
+                  "inputs",
+                  "image"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "image",
+                "validations": {
+                  "required": true
+                },
+                "key": "10-inputs-image"
+              }
+            ],
+            "key": "10-LoadImage"
+          },
+          {
+            "title": "Load Image",
+            "inputs": [
+              {
+                "title": "Load Image",
+                "placeholder": "Load Image",
+                "value": null,
+                "workflowPath": [
+                  "16",
+                  "inputs",
+                  "image"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "image",
+                "validations": {
+                  "required": true
+                },
+                "key": "16-inputs-image"
+              }
+            ],
+            "key": "16-LoadImage"
+          }
+        ],
+        "advancedInputs": [
+          {
+            "title": "FF: Advanced Swap Face (Image)",
+            "inputs": [
+              {
+                "title": "Api_token",
+                "placeholder": "Api_token",
+                "value": "-1",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "api_token"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-api_token"
+              },
+              {
+                "title": "Face_swapper_model",
+                "placeholder": "Face_swapper_model",
+                "value": "inswapper_128_fp16",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_swapper_model"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_swapper_model"
+              },
+              {
+                "title": "Face_detector_model",
+                "placeholder": "Face_detector_model",
+                "value": "retinaface",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_detector_model"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_detector_model"
+              },
+              {
+                "title": "Pixel_boost",
+                "placeholder": "Pixel_boost",
+                "value": "1024x1024",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "pixel_boost"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-pixel_boost"
+              },
+              {
+                "title": "Face_occluder_model",
+                "placeholder": "Face_occluder_model",
+                "value": "xseg_3",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_occluder_model"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_occluder_model"
+              },
+              {
+                "title": "Face_parser_model",
+                "placeholder": "Face_parser_model",
+                "value": "bisenet_resnet_34",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_parser_model"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_parser_model"
+              },
+              {
+                "title": "Face_mask_blur",
+                "placeholder": "Face_mask_blur",
+                "value": 0.3,
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_mask_blur"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "float",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_mask_blur"
+              },
+              {
+                "title": "Face_selector_mode",
+                "placeholder": "Face_selector_mode",
+                "value": "one",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_selector_mode"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_selector_mode"
+              },
+              {
+                "title": "Face_position",
+                "placeholder": "Face_position",
+                "value": 0,
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_position"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "number",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_position"
+              },
+              {
+                "title": "Sort_order",
+                "placeholder": "Sort_order",
+                "value": "large-small",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "sort_order"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-sort_order"
+              },
+              {
+                "title": "Score_threshold",
+                "placeholder": "Score_threshold",
+                "value": 0.6,
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "score_threshold"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "float",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-score_threshold"
+              },
+              {
+                "title": "Use_box_mask",
+                "placeholder": "Use_box_mask",
+                "value": true,
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "use_box_mask"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "20-inputs-use_box_mask"
+              },
+              {
+                "title": "Use_occlusion_mask",
+                "placeholder": "Use_occlusion_mask",
+                "value": true,
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "use_occlusion_mask"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "20-inputs-use_occlusion_mask"
+              },
+              {
+                "title": "Use_area_mask",
+                "placeholder": "Use_area_mask",
+                "value": false,
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "use_area_mask"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "20-inputs-use_area_mask"
+              },
+              {
+                "title": "Use_region_mask",
+                "placeholder": "Use_region_mask",
+                "value": false,
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "use_region_mask"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "20-inputs-use_region_mask"
+              },
+              {
+                "title": "Face_mask_areas",
+                "placeholder": "Face_mask_areas",
+                "value": "upper-face,lower-face,mouth",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_mask_areas"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_mask_areas"
+              },
+              {
+                "title": "Face_mask_regions",
+                "placeholder": "Face_mask_regions",
+                "value": "skin,nose,mouth,upper-lip,lower-lip",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_mask_regions"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_mask_regions"
+              },
+              {
+                "title": "Face_mask_padding",
+                "placeholder": "Face_mask_padding",
+                "value": "0,0,0,0",
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "face_mask_padding"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-face_mask_padding"
+              },
+              {
+                "title": "Reference_face_distance",
+                "placeholder": "Reference_face_distance",
+                "value": 0.6,
+                "workflowPath": [
+                  "20",
+                  "inputs",
+                  "reference_face_distance"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "float",
+                "validations": {
+                  "required": true
+                },
+                "key": "20-inputs-reference_face_distance"
+              }
+            ],
+            "key": "20-AdvancedSwapFaceImage"
+          },
+          {
+            "title": "LayerMask: Mediapipe Facial Segment(Advance)",
+            "inputs": [
+              {
+                "title": "Left_eye",
+                "placeholder": "Left_eye",
+                "value": true,
+                "workflowPath": [
+                  "24",
+                  "inputs",
+                  "left_eye"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "24-inputs-left_eye"
+              },
+              {
+                "title": "Left_eyebrow",
+                "placeholder": "Left_eyebrow",
+                "value": true,
+                "workflowPath": [
+                  "24",
+                  "inputs",
+                  "left_eyebrow"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "24-inputs-left_eyebrow"
+              },
+              {
+                "title": "Right_eye",
+                "placeholder": "Right_eye",
+                "value": true,
+                "workflowPath": [
+                  "24",
+                  "inputs",
+                  "right_eye"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "24-inputs-right_eye"
+              },
+              {
+                "title": "Right_eyebrow",
+                "placeholder": "Right_eyebrow",
+                "value": true,
+                "workflowPath": [
+                  "24",
+                  "inputs",
+                  "right_eyebrow"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "24-inputs-right_eyebrow"
+              },
+              {
+                "title": "Lips",
+                "placeholder": "Lips",
+                "value": true,
+                "workflowPath": [
+                  "24",
+                  "inputs",
+                  "lips"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "24-inputs-lips"
+              },
+              {
+                "title": "Tooth",
+                "placeholder": "Tooth",
+                "value": true,
+                "workflowPath": [
+                  "24",
+                  "inputs",
+                  "tooth"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "24-inputs-tooth"
+              }
+            ],
+            "key": "24-LayerMask: MediapipeFacialSegment"
+          },
+          {
+            "title": "🔧 Image Composite",
+            "inputs": [
+              {
+                "title": "X",
+                "placeholder": "X",
+                "value": 0,
+                "workflowPath": [
+                  "26",
+                  "inputs",
+                  "x"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "number",
+                "validations": {
+                  "required": true
+                },
+                "key": "26-inputs-x"
+              },
+              {
+                "title": "Y",
+                "placeholder": "Y",
+                "value": 0,
+                "workflowPath": [
+                  "26",
+                  "inputs",
+                  "y"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "number",
+                "validations": {
+                  "required": true
+                },
+                "key": "26-inputs-y"
+              },
+              {
+                "title": "Offset_x",
+                "placeholder": "Offset_x",
+                "value": 0,
+                "workflowPath": [
+                  "26",
+                  "inputs",
+                  "offset_x"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "number",
+                "validations": {
+                  "required": true
+                },
+                "key": "26-inputs-offset_x"
+              },
+              {
+                "title": "Offset_y",
+                "placeholder": "Offset_y",
+                "value": 0,
+                "workflowPath": [
+                  "26",
+                  "inputs",
+                  "offset_y"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "number",
+                "validations": {
+                  "required": true
+                },
+                "key": "26-inputs-offset_y"
+              }
+            ],
+            "key": "26-ImageComposite+"
+          },
+          {
+            "title": "Grow Mask",
+            "inputs": [
+              {
+                "title": "Expand",
+                "placeholder": "Expand",
+                "value": 50,
+                "workflowPath": [
+                  "32",
+                  "inputs",
+                  "expand"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "number",
+                "validations": {
+                  "required": true
+                },
+                "key": "32-inputs-expand"
+              },
+              {
+                "title": "Tapered_corners",
+                "placeholder": "Tapered_corners",
+                "value": true,
+                "workflowPath": [
+                  "32",
+                  "inputs",
+                  "tapered_corners"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "boolean",
+                "validations": {
+                  "required": false
+                },
+                "key": "32-inputs-tapered_corners"
+              }
+            ],
+            "key": "32-GrowMask"
+          },
+          {
+            "title": "🔧 Mask Blur",
+            "inputs": [
+              {
+                "title": "Amount",
+                "placeholder": "Amount",
+                "value": 200,
+                "workflowPath": [
+                  "33",
+                  "inputs",
+                  "amount"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "number",
+                "validations": {
+                  "required": true
+                },
+                "key": "33-inputs-amount"
+              },
+              {
+                "title": "Device",
+                "placeholder": "Device",
+                "value": "gpu",
+                "workflowPath": [
+                  "33",
+                  "inputs",
+                  "device"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "33-inputs-device"
+              }
+            ],
+            "key": "33-MaskBlur+"
+          },
+          {
+            "title": "Save Image",
+            "inputs": [
+              {
+                "title": "Filename_prefix",
+                "placeholder": "Filename_prefix",
+                "value": "ComfyUI",
+                "workflowPath": [
+                  "37",
+                  "inputs",
+                  "filename_prefix"
+                ],
+                "helpText": "Helper Text",
+                "tooltip": "",
+                "valueType": "string",
+                "validations": {
+                  "required": true
+                },
+                "key": "37-inputs-filename_prefix"
+              }
+            ],
+            "key": "37-SaveImage"
+          }
+        ],
+        "id": "6a15c4d65da978"
+      },
+      "workflowApiJSON": {
+        "10": {
+          "inputs": {
+            "image": "George_Ivascu-scaled (1).jpg"
+          },
+          "class_type": "LoadImage",
+          "_meta": {
+            "title": "Load Image"
+          }
+        },
+        "16": {
+          "inputs": {
+            "image": "1.png"
+          },
+          "class_type": "LoadImage",
+          "_meta": {
+            "title": "Load Image"
+          }
+        },
+        "20": {
+          "inputs": {
+            "api_token": "-1",
+            "face_swapper_model": "inswapper_128_fp16",
+            "face_detector_model": "retinaface",
+            "pixel_boost": "1024x1024",
+            "face_occluder_model": "xseg_3",
+            "face_parser_model": "bisenet_resnet_34",
+            "face_mask_blur": 0.3,
+            "face_selector_mode": "one",
+            "face_position": 0,
+            "sort_order": "large-small",
+            "score_threshold": 0.6,
+            "use_box_mask": true,
+            "use_occlusion_mask": true,
+            "use_area_mask": false,
+            "use_region_mask": false,
+            "face_mask_areas": "upper-face,lower-face,mouth",
+            "face_mask_regions": "skin,nose,mouth,upper-lip,lower-lip",
+            "face_mask_padding": "0,0,0,0",
+            "reference_face_distance": 0.6,
+            "source_images": [
+              "10",
+              0
+            ],
+            "target_image": [
+              "16",
+              0
+            ]
+          },
+          "class_type": "AdvancedSwapFaceImage",
+          "_meta": {
+            "title": "FF: Advanced Swap Face (Image)"
+          }
+        },
+        "21": {
+          "inputs": {
+            "images": [
+              "20",
+              0
+            ]
+          },
+          "class_type": "PreviewImage",
+          "_meta": {
+            "title": "Preview Image"
+          }
+        },
+        "22": {
+          "inputs": {
+            "rgthree_comparer": {
+              "images": [
+                {
+                  "name": "A",
+                  "selected": true,
+                  "url": "/comfy/api/view?filename=rgthree.compare._temp_xravn_00005_.png&type=temp&subfolder=&rand=0.7389206050363284"
+                },
+                {
+                  "name": "B",
+                  "selected": true,
+                  "url": "/comfy/api/view?filename=rgthree.compare._temp_xravn_00006_.png&type=temp&subfolder=&rand=0.4291958918651253"
+                }
+              ]
+            },
+            "image_a": [
+              "26",
+              0
+            ],
+            "image_b": [
+              "16",
+              0
+            ]
+          },
+          "class_type": "Image Comparer (rgthree)",
+          "_meta": {
+            "title": "Image Comparer (rgthree)"
+          }
+        },
+        "24": {
+          "inputs": {
+            "left_eye": true,
+            "left_eyebrow": true,
+            "right_eye": true,
+            "right_eyebrow": true,
+            "lips": true,
+            "tooth": true,
+            "image": [
+              "16",
+              0
+            ]
+          },
+          "class_type": "LayerMask: MediapipeFacialSegment",
+          "_meta": {
+            "title": "LayerMask: Mediapipe Facial Segment(Advance)"
+          }
+        },
+        "25": {
+          "inputs": {
+            "mask": [
+              "33",
+              0
+            ]
+          },
+          "class_type": "MaskPreview+",
+          "_meta": {
+            "title": "🔧 Mask Preview"
+          }
+        },
+        "26": {
+          "inputs": {
+            "x": 0,
+            "y": 0,
+            "offset_x": 0,
+            "offset_y": 0,
+            "destination": [
+              "20",
+              0
+            ],
+            "source": [
+              "16",
+              0
+            ],
+            "mask": [
+              "33",
+              0
+            ]
+          },
+          "class_type": "ImageComposite+",
+          "_meta": {
+            "title": "🔧 Image Composite"
+          }
+        },
+        "32": {
+          "inputs": {
+            "expand": 50,
+            "tapered_corners": true,
+            "mask": [
+              "24",
+              1
+            ]
+          },
+          "class_type": "GrowMask",
+          "_meta": {
+            "title": "Grow Mask"
+          }
+        },
+        "33": {
+          "inputs": {
+            "amount": 200,
+            "device": "gpu",
+            "mask": [
+              "32",
+              0
+            ]
+          },
+          "class_type": "MaskBlur+",
+          "_meta": {
+            "title": "🔧 Mask Blur"
+          }
+        },
+        "37": {
+          "inputs": {
+            "filename_prefix": "ComfyUI",
+            "images": [
+              "26",
+              0
+            ]
+          },
+          "class_type": "SaveImage",
+          "_meta": {
+            "title": "Save Image"
+          }
+        }
+      }
+    }
+  ]
+}
