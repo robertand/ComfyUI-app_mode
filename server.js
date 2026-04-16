@@ -447,6 +447,7 @@ adminApp.use('/output', express.static('output', {
 // Server Public (port 3002)
 const publicApp = express();
 publicApp.use(express.json({ limit: '100mb' }));
+publicApp.use(express.static('public'));
 publicApp.use('/output', express.static('output', {
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.mp4')) {
@@ -1188,6 +1189,4 @@ console.log(`
 🚀 ComfyUI Remote Interface
 🔗 ComfyUI: ${COMFYUI_URL}
 📁 Workflows: workflows/saved/
-
-💡 Pentru a expune aplicația public, apasă butonul "Share App" în interfața admin.
 `);

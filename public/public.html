@@ -379,6 +379,7 @@
         
         async function loadWorkflows() {
             try {
+                console.log('Loading workflows...');
                 const res = await fetch('/api/workflows/list');
                 const data = await res.json();
                 if (data.success && data.workflows) {
@@ -386,7 +387,9 @@
                     workflowSelect.innerHTML = `<option value="">-- ${getTranslation('select_workflow_menu', currentLang)} --</option>` +
                         data.workflows.map(wf => `<option value="${wf.id}">${escapeHtml(wf.name)}</option>`).join('');
                 }
-            } catch (error) {}
+            } catch (error) {
+                console.error('Error loading workflows:', error);
+            }
         }
         
         workflowSelect.addEventListener('change', async () => {
@@ -407,6 +410,7 @@
                 const data = await res.json();
                 
                 if (data.success) {
+                    console.log('Workflow loaded:', id);
                     currentWorkflowId = id;
                     workflowAnalysis = data.analysis;
                     workflowPresets = data.presets || [];
@@ -419,7 +423,9 @@
                     }
                     renderInterface();
                 }
-            } catch (error) {}
+            } catch (error) {
+                console.error('Error loading workflow:', error);
+            }
         }
         
         async function handleMediaUpload(file, inputKey) {
