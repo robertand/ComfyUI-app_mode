@@ -824,6 +824,15 @@ adminApp.post('/api/workflow/run', async (req, res) => {
         
         if (!result) throw new Error('Timeout așteptând rezultatul');
         
+        // Verificăm dacă există erori în execuție
+        if (result.status && result.status.messages) {
+            const errors = result.status.messages.filter(m => m[0] === 'execution_error');
+            if (errors.length > 0) {
+                const errorDetail = errors[0][1];
+                throw new Error(`ComfyUI Execution Error: ${errorDetail.exception_type} - ${errorDetail.exception_message}`);
+            }
+        }
+
         const outputFiles = [];
         for (const [nodeId, output] of Object.entries(result.outputs || {})) {
             if (output.images && Array.isArray(output.images)) {
@@ -1098,6 +1107,15 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         
         if (!result) throw new Error('Timeout așteptând rezultatul');
         
+        // Verificăm dacă există erori în execuție
+        if (result.status && result.status.messages) {
+            const errors = result.status.messages.filter(m => m[0] === 'execution_error');
+            if (errors.length > 0) {
+                const errorDetail = errors[0][1];
+                throw new Error(`ComfyUI Execution Error: ${errorDetail.exception_type} - ${errorDetail.exception_message}`);
+            }
+        }
+
         const outputFiles = [];
         for (const [nodeId, output] of Object.entries(result.outputs || {})) {
             if (output.images && Array.isArray(output.images)) {

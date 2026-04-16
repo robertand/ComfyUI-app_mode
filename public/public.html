@@ -473,7 +473,10 @@
             try {
                 const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mediaFiles, parameters: params, workflowId: currentWorkflowId }) });
                 const data = await res.json();
-                if (data.files) {
+                if (data.error) {
+                    resultArea.innerHTML = `<div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--error); border-radius: 8px; color: var(--error); font-size: 0.875rem; display: flex; align-items: flex-start; gap: 12px;"><i data-lucide="alert-circle" style="flex-shrink: 0; width: 18px; height: 18px;"></i> <span>${escapeHtml(data.error)}</span></div>`;
+                    lucide.createIcons();
+                } else if (data.files) {
                     let fhtml = `<div style="margin-bottom: 24px; color: var(--success); font-weight: 500; display: flex; align-items: center; gap: 8px;"><i data-lucide="check-circle"></i> <span data-i18n="generation_complete">Complete!</span></div><div class="image-grid">`;
                     data.files.forEach(f => {
                         fhtml += `<div class="image-card">${f.type === 'video' ? `<video controls autoplay loop muted><source src="${f.url}" type="video/mp4"></video>` : `<img src="${f.url}">`}<div style="padding: 12px; font-size: 0.75rem; color: var(--text-muted); text-align: center;">${f.filename}</div></div>`;
@@ -483,7 +486,9 @@
                     lucide.createIcons();
                     translatePage(langSelect.value);
                 }
-            } catch (error) {} finally { btn.disabled = false; }
+            } catch (error) {
+                resultArea.innerHTML = `<div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--error); border-radius: 8px; color: var(--error); font-size: 0.875rem;">Error: ${escapeHtml(error.message)}</div>`;
+            } finally { btn.disabled = false; }
         }
         
         function renderInterface() {
