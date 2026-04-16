@@ -1,481 +1,410 @@
 <!DOCTYPE html>
-<html lang="ro">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ComfyUI Generator</title>
+    <title data-i18n="app_title">ComfyUI Generator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
     <style>
+        :root {
+            --bg-main: #0f172a;
+            --bg-card: #1e293b;
+            --primary: #3b82f6;
+            --primary-hover: #2563eb;
+            --secondary: #64748b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border: #334155;
+            --success: #10b981;
+            --error: #ef4444;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
         
         body {
-            font-family: 'Segoe UI', 'Roboto', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
-            font-weight: 300;
-            background: linear-gradient(135deg, #1a1f2e 0%, #0f1219 100%);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-main);
             min-height: 100vh;
-            color: #e8e8e8;
-            padding: 20px;
+            line-height: 1.5;
+            padding-top: 80px;
         }
         
+        .navbar {
+            height: 64px;
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 24px;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1001;
+        }
+
+        .navbar-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 600;
+            font-size: 1.25rem;
+            color: var(--text-main);
+            text-decoration: none;
+        }
+
+        .navbar-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .nav-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-link:hover { color: var(--text-main); }
+
+        .lang-select {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            cursor: pointer;
+        }
+
         .container {
-            max-width: 1200px;
+            max-width: 1000px;
             margin: 0 auto;
+            padding: 0 20px 40px;
         }
         
         .header {
             text-align: center;
-            margin-bottom: 30px;
-            position: relative;
+            margin-bottom: 32px;
         }
         
         .workflow-selector {
-            position: absolute;
-            top: 0;
-            left: 0;
+            margin-bottom: 24px;
+            display: flex;
+            justify-content: center;
         }
         
         .workflow-dropdown {
-            background: #2c3e66;
-            border: none;
-            padding: 10px 20px;
-            border-radius: 8px;
-            color: white;
-            font-size: 14px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 12px 20px;
+            border-radius: 10px;
+            color: var(--text-main);
+            font-size: 0.9375rem;
             cursor: pointer;
-            font-weight: 400;
-            min-width: 200px;
-        }
-        
-        .workflow-dropdown:hover {
-            background: #3a5a8c;
-        }
-        
-        h1 {
-            font-size: 2rem;
-            font-weight: 300;
-            background: linear-gradient(90deg, #5a7fc2, #2c4c8c);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            width: 100%;
+            max-width: 400px;
+            font-weight: 500;
         }
         
         .status {
-            text-align: center;
-            margin-top: 20px;
-            padding: 10px;
-            border-radius: 6px;
-            background: rgba(18, 22, 32, 0.8);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            font-size: 0.75rem;
+            font-weight: 500;
+            margin-top: 16px;
         }
         
-        .status-online { color: #4a9eff; }
-        .status-offline { color: #ff6b6b; }
+        .status-online { color: var(--success); }
+        .status-offline { color: var(--error); }
         
         .card {
-            background: rgba(18, 22, 32, 0.85);
-            border-radius: 8px;
+            background: var(--bg-card);
+            border-radius: 12px;
             padding: 24px;
-            margin-bottom: 20px;
-            border: 1px solid rgba(52, 109, 219, 0.15);
+            margin-bottom: 24px;
+            border: 1px solid var(--border);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
         }
         
         .card h2 { 
-            color: #4a9eff; 
+            color: var(--text-main);
             margin-bottom: 20px; 
-            font-size: 1.2rem; 
-            font-weight: 400;
-        }
-        
-        .card h3 { 
-            color: #6c8fc7; 
-            margin-bottom: 15px; 
-            font-size: 0.95rem; 
-            font-weight: 400;
+            font-size: 1.125rem;
+            font-weight: 600;
             display: flex;
             align-items: center;
-            justify-content: space-between;
-        }
-        
-        .input-container {
-            margin-bottom: 25px;
-            border: 1px solid rgba(74, 158, 255, 0.2);
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        
-        .input-header {
-            background: rgba(0, 0, 0, 0.3);
-            padding: 12px 15px;
-            border-bottom: 1px solid rgba(74, 158, 255, 0.2);
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .input-header .name { 
-            flex: 1; 
-            font-weight: 400; 
-            font-size: 1rem;
-        }
-        
-        .upload-area {
-            border: 1px dashed #3a4a6a;
-            border-radius: 6px;
-            padding: 20px;
-            text-align: center;
-            cursor: pointer;
-            margin: 15px;
-            background: rgba(0, 0, 0, 0.2);
-            transition: all 0.2s;
-        }
-        
-        .upload-area:hover { 
-            border-color: #4a9eff; 
-            background: rgba(74, 158, 255, 0.08);
-        }
-        
-        .upload-area.dragover { 
-            border-color: #4a9eff; 
-            background: rgba(74, 158, 255, 0.15);
-        }
-        
-        .image-preview {
-            margin: 15px;
-            text-align: center;
-        }
-        
-        .image-preview img,
-        .image-preview video {
-            max-width: 100%;
-            max-height: 150px;
-            border-radius: 6px;
-            object-fit: cover;
-        }
-        
-        .preset-section {
-            margin: 15px;
-            padding: 12px;
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 6px;
-        }
-        
-        .preset-title {
-            font-size: 0.75rem;
-            color: #8a9ec0;
-            margin-bottom: 8px;
-        }
-        
-        .preset-list {
-            display: flex;
-            flex-wrap: wrap;
             gap: 8px;
         }
         
+        .card h3 { 
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            font-size: 0.875rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+        }
+        
+        .input-container {
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            overflow: hidden;
+            background: rgba(15, 23, 42, 0.3);
+        }
+        
+        .input-header {
+            background: rgba(15, 23, 42, 0.5);
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .input-header .name { flex: 1; font-weight: 500; font-size: 0.875rem; }
+        
+        .upload-area {
+            border: 2px dashed var(--border);
+            border-radius: 8px;
+            padding: 32px;
+            text-align: center;
+            cursor: pointer;
+            margin: 16px;
+            background: rgba(15, 23, 42, 0.2);
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .upload-area:hover { border-color: var(--primary); background: rgba(59, 130, 246, 0.05); }
+        
+        .image-preview { margin: 16px; text-align: center; }
+        .image-preview img, .image-preview video { max-width: 100%; max-height: 200px; border-radius: 8px; object-fit: cover; }
+        
+        .preset-section {
+            margin: 16px;
+            padding: 16px;
+            background: rgba(15, 23, 42, 0.3);
+            border-radius: 8px;
+        }
+        
+        .preset-title { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); margin-bottom: 12px; }
+        .preset-list { display: flex; flex-wrap: wrap; gap: 10px; }
         .preset-thumb {
-            width: 50px;
-            height: 50px;
-            border-radius: 6px;
+            width: 56px;
+            height: 56px;
+            border-radius: 8px;
             cursor: pointer;
             object-fit: cover;
             border: 2px solid transparent;
             transition: all 0.2s;
-            background: #0a0e16;
         }
+        .preset-thumb:hover { border-color: var(--primary); transform: translateY(-2px); }
         
-        .preset-thumb:hover {
-            border-color: #4a9eff;
-            transform: scale(1.05);
-        }
-        
-        .input-group {
-            margin-bottom: 15px;
-        }
-        
+        .input-group { margin-bottom: 16px; }
         .input-group label {
             display: block;
-            margin-bottom: 5px;
-            font-size: 0.8rem;
-            color: #9aaec9;
-        }
-        
-        .seed-control {
-            display: flex;
-            gap: 10px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-        
-        .seed-control input[type="number"] {
-            flex: 2;
-            min-width: 150px;
-        }
-        
-        .seed-control .random-btn {
-            background: #3a6cb0;
-            padding: 10px 15px;
-            width: auto;
-            white-space: nowrap;
-        }
-        
-        .seed-control .auto-random-checkbox {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-            background: rgba(0, 0, 0, 0.3);
-            padding: 8px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-        
-        .seed-control .auto-random-checkbox input {
-            width: auto;
-            margin: 0;
-            cursor: pointer;
-        }
-        
-        .seed-control .auto-random-checkbox label {
-            margin: 0;
-            cursor: pointer;
-            font-size: 0.8rem;
-            color: #8abaff;
+            margin-bottom: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-muted);
         }
         
         input, textarea, select {
             width: 100%;
-            padding: 10px 12px;
-            background: rgba(0, 0, 0, 0.4);
-            border: 1px solid #2a3a55;
-            border-radius: 6px;
-            color: #e8e8e8;
-            font-size: 14px;
-            font-weight: 300;
+            padding: 10px 14px;
+            background: var(--bg-main);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-main);
+            font-size: 0.875rem;
+            transition: border-color 0.2s;
         }
         
-        input:focus, textarea:focus, select:focus {
-            outline: none;
-            border-color: #4a9eff;
-            background: rgba(0, 0, 0, 0.6);
-        }
-        
-        textarea {
-            min-height: 80px;
-            resize: vertical;
-        }
+        input:focus, textarea:focus, select:focus { outline: none; border-color: var(--primary); }
         
         button {
             padding: 10px 20px;
-            background: #2c5a9e;
+            background: var(--primary);
             border: none;
-            border-radius: 6px;
+            border-radius: 8px;
             color: white;
-            font-size: 14px;
-            font-weight: 400;
+            font-size: 0.875rem;
+            font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
         }
         
-        button:hover:not(:disabled) {
-            background: #3a6cb0;
-            transform: translateY(-1px);
-        }
-        
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
+        button:hover:not(:disabled) { background: var(--primary-hover); transform: translateY(-1px); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
         
         .generate-btn {
             width: 100%;
-            padding: 14px;
-            font-size: 16px;
-            margin-top: 20px;
-            background: #2c5a9e;
+            padding: 16px;
+            font-size: 1rem;
+            margin-top: 24px;
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
         }
         
-        .results {
-            background: rgba(18, 22, 32, 0.85);
-            border-radius: 8px;
-            padding: 20px;
-            margin-top: 20px;
+        .results { margin-top: 32px; }
+        .image-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+        .image-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--border);
         }
-        
-        .results h2 {
-            color: #4a9eff;
-            margin-bottom: 20px;
-            font-weight: 400;
-        }
-        
-        .loading {
-            text-align: center;
-            padding: 40px;
-        }
+        .image-card img, .image-card video { width: 100%; display: block; }
         
         .spinner {
             width: 40px;
             height: 40px;
-            border: 2px solid #2a3a55;
-            border-top-color: #4a9eff;
+            border: 3px solid rgba(59, 130, 246, 0.1);
+            border-top-color: var(--primary);
             border-radius: 50%;
             animation: spin 0.8s linear infinite;
             margin: 0 auto 20px;
         }
-        
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-        
-        .image-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-        }
-        
-        .image-card {
-            background: rgba(0, 0, 0, 0.4);
-            border-radius: 6px;
-            overflow: hidden;
-            border: 1px solid rgba(74, 158, 255, 0.2);
-        }
-        
-        .image-card img,
-        .image-card video {
-            width: 100%;
-            height: auto;
-            display: block;
-        }
-        
-        .image-card .caption {
-            padding: 8px;
-            text-align: center;
-            font-size: 0.75rem;
-            color: #8a9ec0;
-        }
-        
-        .error {
-            background: rgba(255, 107, 107, 0.1);
-            border: 1px solid #ff6b6b;
-            padding: 12px;
-            border-radius: 6px;
-            color: #ff9e9e;
-        }
-        
-        .success {
-            background: rgba(74, 158, 255, 0.1);
-            border: 1px solid #4a9eff;
-            padding: 12px;
-            border-radius: 6px;
-            color: #8abaff;
-            margin-bottom: 15px;
-        }
+        @keyframes spin { to { transform: rotate(360deg); } }
         
         .workflow-info {
-            background: rgba(74, 158, 255, 0.1);
-            padding: 10px 15px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            font-size: 0.85rem;
+            background: rgba(59, 130, 246, 0.1);
+            padding: 12px 20px;
+            border-radius: 10px;
+            margin-bottom: 24px;
+            font-size: 0.875rem;
             text-align: center;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            color: var(--primary);
+            font-weight: 500;
         }
         
         @media (max-width: 768px) {
-            .workflow-selector {
-                position: static;
-                text-align: center;
-                margin-bottom: 20px;
-            }
-            
-            .workflow-dropdown {
-                width: 100%;
-            }
-            
-            .header {
-                margin-top: 20px;
-            }
-            
-            .seed-control {
-                flex-direction: column;
-            }
-            
-            .seed-control .random-btn {
-                width: 100%;
-            }
+            .navbar { padding: 0 16px; }
+            .navbar-brand span { display: none; }
         }
     </style>
 </head>
 <body>
+    <nav class="navbar">
+        <a href="/" class="navbar-brand">
+            <i data-lucide="cpu"></i>
+            <span data-i18n="app_title">ComfyUI Remote</span>
+        </a>
+        <div class="navbar-actions">
+            <a href="/index.html" class="nav-link" data-i18n="admin_view">Admin View</a>
+            <select class="lang-select" id="langSelect">
+                <option value="en">English</option>
+                <option value="hr">Hrvatski</option>
+                <option value="sl">Slovenščina</option>
+                <option value="sk">Slovenčina</option>
+                <option value="ro">Română</option>
+            </select>
+        </div>
+    </nav>
+
     <div class="container">
         <div class="header">
             <div class="workflow-selector">
                 <select id="workflowSelect" class="workflow-dropdown">
-                    <option value="">-- Selectează un workflow --</option>
+                    <option value="" data-i18n="select_workflow_menu">-- Select a workflow --</option>
                 </select>
             </div>
-            <h1>ComfyUI Generator</h1>
-            <div class="status" id="status"><span>🔌 Verific conexiunea...</span></div>
+            <div class="status" id="status">
+                <i data-lucide="refresh-cw" class="spin" style="width: 14px; height: 14px;"></i>
+                <span data-i18n="check_connection">Checking connection...</span>
+            </div>
         </div>
         
         <div id="workflowContainer">
-            <div class="card" style="text-align: center; padding: 60px;">
-                <p>📁 Selectează un workflow din meniul din stânga sus</p>
-                <small style="color: #8a9ec0;">Workflow-urile sunt configurate de administrator</small>
+            <div class="card" style="text-align: center; padding: 80px;">
+                <i data-lucide="folder-open" style="width: 48px; height: 48px; color: var(--secondary); margin-bottom: 16px;"></i>
+                <p data-i18n="select_workflow_menu">Select a workflow from the top menu</p>
+                <small style="color: var(--text-muted);" data-i18n="admin_configured">Workflows are configured by the administrator</small>
             </div>
         </div>
         
         <div class="results" id="resultsContainer" style="display: none;">
-            <h2>🎨 Rezultat</h2>
+            <h2 data-i18n="result">Result</h2>
             <div id="resultArea"></div>
         </div>
     </div>
     
+    <script src="/translations.js"></script>
     <script>
+        lucide.createIcons();
+
         let currentWorkflowId = null;
         let workflowAnalysis = null;
         let mediaFiles = {};
         let currentParameters = {};
         let workflowPresets = [];
         let uiConfig = { inputOrder: [], inputNames: {}, visibleParams: {} };
-        let autoRandomSeed = {}; // Stochează starea checkbox-ului pentru fiecare seed
+        let autoRandomSeed = {};
         
         const workflowSelect = document.getElementById('workflowSelect');
         const statusDiv = document.getElementById('status');
         const workflowContainer = document.getElementById('workflowContainer');
         const resultsContainer = document.getElementById('resultsContainer');
         const resultArea = document.getElementById('resultArea');
+        const langSelect = document.getElementById('langSelect');
+
+        // Language
+        langSelect.value = localStorage.getItem('preferredLanguage') || 'en';
+        langSelect.addEventListener('change', (e) => {
+            translatePage(e.target.value);
+            if (currentWorkflowId) renderInterface();
+        });
+        setTimeout(() => translatePage(langSelect.value), 100);
         
-        // Încarcă lista de workflow-uri
         async function loadWorkflows() {
             try {
-                const response = await fetch('/api/workflows/list');
-                const data = await response.json();
-                
-                if (data.success && data.workflows && data.workflows.length > 0) {
-                    workflowSelect.innerHTML = '<option value="">-- Selectează un workflow --</option>' + 
-                        data.workflows.map(wf => `<option value="${wf.id}">${escapeHtml(wf.name)}${wf.description ? ' - ' + escapeHtml(wf.description) : ''}</option>`).join('');
-                } else {
-                    workflowSelect.innerHTML = '<option value="">-- Nu există workflow-uri --</option>';
+                const res = await fetch('/api/workflows/list');
+                const data = await res.json();
+                if (data.success && data.workflows) {
+                    const currentLang = langSelect.value;
+                    workflowSelect.innerHTML = `<option value="">-- ${getTranslation('select_workflow_menu', currentLang)} --</option>` +
+                        data.workflows.map(wf => `<option value="${wf.id}">${escapeHtml(wf.name)}</option>`).join('');
                 }
-            } catch (error) {
-                console.error('Error loading workflows:', error);
-                workflowSelect.innerHTML = '<option value="">-- Eroare la încărcare --</option>';
-            }
+            } catch (error) {}
         }
         
-        // Când se schimbă workflow-ul selectat
         workflowSelect.addEventListener('change', async () => {
             const id = workflowSelect.value;
             if (!id) {
-                workflowContainer.innerHTML = '<div class="card" style="text-align: center; padding: 60px;"><p>📁 Selectează un workflow din meniu</p></div>';
-                resultsContainer.style.display = 'none';
+                location.reload();
                 return;
             }
-            
             await loadWorkflow(id);
         });
         
-        // Încarcă workflow-ul selectat
         async function loadWorkflow(id) {
             try {
-                showLoading('Se încarcă workflow-ul...');
+                workflowContainer.innerHTML = `<div style="text-align: center; padding: 40px;"><div class="spinner"></div><p data-i18n="loading">Loading...</p></div>`;
+                translatePage(langSelect.value);
                 
-                const response = await fetch(`/api/workflows/load/${id}`, { method: 'POST' });
-                const data = await response.json();
+                const res = await fetch(`/api/workflows/load/${id}`, { method: 'POST' });
+                const data = await res.json();
                 
                 if (data.success) {
                     currentWorkflowId = id;
@@ -483,428 +412,206 @@
                     workflowPresets = data.presets || [];
                     uiConfig = data.uiConfig || { inputOrder: [], inputNames: {}, visibleParams: {} };
                     
-                    // Inițializează autoRandomSeed pentru toți parametrii seed
                     if (workflowAnalysis.advancedInputs) {
-                        for (const group of workflowAnalysis.advancedInputs) {
-                            for (const param of group.inputs) {
-                                if (param.key.includes('seed') || param.title?.toLowerCase().includes('seed')) {
-                                    autoRandomSeed[param.key] = true; // Default: true (bifat)
-                                }
-                            }
-                        }
+                        workflowAnalysis.advancedInputs.forEach(g => g.inputs.forEach(p => {
+                            if (p.key.includes('seed') || p.title?.toLowerCase().includes('seed')) autoRandomSeed[p.key] = true;
+                        }));
                     }
-                    
                     renderInterface();
-                } else {
-                    workflowContainer.innerHTML = `<div class="card error">❌ ${data.error || 'Eroare la încărcare'}</div>`;
                 }
-            } catch (error) {
-                console.error('Error loading workflow:', error);
-                workflowContainer.innerHTML = `<div class="card error">❌ Eroare: ${error.message}</div>`;
-            }
+            } catch (error) {}
         }
         
-        // Afișează loading
-        function showLoading(message) {
-            workflowContainer.innerHTML = `<div class="card" style="text-align: center; padding: 40px;"><div class="spinner"></div><p>${message}</p></div>`;
-        }
-        
-        // Upload media
         async function handleMediaUpload(file, inputKey) {
             if (!file) return;
-            
             const formData = new FormData();
             formData.append('media', file);
-            
             try {
-                const response = await fetch(`/api/upload/media/${inputKey}`, {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
-                
+                const res = await fetch(`/api/upload/media/${inputKey}`, { method: 'POST', body: formData });
+                const data = await res.json();
                 if (data.success) {
                     mediaFiles[inputKey] = data.filename;
-                    
                     const reader = new FileReader();
                     reader.onload = (e) => {
                         const previewDiv = document.getElementById(`preview_${inputKey}`);
                         if (previewDiv) {
-                            if (data.type === 'video') {
-                                previewDiv.innerHTML = `<video controls><source src="${e.target.result}"></video>`;
-                            } else {
-                                previewDiv.innerHTML = `<img src="${e.target.result}" alt="Preview">`;
-                            }
+                            if (data.type === 'video') previewDiv.innerHTML = `<video controls><source src="${e.target.result}"></video>`;
+                            else previewDiv.innerHTML = `<img src="${e.target.result}" alt="Preview">`;
                         }
                     };
                     reader.readAsDataURL(file);
-                } else {
-                    alert('Eroare la upload: ' + (data.error || 'Unknown error'));
                 }
-            } catch (error) {
-                console.error('Upload error:', error);
-                alert('Eroare la upload: ' + error.message);
-            }
+            } catch (error) {}
         }
         
-        // Folosește o imagine presetată
         async function usePreset(preset, inputKey) {
             const blob = await fetch(preset.dataUrl).then(r => r.blob());
             const file = new File([blob], preset.filename || `${preset.name}.png`, { type: 'image/png' });
-            
             const formData = new FormData();
             formData.append('media', file);
-            
             try {
-                const response = await fetch(`/api/upload/media/${inputKey}`, {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
-                
+                const res = await fetch(`/api/upload/media/${inputKey}`, { method: 'POST', body: formData });
+                const data = await res.json();
                 if (data.success) {
                     mediaFiles[inputKey] = data.filename;
                     const previewDiv = document.getElementById(`preview_${inputKey}`);
-                    if (previewDiv) {
-                        previewDiv.innerHTML = `<img src="${preset.dataUrl}" alt="${preset.name}">`;
-                    }
+                    if (previewDiv) previewDiv.innerHTML = `<img src="${preset.dataUrl}" alt="${preset.name}">`;
                 }
-            } catch (error) {
-                console.error('Error using preset:', error);
-                alert('Eroare la încărcarea presetului');
-            }
+            } catch (error) {}
         }
         
-        // Generează seed random
-        function generateRandomSeed() {
-            return Math.floor(Math.random() * 1000000000000);
-        }
+        function generateRandomSeed() { return Math.floor(Math.random() * 1000000000000); }
         
-        // Rulează generarea
         async function runWorkflow() {
-            if (!currentWorkflowId) {
-                alert('Selectează un workflow mai întâi');
-                return;
-            }
-            
-            // Colectează parametrii
-            const parameters = {};
-            for (const [key, value] of Object.entries(currentParameters)) {
-                parameters[key] = value;
-            }
-            
-            // Adaugă flag-ul pentru auto-random seed
-            parameters['_autoRandomSeed'] = autoRandomSeed;
-            
+            if (!currentWorkflowId) return;
+            const params = { ...currentParameters, _autoRandomSeed: autoRandomSeed };
             resultsContainer.style.display = 'block';
-            resultArea.innerHTML = `<div class="loading"><div class="spinner"></div><p>Se procesează... (poate dura 30-60 secunde)</p></div>`;
-            
-            const generateBtn = document.getElementById('generateBtn');
-            if (generateBtn) generateBtn.disabled = true;
-            
+            resultArea.innerHTML = `<div style="text-align: center; padding: 48px;"><div class="spinner"></div><p style="color: var(--text-muted);" data-i18n="processing">Processing...</p></div>`;
+            translatePage(langSelect.value);
+            const btn = document.getElementById('generateBtn');
+            btn.disabled = true;
             try {
-                const response = await fetch('/api/workflow/run', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        mediaFiles: mediaFiles,
-                        parameters: parameters,
-                        workflowId: currentWorkflowId
-                    })
-                });
-                
-                const data = await response.json();
-                
-                if (data.error) {
-                    resultArea.innerHTML = `<div class="error">❌ ${data.error}</div>`;
-                } else if (data.files && data.files.length > 0) {
-                    let filesHtml = '<div class="success">✅ Generare completă!</div><div class="image-grid">';
-                    data.files.forEach(file => {
-                        if (file.type === 'video') {
-                            filesHtml += `
-                                <div class="image-card">
-                                    <video controls>
-                                        <source src="${file.url}" type="video/mp4">
-                                        Browserul nu suportă video
-                                    </video>
-                                    <div class="caption">${file.filename}</div>
-                                </div>
-                            `;
-                        } else {
-                            filesHtml += `
-                                <div class="image-card">
-                                    <img src="${file.url}" alt="Result">
-                                    <div class="caption">${file.filename}</div>
-                                </div>
-                            `;
-                        }
+                const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mediaFiles, parameters: params, workflowId: currentWorkflowId }) });
+                const data = await res.json();
+                if (data.files) {
+                    let fhtml = `<div style="margin-bottom: 24px; color: var(--success); font-weight: 500; display: flex; align-items: center; gap: 8px;"><i data-lucide="check-circle"></i> <span data-i18n="generation_complete">Complete!</span></div><div class="image-grid">`;
+                    data.files.forEach(f => {
+                        fhtml += `<div class="image-card">${f.type === 'video' ? `<video controls autoplay loop muted><source src="${f.url}" type="video/mp4"></video>` : `<img src="${f.url}">`}<div style="padding: 12px; font-size: 0.75rem; color: var(--text-muted); text-align: center;">${f.filename}</div></div>`;
                     });
-                    filesHtml += '</div>';
-                    resultArea.innerHTML = filesHtml;
-                } else {
-                    resultArea.innerHTML = '<div class="error">Nu s-a primit niciun fișier</div>';
+                    fhtml += `</div>`;
+                    resultArea.innerHTML = fhtml;
+                    lucide.createIcons();
+                    translatePage(langSelect.value);
                 }
-            } catch (error) {
-                resultArea.innerHTML = `<div class="error">❌ Eroare: ${error.message}</div>`;
-            } finally {
-                if (generateBtn) generateBtn.disabled = false;
-            }
+            } catch (error) {} finally { btn.disabled = false; }
         }
         
-        // Render interfața principală
         function renderInterface() {
             if (!workflowAnalysis) return;
+            let html = `<div class="workflow-info"><i data-lucide="file-text" style="width: 16px; height: 16px; display: inline; vertical-align: middle; margin-right: 8px;"></i> ${escapeHtml(workflowAnalysis.title || 'Workflow')}</div>`;
             
-            let html = '';
-            
-            // Colectează toate inputurile într-un array plat
             const allInputs = [];
-            for (const group of workflowAnalysis.inputs) {
-                for (const input of group.inputs) {
-                    allInputs.push({
-                        ...input,
-                        groupTitle: group.title
-                    });
-                }
-            }
-            
-            // Sortează după inputOrder
+            workflowAnalysis.inputs.forEach(g => g.inputs.forEach(i => allInputs.push({ ...i, groupTitle: g.title })));
             const inputOrder = uiConfig.inputOrder || [];
             const sortedInputs = [...allInputs].sort((a, b) => {
-                const indexA = inputOrder.indexOf(a.key);
-                const indexB = inputOrder.indexOf(b.key);
-                if (indexA === -1 && indexB === -1) return 0;
-                if (indexA === -1) return 1;
-                if (indexB === -1) return -1;
-                return indexA - indexB;
+                const ia = inputOrder.indexOf(a.key);
+                const ib = inputOrder.indexOf(b.key);
+                if (ia === -1) return 1;
+                if (ib === -1) return -1;
+                return ia - ib;
             });
             
-            // Afișează informații despre workflow
-            html += `<div class="workflow-info">📁 Workflow: <strong>${escapeHtml(workflowAnalysis.title || 'Workflow')}</strong></div>`;
-            
-            // Inputuri media
             if (sortedInputs.length > 0) {
-                html += `<div class="card"><h2>📸 Încarcă media</h2>`;
-                
-                for (const input of sortedInputs) {
-                    const isVideo = input.valueType === 'video';
-                    const icon = isVideo ? '🎬' : '🖼️';
-                    const acceptType = isVideo ? 'video/*' : 'image/*';
-                    const displayName = uiConfig.inputNames?.[input.key] || input.title || input.groupTitle;
+                html += `<div class="card"><h2><i data-lucide="image"></i> <span data-i18n="upload_media">Upload Media</span></h2>`;
+                sortedInputs.forEach(input => {
+                    const isV = input.valueType === 'video';
+                    const dName = uiConfig.inputNames?.[input.key] || input.title || input.groupTitle;
+                    const presets = workflowPresets.filter(p => !p.assignedInputs || p.assignedInputs.length === 0 || p.assignedInputs.includes(input.key));
                     
-                    const associatedPresets = workflowPresets.filter(preset => 
-                        !preset.assignedInputs || preset.assignedInputs.length === 0 || preset.assignedInputs.includes(input.key)
-                    );
-                    
-                    html += `
-                        <div class="input-container">
-                            <div class="input-header">
-                                <span class="icon">${icon}</span>
-                                <span class="name">${escapeHtml(displayName)}</span>
-                            </div>
-                            <div class="upload-area" onclick="document.getElementById('file_${input.key}').click()">
-                                <div>📁 Click sau trage ${isVideo ? 'video' : 'imagine'}</div>
-                                <input type="file" id="file_${input.key}" accept="${acceptType}" style="display: none">
-                            </div>
-                            <div id="preview_${input.key}" class="image-preview"></div>
-                    `;
-                    
-                    if (!isVideo && associatedPresets.length > 0) {
-                        html += `
-                            <div class="preset-section">
-                                <div class="preset-title">🖼️ Imagini presetate</div>
-                                <div class="preset-list">
-                        `;
-                        associatedPresets.forEach(preset => {
-                            html += `<img class="preset-thumb" src="${preset.dataUrl}" title="${escapeHtml(preset.name)}" onclick="usePreset(${JSON.stringify(preset).replace(/"/g, '&quot;')}, '${input.key}')">`;
+                    html += `<div class="input-container">
+                        <div class="input-header"><i data-lucide="${isV ? 'film' : 'image'}" style="width: 16px; height: 16px;"></i><span class="name">${escapeHtml(dName)}</span></div>
+                        <div class="upload-area" onclick="document.getElementById('file_${input.key}').click()">
+                            <i data-lucide="upload" style="width: 24px; height: 24px; color: var(--secondary);"></i>
+                            <div style="font-size: 0.8125rem;"><span data-i18n="click_or_drag">Click or drag</span> ${isV ? 'video' : 'image'}</div>
+                            <input type="file" id="file_${input.key}" accept="${isV ? 'video/*' : 'image/*'}" style="display: none">
+                        </div>
+                        <div id="preview_${input.key}" class="image-preview"></div>`;
+                    if (!isV && presets.length > 0) {
+                        html += `<div class="preset-section"><div class="preset-title" data-i18n="preset_images">Preset Images</div><div class="preset-list">`;
+                        presets.forEach(p => {
+                            html += `<img class="preset-thumb" src="${p.dataUrl}" title="${escapeHtml(p.name)}" onclick='usePreset(${JSON.stringify(p).replace(/'/g, "&#39;")}, "${input.key}")'>`;
                         });
                         html += `</div></div>`;
                     }
-                    
                     html += `</div>`;
-                }
-                
+                });
                 html += `</div>`;
             }
             
-            // Parametri - CU CHECKBOX PENTRU RANDOM SEED AUTOMAT
-            if (workflowAnalysis.advancedInputs && workflowAnalysis.advancedInputs.length > 0) {
-                html += `<div class="card"><h2>⚙️ Parametri</h2>`;
-                
-                for (const group of workflowAnalysis.advancedInputs) {
-                    let hasVisibleParams = false;
-                    let groupHtml = `<div style="margin-bottom: 20px;"><h3>${group.title}</h3>`;
-                    
-                    for (const param of group.inputs) {
-                        const isVisible = uiConfig.visibleParams?.[param.key] !== false;
-                        if (!isVisible) continue;
-                        
-                        hasVisibleParams = true;
-                        const defaultValue = param.defaultValue !== undefined ? param.defaultValue : param.value;
-                        currentParameters[param.key] = defaultValue;
-                        
-                        let inputHtml = '';
-                        
-                        // VERIFICĂ DACĂ ESTE PARAMETRU SEED
-                        const isSeedParam = param.key.includes('seed') || 
-                                            param.title?.toLowerCase().includes('seed') ||
-                                            param.inputName === 'seed';
-                        
-                        if (isSeedParam) {
-                            const isAutoRandom = autoRandomSeed[param.key] !== false; // Default true
-                            inputHtml = `
-                                <div class="seed-control">
-                                    <input type="number" id="param_${param.key}" value="${defaultValue}" step="any" ${isAutoRandom ? 'disabled' : ''} style="${isAutoRandom ? 'opacity: 0.6;' : ''}">
-                                    <button type="button" class="random-btn" data-param="${param.key}" style="padding: 10px 15px; width: auto; white-space: nowrap;">🎲 Random</button>
-                                    <label class="auto-random-checkbox">
-                                        <input type="checkbox" class="auto-random-check" data-param="${param.key}" ${isAutoRandom ? 'checked' : ''}>
-                                        <span>🤖 Auto-random la fiecare generare</span>
-                                    </label>
-                                </div>
-                            `;
-                        } else if (param.valueType === 'boolean') {
-                            inputHtml = `
-                                <select id="param_${param.key}">
-                                    <option value="true" ${defaultValue === true ? 'selected' : ''}>Da</option>
-                                    <option value="false" ${defaultValue === false ? 'selected' : ''}>Nu</option>
-                                </select>
-                            `;
-                        } else if (param.valueType === 'number' || param.valueType === 'float') {
-                            inputHtml = `<input type="number" id="param_${param.key}" value="${defaultValue}" step="any">`;
+            if (workflowAnalysis.advancedInputs) {
+                html += `<div class="card"><h2><i data-lucide="sliders"></i> <span data-i18n="params">Parameters</span></h2>`;
+                workflowAnalysis.advancedInputs.forEach(group => {
+                    let hasV = false;
+                    let gHtml = `<div style="margin-bottom: 24px;"><h3>${escapeHtml(group.title)}</h3>`;
+                    group.inputs.forEach(p => {
+                        if (uiConfig.visibleParams?.[p.key] === false) return;
+                        hasV = true;
+                        const def = p.defaultValue !== undefined ? p.defaultValue : p.value;
+                        currentParameters[p.key] = def;
+                        const isS = p.key.includes('seed') || p.title?.toLowerCase().includes('seed');
+                        let iHtml = '';
+                        if (isS) {
+                            const isA = autoRandomSeed[p.key] !== false;
+                            iHtml = `<div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                                <input type="number" id="param_${p.key}" value="${def}" ${isA ? 'disabled' : ''} style="flex: 1; ${isA ? 'opacity: 0.5;' : ''}">
+                                <button type="button" class="random-btn" data-param="${p.key}"><i data-lucide="shuffle" style="width: 14px; height: 14px;"></i></button>
+                                <label style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 6px; cursor: pointer;">
+                                    <input type="checkbox" class="auto-random-check" data-param="${p.key}" ${isA ? 'checked' : ''} style="width: auto;"> <span data-i18n="auto_random">Auto</span>
+                                </label>
+                            </div>`;
+                        } else if (p.valueType === 'boolean') {
+                            iHtml = `<select id="param_${p.key}"><option value="true" ${def === true ? 'selected' : ''} data-i18n="yes">Yes</option><option value="false" ${def === false ? 'selected' : ''} data-i18n="no">No</option></select>`;
+                        } else if (p.valueType === 'number' || p.valueType === 'float') {
+                            iHtml = `<input type="number" id="param_${p.key}" value="${def}" step="any">`;
                         } else {
-                            inputHtml = `<input type="text" id="param_${param.key}" value="${defaultValue}">`;
+                            iHtml = `<input type="text" id="param_${p.key}" value="${def}">`;
                         }
-                        
-                        groupHtml += `
-                            <div class="input-group">
-                                <label>${param.title || param.key}</label>
-                                ${inputHtml}
-                            </div>
-                        `;
-                    }
-                    
-                    groupHtml += `</div>`;
-                    if (hasVisibleParams) html += groupHtml;
-                }
-                
+                        gHtml += `<div class="input-group"><label>${escapeHtml(p.title || p.key)}</label>${iHtml}</div>`;
+                    });
+                    gHtml += `</div>`;
+                    if (hasV) html += gHtml;
+                });
                 html += `</div>`;
             }
             
-            html += `<button class="generate-btn" id="generateBtn">✨ Generează</button>`;
+            html += `<button class="generate-btn" id="generateBtn"><i data-lucide="sparkles"></i> <span data-i18n="generate">Generate</span></button>`;
             workflowContainer.innerHTML = html;
+            lucide.createIcons();
+            translatePage(langSelect.value);
             
-            // Setup event listeners pentru upload
-            for (const input of sortedInputs) {
-                const fileInput = document.getElementById(`file_${input.key}`);
-                if (fileInput) {
-                    fileInput.addEventListener('change', (e) => {
-                        if (e.target.files[0]) handleMediaUpload(e.target.files[0], input.key);
-                    });
-                    
-                    const uploadArea = fileInput.parentElement;
-                    uploadArea.addEventListener('dragover', (e) => {
-                        e.preventDefault();
-                        uploadArea.classList.add('dragover');
-                    });
-                    uploadArea.addEventListener('dragleave', () => {
-                        uploadArea.classList.remove('dragover');
-                    });
-                    uploadArea.addEventListener('drop', (e) => {
-                        e.preventDefault();
-                        uploadArea.classList.remove('dragover');
-                        const file = e.dataTransfer.files[0];
-                        if (file) handleMediaUpload(file, input.key);
-                    });
-                }
-            }
-            
-            // Setup event listener pentru butonul de generare
-            const generateBtn = document.getElementById('generateBtn');
-            if (generateBtn) {
-                generateBtn.addEventListener('click', runWorkflow);
-            }
-            
-            // Setup event listeners pentru parametri
-            for (const group of workflowAnalysis.advancedInputs || []) {
-                for (const param of group.inputs) {
-                    const isVisible = uiConfig.visibleParams?.[param.key] !== false;
-                    if (!isVisible) continue;
-                    
-                    const input = document.getElementById(`param_${param.key}`);
-                    if (input && !input.classList.contains('random-btn')) {
-                        input.addEventListener('change', (e) => {
-                            currentParameters[param.key] = e.target.value;
-                        });
-                    }
-                }
-            }
-            
-            // Setup event listeners pentru butoanele random
-            document.querySelectorAll('.random-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const paramKey = btn.dataset.param;
-                    const randomSeed = generateRandomSeed();
-                    const input = document.getElementById(`param_${paramKey}`);
-                    if (input) {
-                        input.value = randomSeed;
-                        currentParameters[paramKey] = randomSeed;
-                        input.style.borderColor = '#4ade80';
-                        setTimeout(() => { input.style.borderColor = ''; }, 1000);
-                    }
-                });
+            // Listeners
+            document.getElementById('generateBtn').addEventListener('click', runWorkflow);
+            document.querySelectorAll('.random-btn').forEach(b => b.addEventListener('click', () => {
+                const k = b.dataset.param;
+                const s = generateRandomSeed();
+                const i = document.getElementById(`param_${k}`);
+                if (i) { i.value = s; currentParameters[k] = s; }
+            }));
+            document.querySelectorAll('.auto-random-check').forEach(c => c.addEventListener('change', () => {
+                const k = c.dataset.param;
+                autoRandomSeed[k] = c.checked;
+                const i = document.getElementById(`param_${k}`);
+                if (i) { i.disabled = c.checked; i.style.opacity = c.checked ? '0.5' : '1'; }
+            }));
+            sortedInputs.forEach(i => {
+                const f = document.getElementById(`file_${i.key}`);
+                if (f) f.addEventListener('change', (e) => { if (e.target.files[0]) handleMediaUpload(e.target.files[0], i.key); });
             });
-            
-            // Setup event listeners pentru checkbox-urile auto-random
-            document.querySelectorAll('.auto-random-check').forEach(checkbox => {
-                checkbox.addEventListener('change', (e) => {
-                    const paramKey = checkbox.dataset.param;
-                    const isChecked = checkbox.checked;
-                    autoRandomSeed[paramKey] = isChecked;
-                    
-                    const seedInput = document.getElementById(`param_${paramKey}`);
-                    if (seedInput) {
-                        seedInput.disabled = isChecked;
-                        if (isChecked) {
-                            seedInput.style.opacity = '0.6';
-                            // Generează un seed random acum
-                            const randomSeed = generateRandomSeed();
-                            seedInput.value = randomSeed;
-                            currentParameters[paramKey] = randomSeed;
-                        } else {
-                            seedInput.style.opacity = '1';
-                        }
-                    }
-                });
-            });
+            if (workflowAnalysis.advancedInputs) {
+                workflowAnalysis.advancedInputs.forEach(g => g.inputs.forEach(p => {
+                    const i = document.getElementById(`param_${p.key}`);
+                    if (i && i.tagName !== 'BUTTON') i.addEventListener('change', (e) => { currentParameters[p.key] = e.target.value; });
+                }));
+            }
         }
         
-        // Escape HTML
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
+        function escapeHtml(t) { if (!t) return ''; const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
         
-        // Health check
         async function checkHealth() {
             try {
-                const response = await fetch('/api/health');
-                const data = await response.json();
-                if (data.status === 'ok') {
-                    statusDiv.innerHTML = '<span class="status-online">✅ Conectat la server</span>';
-                } else {
-                    statusDiv.innerHTML = '<span class="status-offline">❌ Server indisponibil</span>';
-                }
+                const res = await fetch('/api/health');
+                const data = await res.json();
+                statusDiv.innerHTML = data.status === 'ok' ? `<i data-lucide="check-circle" style="color: var(--success); width: 14px; height: 14px;"></i> <span class="status-online" data-i18n="connected">Connected</span>` : `<i data-lucide="alert-circle" style="color: var(--error); width: 14px; height: 14px;"></i> <span class="status-offline" data-i18n="disconnected">Disconnected</span>`;
+                lucide.createIcons();
+                translatePage(langSelect.value);
             } catch (error) {
-                statusDiv.innerHTML = '<span class="status-offline">❌ Nu mă pot conecta la server</span>';
+                statusDiv.innerHTML = `<i data-lucide="alert-circle" style="color: var(--error); width: 14px; height: 14px;"></i> <span class="status-offline" data-i18n="server_unavailable">Unavailable</span>`;
+                lucide.createIcons();
+                translatePage(langSelect.value);
             }
         }
         
-        // Expune funcții global
         window.usePreset = usePreset;
-        
-        // Inițializare
         loadWorkflows();
         checkHealth();
         setInterval(checkHealth, 30000);

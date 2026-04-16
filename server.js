@@ -27,8 +27,6 @@ if (!fs.existsSync('workflows/saved')) fs.mkdirSync('workflows/saved');
 // Store pentru workflow-ul curent
 let currentWorkflowData = null;
 let uiConfig = null;
-let cloudflareProcess = null;
-let currentTunnelUrl = null;
 let originalWorkflowValues = {}; // Stochează valorile originale din workflow
 
 // WebSocket connection
@@ -867,25 +865,6 @@ adminApp.post('/api/workflow/run', async (req, res) => {
     }
 });
 
-// Tunnel endpoints
-adminApp.post('/api/tunnel/start', async (req, res) => {
-    try {
-        const url = await startCloudflareTunnel();
-        res.json({ success: true, url });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-adminApp.post('/api/tunnel/stop', (req, res) => {
-    stopCloudflareTunnel();
-    res.json({ success: true });
-});
-
-adminApp.get('/api/tunnel/status', (req, res) => {
-    res.json({ running: cloudflareProcess !== null, url: currentTunnelUrl });
-});
-
 // Health check admin
 adminApp.get('/api/health', async (req, res) => {
     try {
@@ -1170,72 +1149,6 @@ publicApp.get('/api/health', async (req, res) => {
         res.json({ status: 'error', comfyui: 'disconnected' });
     }
 });
-
-// ============ FUNCȚII TUNNEL ============
-
-function startCloudflareTunnel() {
-    return new Promise((resolve, reject) => {
-        if (cloudflareProcess) {
-            console.log('Cloudflare tunnel deja rulează');
-            resolve(currentTunnelUrl);
-            return;
-        }
-        
-        console.log('🚀 Pornire Cloudflare Tunnel pe portul', PUBLIC_PORT);
-        
-        cloudflareProcess = spawn('cloudflared', ['tunnel', '--url', `http://127.0.0.1:${PUBLIC_PORT}`]);
-        
-        cloudflareProcess.stdout.on('data', (data) => {
-            const text = data.toString();
-            console.log('cloudflared:', text);
-            
-            const urlMatch = text.match(/https:\/\/[a-zA-Z0-9.-]+\.trycloudflare\.com/);
-            if (urlMatch && !currentTunnelUrl) {
-                currentTunnelUrl = urlMatch[0];
-                console.log('✅ Tunnel URL:', currentTunnelUrl);
-                resolve(currentTunnelUrl);
-            }
-        });
-        
-        cloudflareProcess.stderr.on('data', (data) => {
-            const text = data.toString();
-            console.error('cloudflared stderr:', text);
-            
-            const urlMatch = text.match(/https:\/\/[a-zA-Z0-9.-]+\.trycloudflare\.com/);
-            if (urlMatch && !currentTunnelUrl) {
-                currentTunnelUrl = urlMatch[0];
-                console.log('✅ Tunnel URL:', currentTunnelUrl);
-                resolve(currentTunnelUrl);
-            }
-        });
-        
-        cloudflareProcess.on('error', (err) => {
-            console.error('Failed to start cloudflared:', err);
-            reject(err);
-        });
-        
-        cloudflareProcess.on('close', (code) => {
-            console.log('cloudflared process exited with code', code);
-            cloudflareProcess = null;
-            currentTunnelUrl = null;
-        });
-        
-        setTimeout(() => {
-            if (!currentTunnelUrl) {
-                reject(new Error('Nu s-a putut obține URL-ul tunnelului. Asigură-te că cloudflared este instalat.'));
-            }
-        }, 10000);
-    });
-}
-
-function stopCloudflareTunnel() {
-    if (cloudflareProcess) {
-        console.log('🛑 Oprire Cloudflare Tunnel');
-        cloudflareProcess.kill();
-        cloudflareProcess = null;
-        currentTunnelUrl = null;
-    }
-}
 
 // ============ PORNIRE SERVER ============
 
