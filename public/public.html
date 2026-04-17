@@ -368,6 +368,7 @@
         const resultsContainer = document.getElementById('resultsContainer');
         const resultArea = document.getElementById('resultArea');
         const langSelect = document.getElementById('langSelect');
+        const adminViewLink = document.querySelector('[data-i18n="admin_view"]');
 
         // Language
         langSelect.value = localStorage.getItem('preferredLanguage') || 'en';
@@ -379,6 +380,7 @@
         
         async function loadWorkflows() {
             try {
+                console.log('Loading workflows...');
                 const res = await fetch('/api/workflows/list');
                 const data = await res.json();
                 if (data.success && data.workflows) {
@@ -386,7 +388,9 @@
                     workflowSelect.innerHTML = `<option value="">-- ${getTranslation('select_workflow_menu', currentLang)} --</option>` +
                         data.workflows.map(wf => `<option value="${wf.id}">${escapeHtml(wf.name)}</option>`).join('');
                 }
-            } catch (error) {}
+            } catch (error) {
+                console.error('Error loading workflows:', error);
+            }
         }
         
         workflowSelect.addEventListener('change', async () => {
@@ -407,6 +411,7 @@
                 const data = await res.json();
                 
                 if (data.success) {
+                    console.log('Workflow loaded:', id);
                     currentWorkflowId = id;
                     workflowAnalysis = data.analysis;
                     workflowPresets = data.presets || [];
@@ -419,7 +424,9 @@
                     }
                     renderInterface();
                 }
-            } catch (error) {}
+            } catch (error) {
+                console.error('Error loading workflow:', error);
+            }
         }
         
         async function handleMediaUpload(file, inputKey) {
@@ -600,6 +607,18 @@
             }
         }
         
+        async function updateNavigationLinks() {
+            try {
+                const response = await fetch('/api/config');
+                const data = await response.json();
+                if (data.adminPort && adminViewLink) {
+                    adminViewLink.href = `${window.location.protocol}//${window.location.hostname}:${data.adminPort}/index.html`;
+                }
+            } catch (error) {
+                console.error('Error updating navigation links:', error);
+            }
+        }
+
         function escapeHtml(t) { if (!t) return ''; const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
         
         async function checkHealth() {
@@ -619,6 +638,7 @@
         window.usePreset = usePreset;
         loadWorkflows();
         checkHealth();
+        updateNavigationLinks();
         setInterval(checkHealth, 30000);
     </script>
 </body>

@@ -44,7 +44,8 @@ const translations = {
         confirm_delete_workflow: "Delete this workflow?",
         saved_msg: "Saved!",
         no_workflows: "No workflows found",
-        add_preset_hint: "Upload a workflow to add presets"
+        add_preset_hint: "Upload a workflow to add presets",
+        no_presets_msg: "No preset images"
     },
     hr: {
         app_title: "ComfyUI Remote Generator",
@@ -91,7 +92,8 @@ const translations = {
         confirm_delete_workflow: "Obrisati ovaj tijek rada?",
         saved_msg: "Spremljeno!",
         no_workflows: "Nema pronađenih tijekova rada",
-        add_preset_hint: "Prenesite tijek rada da biste dodali postavke"
+        add_preset_hint: "Prenesite tijek rada da biste dodali postavke",
+        no_presets_msg: "Nema unaprijed postavljenih slika"
     },
     sl: {
         app_title: "ComfyUI Remote Generator",
@@ -138,7 +140,8 @@ const translations = {
         confirm_delete_workflow: "Izbrišem ta delovni proces?",
         saved_msg: "Shranjeno!",
         no_workflows: "Ni najdenih delovnih procesov",
-        add_preset_hint: "Naložite delovni proces za dodajanje prednastavitev"
+        add_preset_hint: "Naložite delovni proces za dodajanje prednastavitev",
+        no_presets_msg: "Ni prednastavljenih slik"
     },
     sk: {
         app_title: "ComfyUI Remote Generator",
@@ -185,7 +188,8 @@ const translations = {
         confirm_delete_workflow: "Odstrániť tento pracovný postup?",
         saved_msg: "Uložené!",
         no_workflows: "Nenašli sa žiadne pracovné postupy",
-        add_preset_hint: "Nahrajte pracovný postup a pridajte predvoľby"
+        add_preset_hint: "Nahrajte pracovný postup a pridajte predvoľby",
+        no_presets_msg: "Žiadne prednastavené obrázky"
     },
     ro: {
         app_title: "ComfyUI Remote Generator",
@@ -232,7 +236,8 @@ const translations = {
         confirm_delete_workflow: "Sigur dorești să ștergi acest workflow?",
         saved_msg: "Salvat!",
         no_workflows: "Nu există workflow-uri",
-        add_preset_hint: "Încarcă un workflow pentru a adăuga preseturi"
+        add_preset_hint: "Încarcă un workflow pentru a adăuga preseturi",
+        no_presets_msg: "Nicio imagine presetată"
     }
 };
 
@@ -245,7 +250,7 @@ function translatePage(lang) {
             if (el.tagName === 'INPUT' && (el.type === 'text' || el.type === 'password') || el.tagName === 'TEXTAREA') {
                 el.placeholder = translations[lang][key];
             } else {
-                el.innerText = translations[lang][key];
+                el.textContent = translations[lang][key];
             }
         }
     });

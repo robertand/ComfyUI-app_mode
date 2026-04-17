@@ -300,7 +300,7 @@
             background: var(--primary);
             border: none;
         }
-        
+
         .btn-primary:hover:not(:disabled) {
             background: var(--primary-hover);
         }
@@ -498,6 +498,7 @@
         const selectAllParamsBtn = document.getElementById('selectAllParamsBtn');
         const deselectAllParamsBtn = document.getElementById('deselectAllParamsBtn');
         const langSelect = document.getElementById('langSelect');
+        const userViewLink = document.querySelector('[data-i18n="user_view"]');
         
         sidebarToggle.addEventListener('click', () => {
             sidebar.classList.toggle('open');
@@ -539,7 +540,8 @@
             }
             
             if (workflowPresets.length === 0) {
-                presetManagerList.innerHTML = `<div style="color: var(--text-muted); padding: 10px; text-align: center; font-size: 0.875rem;">Nicio imagine presetată</div>`;
+                presetManagerList.innerHTML = `<div style="color: var(--text-muted); padding: 10px; text-align: center; font-size: 0.875rem;" data-i18n="no_presets_msg">Nicio imagine presetată</div>`;
+                translatePage(langSelect.value);
                 return;
             }
             
@@ -670,6 +672,7 @@
         
         async function loadWorkflowList() {
             try {
+                console.log('Loading workflow list...');
                 const response = await fetch('/api/workflows/list');
                 const data = await response.json();
                 
@@ -710,7 +713,9 @@
                 } else {
                     workflowList.innerHTML = `<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.875rem;">${getTranslation('no_workflows')}</div>`;
                 }
-            } catch (error) {}
+            } catch (error) {
+                console.error('Error loading workflow list:', error);
+            }
         }
         
         async function deleteWorkflowById(id) {
@@ -726,6 +731,7 @@
         
         async function loadWorkflowById(id) {
             try {
+                console.log('Loading workflow:', id);
                 const response = await fetch(`/api/workflows/load/${id}`, { method: 'POST' });
                 const data = await response.json();
                 
@@ -770,7 +776,9 @@
                     workflowName.value = data.metadata?.name || workflowAnalysis.title || 'Workflow';
                     workflowDescription.value = data.metadata?.description || '';
                 }
-            } catch (error) {}
+            } catch (error) {
+                console.error('Error loading workflow:', error);
+            }
         }
         
         async function uploadWorkflow(file) {
@@ -1133,6 +1141,18 @@
             } finally { btn.disabled = false; }
         }
         
+        async function updateNavigationLinks() {
+            try {
+                const response = await fetch('/api/config');
+                const data = await response.json();
+                if (data.publicPort && userViewLink) {
+                    userViewLink.href = `${window.location.protocol}//${window.location.hostname}:${data.publicPort}/public.html`;
+                }
+            } catch (error) {
+                console.error('Error updating navigation links:', error);
+            }
+        }
+
         function escapeHtml(t) { if (!t) return ''; const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
         
         async function checkHealth() {
@@ -1155,6 +1175,7 @@
         
         loadWorkflowList();
         checkHealth();
+        updateNavigationLinks();
         setInterval(checkHealth, 30000);
     </script>
 </body>
