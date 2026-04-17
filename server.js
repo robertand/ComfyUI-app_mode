@@ -11,7 +11,7 @@ const net = require('net');
 // ============ CONFIGURARE ============
 let ADMIN_PORT = parseInt(process.env.ADMIN_PORT) || 3001;
 let PUBLIC_PORT = parseInt(process.env.PUBLIC_PORT) || 3002;
-const COMFYUI_URL = process.env.COMFYUI_URL || 'http://127.0.0.1:8188';
+const COMFYUI_URL = process.env.COMFYUI_URL || 'http://10.135.144.12:8013';
 
 // Funcție pentru a găsi un port liber
 async function findFreePort(startPort) {
