@@ -368,6 +368,7 @@
         const resultsContainer = document.getElementById('resultsContainer');
         const resultArea = document.getElementById('resultArea');
         const langSelect = document.getElementById('langSelect');
+        const adminViewLink = document.querySelector('[data-i18n="admin_view"]');
 
         // Language
         langSelect.value = localStorage.getItem('preferredLanguage') || 'en';
@@ -606,6 +607,18 @@
             }
         }
         
+        async function updateNavigationLinks() {
+            try {
+                const response = await fetch('/api/config');
+                const data = await response.json();
+                if (data.adminPort && adminViewLink) {
+                    adminViewLink.href = `${window.location.protocol}//${window.location.hostname}:${data.adminPort}/index.html`;
+                }
+            } catch (error) {
+                console.error('Error updating navigation links:', error);
+            }
+        }
+
         function escapeHtml(t) { if (!t) return ''; const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
         
         async function checkHealth() {
@@ -625,6 +638,7 @@
         window.usePreset = usePreset;
         loadWorkflows();
         checkHealth();
+        updateNavigationLinks();
         setInterval(checkHealth, 30000);
     </script>
 </body>

@@ -6,11 +6,28 @@ const fs = require('fs');
 const WebSocket = require('ws');
 const FormData = require('form-data');
 const { spawn } = require('child_process');
+const net = require('net');
 
 // ============ CONFIGURARE ============
-const ADMIN_PORT = process.env.ADMIN_PORT || 3001;
-const PUBLIC_PORT = process.env.PUBLIC_PORT || 3002;
+let ADMIN_PORT = parseInt(process.env.ADMIN_PORT) || 3001;
+let PUBLIC_PORT = parseInt(process.env.PUBLIC_PORT) || 3002;
 const COMFYUI_URL = process.env.COMFYUI_URL || 'http://127.0.0.1:8188';
+
+// Funcție pentru a găsi un port liber
+async function findFreePort(startPort) {
+    return new Promise((resolve) => {
+        const server = net.createServer();
+        server.on('error', () => {
+            resolve(findFreePort(startPort + 1));
+        });
+        server.listen(startPort, '0.0.0.0', () => {
+            const { port } = server.address();
+            server.close(() => {
+                resolve(port);
+            });
+        });
+    });
+}
 
 // Configurare upload
 const upload = multer({ 
@@ -447,6 +464,12 @@ adminApp.use('/output', express.static('output', {
 // Server Public (port 3002)
 const publicApp = express();
 publicApp.use(express.json({ limit: '100mb' }));
+
+// Serve public.html for root on public port
+publicApp.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'public.html'));
+});
+
 publicApp.use(express.static('public'));
 publicApp.use('/output', express.static('output', {
     setHeaders: (res, filePath) => {
@@ -875,6 +898,11 @@ adminApp.post('/api/workflow/run', async (req, res) => {
     }
 });
 
+// Port config endpoint
+adminApp.get('/api/config', (req, res) => {
+    res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT });
+});
+
 // Health check admin
 adminApp.get('/api/health', async (req, res) => {
     try {
@@ -887,11 +915,6 @@ adminApp.get('/api/health', async (req, res) => {
 });
 
 // ============ RUTE PUBLIC ============
-
-// Serve public page
-publicApp.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'public.html'));
-});
 
 // Lista workflow-uri pentru public
 publicApp.get('/api/workflows/list', (req, res) => {
@@ -1158,6 +1181,11 @@ publicApp.post('/api/workflow/run', async (req, res) => {
     }
 });
 
+// Port config endpoint
+publicApp.get('/api/config', (req, res) => {
+    res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT });
+});
+
 // Health check public
 publicApp.get('/api/health', async (req, res) => {
     try {
@@ -1171,22 +1199,32 @@ publicApp.get('/api/health', async (req, res) => {
 
 // ============ PORNIRE SERVER ============
 
-adminApp.listen(ADMIN_PORT, '0.0.0.0', () => {
-    console.log(`
-    🔧 ADMIN INTERFACE
-    📡 http://localhost:${ADMIN_PORT}
-    `);
-});
+async function startServers() {
+    ADMIN_PORT = await findFreePort(ADMIN_PORT);
+    // Asigurăm că PUBLIC_PORT nu este același cu ADMIN_PORT
+    if (PUBLIC_PORT <= ADMIN_PORT) PUBLIC_PORT = ADMIN_PORT + 1;
+    PUBLIC_PORT = await findFreePort(PUBLIC_PORT);
 
-publicApp.listen(PUBLIC_PORT, '0.0.0.0', () => {
-    console.log(`
-    🌐 PUBLIC INTERFACE
-    📡 http://localhost:${PUBLIC_PORT}
-    `);
-});
+    adminApp.listen(ADMIN_PORT, '0.0.0.0', () => {
+        console.log(`
+        🔧 ADMIN INTERFACE
+        📡 http://localhost:${ADMIN_PORT}
+        `);
+    });
 
-console.log(`
-🚀 ComfyUI Remote Interface
-🔗 ComfyUI: ${COMFYUI_URL}
-📁 Workflows: workflows/saved/
-`);
+    publicApp.listen(PUBLIC_PORT, '0.0.0.0', () => {
+        console.log(`
+        🌐 PUBLIC INTERFACE
+        📡 http://localhost:${PUBLIC_PORT}
+        `);
+    });
+
+    console.log(`
+    🚀 ComfyUI Remote Interface
+    🔗 ComfyUI: ${COMFYUI_URL}
+    📁 Workflows: workflows/saved/
+    `);
+}
+
+startServers();
+

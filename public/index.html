@@ -498,6 +498,7 @@
         const selectAllParamsBtn = document.getElementById('selectAllParamsBtn');
         const deselectAllParamsBtn = document.getElementById('deselectAllParamsBtn');
         const langSelect = document.getElementById('langSelect');
+        const userViewLink = document.querySelector('[data-i18n="user_view"]');
         
         sidebarToggle.addEventListener('click', () => {
             sidebar.classList.toggle('open');
@@ -1140,6 +1141,18 @@
             } finally { btn.disabled = false; }
         }
         
+        async function updateNavigationLinks() {
+            try {
+                const response = await fetch('/api/config');
+                const data = await response.json();
+                if (data.publicPort && userViewLink) {
+                    userViewLink.href = `${window.location.protocol}//${window.location.hostname}:${data.publicPort}/public.html`;
+                }
+            } catch (error) {
+                console.error('Error updating navigation links:', error);
+            }
+        }
+
         function escapeHtml(t) { if (!t) return ''; const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
         
         async function checkHealth() {
@@ -1162,6 +1175,7 @@
         
         loadWorkflowList();
         checkHealth();
+        updateNavigationLinks();
         setInterval(checkHealth, 30000);
     </script>
 </body>
