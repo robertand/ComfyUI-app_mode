@@ -484,7 +484,16 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ mediaFiles, parameters: params, workflowId: currentWorkflowId, bypassedNodes })
                 });
-                const data = await res.json();
+
+                let data;
+                const responseText = await res.text();
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    console.error('Failed to parse JSON response:', responseText);
+                    throw new Error(`Server returned invalid response: ${responseText.substring(0, 200)}...`);
+                }
+
                 if (data.error) {
                     resultArea.innerHTML = `<div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--error); border-radius: 8px; color: var(--error); font-size: 0.875rem; display: flex; align-items: flex-start; gap: 12px;"><i data-lucide="alert-circle" style="flex-shrink: 0; width: 18px; height: 18px;"></i> <span>${escapeHtml(data.error)}</span></div>`;
                     lucide.createIcons();

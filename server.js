@@ -142,14 +142,23 @@ function applyBypass(workflow, bypassedNodes) {
 
         if (sourceLink) {
             console.log(`🌉 Bridging node ${nodeId} (${type}) -> Source: Node ${sourceLink[0]}, Output ${sourceLink[1]}`);
+        } else {
+            console.log(`⚠️ Node ${nodeId} (${type}) has no source to bridge. Removing downstream links.`);
+        }
 
-            // Re-rutăm toate nodurile care depind de acest nod
-            for (const otherNode of Object.values(workflow)) {
-                if (!otherNode.inputs) continue;
-                for (const [inputName, inputVal] of Object.entries(otherNode.inputs)) {
-                    if (Array.isArray(inputVal) && inputVal[0] === nodeId) {
+        // Re-rutăm toate nodurile care depind de acest nod
+        for (const otherNodeId in workflow) {
+            const otherNode = workflow[otherNodeId];
+            if (!otherNode.inputs) continue;
+
+            for (const [inputName, inputVal] of Object.entries(otherNode.inputs)) {
+                if (Array.isArray(inputVal) && String(inputVal[0]) === String(nodeId)) {
+                    if (sourceLink) {
                         otherNode.inputs[inputName] = sourceLink;
-                        console.log(`   - Updated ${otherNode.class_type} input "${inputName}" to point to source`);
+                        console.log(`   - Updated node ${otherNodeId} (${otherNode.class_type}) input "${inputName}" to point to source node ${sourceLink[0]}`);
+                    } else {
+                        delete otherNode.inputs[inputName];
+                        console.log(`   - Removed link from node ${otherNodeId} (${otherNode.class_type}) input "${inputName}"`);
                     }
                 }
             }
@@ -180,10 +189,11 @@ function validateWorkflowParameters(workflow, parameters) {
     for (const [nodeId, node] of Object.entries(workflow)) {
         if (!node.inputs) continue;
 
-        // Skip linked inputs (represented as arrays)
+        // Skip linked inputs (represented as arrays or special string formats like "170:167,0")
         const activeInputs = {};
         for (const [key, value] of Object.entries(node.inputs)) {
-            if (!Array.isArray(value)) {
+            const isLink = Array.isArray(value) || (typeof value === 'string' && value.includes(':') && value.includes(','));
+            if (!isLink) {
                 activeInputs[key] = value;
             }
         }
