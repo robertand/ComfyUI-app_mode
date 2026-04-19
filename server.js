@@ -11,7 +11,7 @@ const net = require('net');
 // ============ CONFIGURARE ============
 let ADMIN_PORT = parseInt(process.env.ADMIN_PORT) || 3001;
 let PUBLIC_PORT = parseInt(process.env.PUBLIC_PORT) || 3002;
-const COMFYUI_URL = process.env.COMFYUI_URL || 'http://10.135.144.12:8013';
+const COMFYUI_URL = process.env.COMFYUI_URL || 'http://127.0.0.1:8188';
 
 // Funcție pentru a găsi un port liber
 async function findFreePort(startPort) {
@@ -748,18 +748,36 @@ adminApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req,
 // Rulează workflow
 adminApp.post('/api/workflow/run', async (req, res) => {
     try {
-        const { mediaFiles, parameters } = req.body;
+        const { mediaFiles, parameters, bypassedNodes } = req.body;
         if (!currentWorkflowData || !currentWorkflowData.workflowApi) {
             return res.status(400).json({ error: 'Nu există workflow încărcat' });
         }
         
         const workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi));
+
+        // Aplicăm bypass-ul pentru noduri
+        if (bypassedNodes) {
+            for (const [nodeId, isBypassed] of Object.entries(bypassedNodes)) {
+                if (isBypassed && workflow[nodeId]) {
+                    console.log(`🔇 Bypassing node ${nodeId} (${workflow[nodeId].class_type})`);
+                    // În formatul API, cea mai simplă metodă de a face bypass este eliminarea nodului
+                    // dacă este un nod de output, sau gestionarea erorilor dacă este un nod intermediar.
+                    // ComfyUI nu are un flag de "bypass" în formatul API, se face prin mutarea legăturilor.
+                    // Pentru început, eliminăm nodurile de output.
+                    const type = workflow[nodeId].class_type;
+                    if (type.includes('Save') || type.includes('Preview') || type.includes('Combine')) {
+                        delete workflow[nodeId];
+                    }
+                }
+            }
+        }
         
         // Înlocuim fișierele media
         for (const [inputKey, filename] of Object.entries(mediaFiles || {})) {
             for (const inputGroup of currentWorkflowData.analysis.inputs) {
                 for (const input of inputGroup.inputs || []) {
                     if (input.key === inputKey && input.nodeId && workflow[input.nodeId]) {
+                        if (bypassedNodes && bypassedNodes[input.nodeId]) continue;
                         workflow[input.nodeId].inputs[input.inputName] = filename;
                     }
                 }
@@ -792,6 +810,7 @@ adminApp.post('/api/workflow/run', async (req, res) => {
             for (const paramGroup of currentWorkflowData.analysis.advancedInputs) {
                 for (const param of paramGroup.inputs || []) {
                     if (param.key === paramKey && param.nodeId && workflow[param.nodeId]) {
+                        if (bypassedNodes && bypassedNodes[param.nodeId]) continue;
                         let finalValue = value;
                         if (param.valueType === 'number' || param.valueType === 'float') {
                             finalValue = parseFloat(value);
@@ -1031,7 +1050,7 @@ publicApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req
 // Rulează workflow pentru public
 publicApp.post('/api/workflow/run', async (req, res) => {
     try {
-        const { mediaFiles, parameters, workflowId } = req.body;
+        const { mediaFiles, parameters, workflowId, bypassedNodes } = req.body;
         
         const savedDir = path.join('workflows', 'saved');
         const files = fs.readdirSync(savedDir);
@@ -1041,6 +1060,19 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         const filePath = path.join(savedDir, file);
         const savedData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         const workflow = JSON.parse(JSON.stringify(savedData.analysis.workflowApi));
+
+        // Aplicăm bypass-ul pentru noduri
+        if (bypassedNodes) {
+            for (const [nodeId, isBypassed] of Object.entries(bypassedNodes)) {
+                if (isBypassed && workflow[nodeId]) {
+                    console.log(`🔇 Bypassing node ${nodeId} (${workflow[nodeId].class_type})`);
+                    const type = workflow[nodeId].class_type;
+                    if (type.includes('Save') || type.includes('Preview') || type.includes('Combine')) {
+                        delete workflow[nodeId];
+                    }
+                }
+            }
+        }
         const analysis = savedData.analysis;
         
         // Extrage valorile originale
@@ -1050,6 +1082,7 @@ publicApp.post('/api/workflow/run', async (req, res) => {
             for (const inputGroup of analysis.inputs) {
                 for (const input of inputGroup.inputs || []) {
                     if (input.key === inputKey && input.nodeId && workflow[input.nodeId]) {
+                        if (bypassedNodes && bypassedNodes[input.nodeId]) continue;
                         workflow[input.nodeId].inputs[input.inputName] = filename;
                     }
                 }
@@ -1079,6 +1112,7 @@ publicApp.post('/api/workflow/run', async (req, res) => {
             for (const paramGroup of analysis.advancedInputs) {
                 for (const param of paramGroup.inputs || []) {
                     if (param.key === paramKey && param.nodeId && workflow[param.nodeId]) {
+                        if (bypassedNodes && bypassedNodes[param.nodeId]) continue;
                         let finalValue = value;
                         if (param.valueType === 'number' || param.valueType === 'float') {
                             finalValue = parseFloat(value);
