@@ -11,7 +11,7 @@ const net = require('net');
 // ============ CONFIGURARE ============
 let ADMIN_PORT = parseInt(process.env.ADMIN_PORT) || 3001;
 let PUBLIC_PORT = parseInt(process.env.PUBLIC_PORT) || 3002;
-const COMFYUI_URL = process.env.COMFYUI_URL || 'http://10.135.144.12:8013';
+const COMFYUI_URL = process.env.COMFYUI_URL || 'http://127.0.0.1:8188';
 
 // Funcție pentru a găsi un port liber
 async function findFreePort(startPort) {
@@ -106,6 +106,71 @@ function extractOriginalWorkflowValues(workflowApi) {
     return values;
 }
 
+// ============ LOGICĂ BYPASS ============
+
+function applyBypass(workflow, bypassedNodes) {
+    if (!bypassedNodes) return workflow;
+
+    const nodesToBypass = Object.entries(bypassedNodes)
+        .filter(([_, isBypassed]) => isBypassed)
+        .map(([nodeId, _]) => nodeId);
+
+    for (const nodeId of nodesToBypass) {
+        if (!workflow[nodeId]) continue;
+
+        const node = workflow[nodeId];
+        const type = node.class_type || "";
+
+        // Noduri de output - le ștergem pur și simplu
+        if (type.includes('Save') || type.includes('Preview') || type.includes('Combine')) {
+            console.log(`🗑️ Deleting output node ${nodeId} (${type})`);
+            delete workflow[nodeId];
+            continue;
+        }
+
+        // Noduri intermediare - încercăm să facem "bridge" (pod)
+        // Căutăm prima intrare care este un link (un array)
+        let sourceLink = null;
+        if (node.inputs) {
+            for (const inputVal of Object.values(node.inputs)) {
+                if (Array.isArray(inputVal)) {
+                    sourceLink = inputVal;
+                    break;
+                }
+            }
+        }
+
+        if (sourceLink) {
+            console.log(`🌉 Bridging node ${nodeId} (${type}) -> Source: Node ${sourceLink[0]}, Output ${sourceLink[1]}`);
+        } else {
+            console.log(`⚠️ Node ${nodeId} (${type}) has no source to bridge. Removing downstream links.`);
+        }
+
+        // Re-rutăm toate nodurile care depind de acest nod
+        for (const otherNodeId in workflow) {
+            const otherNode = workflow[otherNodeId];
+            if (!otherNode.inputs) continue;
+
+            for (const [inputName, inputVal] of Object.entries(otherNode.inputs)) {
+                if (Array.isArray(inputVal) && String(inputVal[0]) === String(nodeId)) {
+                    if (sourceLink) {
+                        otherNode.inputs[inputName] = sourceLink;
+                        console.log(`   - Updated node ${otherNodeId} (${otherNode.class_type}) input "${inputName}" to point to source node ${sourceLink[0]}`);
+                    } else {
+                        delete otherNode.inputs[inputName];
+                        console.log(`   - Removed link from node ${otherNodeId} (${otherNode.class_type}) input "${inputName}"`);
+                    }
+                }
+            }
+        }
+
+        console.log(`🔇 Bypassed node ${nodeId} (${type})`);
+        delete workflow[nodeId];
+    }
+
+    return workflow;
+}
+
 // ============ VALIDARE PARAMETRI WORKFLOW ============
 
 function validateWorkflowParameters(workflow, parameters) {
@@ -123,6 +188,15 @@ function validateWorkflowParameters(workflow, parameters) {
     
     for (const [nodeId, node] of Object.entries(workflow)) {
         if (!node.inputs) continue;
+
+        // Skip linked inputs (represented as arrays or special string formats like "170:167,0")
+        const activeInputs = {};
+        for (const [key, value] of Object.entries(node.inputs)) {
+            const isLink = Array.isArray(value) || (typeof value === 'string' && value.includes(':') && value.includes(','));
+            if (!isLink) {
+                activeInputs[key] = value;
+            }
+        }
         
         // Detectează noduri video/generare
         const isVideoNode = node.class_type && (
@@ -137,20 +211,20 @@ function validateWorkflowParameters(workflow, parameters) {
         
         if (isVideoNode) {
             // Validează length/num_frames
-            if (node.inputs.length !== undefined) {
-                let length = parseFloat(node.inputs.length);
+            if (activeInputs.length !== undefined) {
+                let length = parseFloat(activeInputs.length);
                 if (isNaN(length) || length <= 0 || length > MAX_FRAMES) {
-                    const oldValue = node.inputs.length;
+                    const oldValue = activeInputs.length;
                     node.inputs.length = 25;
                     warnings.push(`[${node.class_type}] Length invalid: ${oldValue} → setat la 25`);
                     console.warn(`⚠️ Length invalid în nodul ${nodeId}: ${oldValue} → setat la 25`);
                 }
             }
             
-            if (node.inputs.num_frames !== undefined) {
-                let numFrames = parseFloat(node.inputs.num_frames);
+            if (activeInputs.num_frames !== undefined) {
+                let numFrames = parseFloat(activeInputs.num_frames);
                 if (isNaN(numFrames) || numFrames <= 0 || numFrames > MAX_FRAMES) {
-                    const oldValue = node.inputs.num_frames;
+                    const oldValue = activeInputs.num_frames;
                     node.inputs.num_frames = 25;
                     warnings.push(`[${node.class_type}] Num_frames invalid: ${oldValue} → setat la 25`);
                     console.warn(`⚠️ Num_frames invalid în nodul ${nodeId}: ${oldValue} → setat la 25`);
@@ -158,10 +232,10 @@ function validateWorkflowParameters(workflow, parameters) {
             }
             
             // Validează frame_rate - CRITIC: nu poate fi 0
-            if (node.inputs.frame_rate !== undefined) {
-                let frameRate = parseFloat(node.inputs.frame_rate);
+            if (activeInputs.frame_rate !== undefined) {
+                let frameRate = parseFloat(activeInputs.frame_rate);
                 if (isNaN(frameRate) || frameRate <= 0) {
-                    const oldValue = node.inputs.frame_rate;
+                    const oldValue = activeInputs.frame_rate;
                     node.inputs.frame_rate = 24; // Valoare implicită sigură
                     warnings.push(`[${node.class_type}] Frame_rate invalid: ${oldValue} → setat la 24`);
                     console.warn(`⚠️ Frame_rate invalid în nodul ${nodeId}: ${oldValue} → setat la 24`);
@@ -169,10 +243,10 @@ function validateWorkflowParameters(workflow, parameters) {
             }
             
             // Validează width
-            if (node.inputs.width !== undefined) {
-                let width = parseInt(node.inputs.width);
+            if (activeInputs.width !== undefined) {
+                let width = parseInt(activeInputs.width);
                 if (isNaN(width) || width < MIN_WIDTH || width > MAX_WIDTH) {
-                    const oldValue = node.inputs.width;
+                    const oldValue = activeInputs.width;
                     node.inputs.width = 768;
                     warnings.push(`[${node.class_type}] Width invalid: ${oldValue} → setat la 768`);
                     console.warn(`⚠️ Width invalid în nodul ${nodeId}: ${oldValue} → setat la 768`);
@@ -180,10 +254,10 @@ function validateWorkflowParameters(workflow, parameters) {
             }
             
             // Validează height
-            if (node.inputs.height !== undefined) {
-                let height = parseInt(node.inputs.height);
+            if (activeInputs.height !== undefined) {
+                let height = parseInt(activeInputs.height);
                 if (isNaN(height) || height < MIN_HEIGHT || height > MAX_HEIGHT) {
-                    const oldValue = node.inputs.height;
+                    const oldValue = activeInputs.height;
                     node.inputs.height = 512;
                     warnings.push(`[${node.class_type}] Height invalid: ${oldValue} → setat la 512`);
                     console.warn(`⚠️ Height invalid în nodul ${nodeId}: ${oldValue} → setat la 512`);
@@ -192,10 +266,10 @@ function validateWorkflowParameters(workflow, parameters) {
         }
         
         // Validează batch_size
-        if (node.inputs.batch_size !== undefined) {
-            let batchSize = parseInt(node.inputs.batch_size);
+        if (activeInputs.batch_size !== undefined) {
+            let batchSize = parseInt(activeInputs.batch_size);
             if (isNaN(batchSize) || batchSize < 1 || batchSize > MAX_BATCH_SIZE) {
-                const oldValue = node.inputs.batch_size;
+                const oldValue = activeInputs.batch_size;
                 node.inputs.batch_size = 1;
                 warnings.push(`[${node.class_type}] Batch size invalid: ${oldValue} → setat la 1`);
                 console.warn(`⚠️ Batch size invalid în nodul ${nodeId}: ${oldValue} → setat la 1`);
@@ -203,10 +277,10 @@ function validateWorkflowParameters(workflow, parameters) {
         }
         
         // Validează steps
-        if (node.inputs.steps !== undefined) {
-            let steps = parseInt(node.inputs.steps);
+        if (activeInputs.steps !== undefined) {
+            let steps = parseInt(activeInputs.steps);
             if (isNaN(steps) || steps < MIN_STEPS || steps > MAX_STEPS) {
-                const oldValue = node.inputs.steps;
+                const oldValue = activeInputs.steps;
                 node.inputs.steps = 20;
                 warnings.push(`[${node.class_type}] Steps invalid: ${oldValue} → setat la 20`);
                 console.warn(`⚠️ Steps invalid în nodul ${nodeId}: ${oldValue} → setat la 20`);
@@ -214,10 +288,10 @@ function validateWorkflowParameters(workflow, parameters) {
         }
         
         // Validează cfg
-        if (node.inputs.cfg !== undefined) {
-            let cfg = parseFloat(node.inputs.cfg);
+        if (activeInputs.cfg !== undefined) {
+            let cfg = parseFloat(activeInputs.cfg);
             if (isNaN(cfg) || cfg < MIN_CFG || cfg > MAX_CFG) {
-                const oldValue = node.inputs.cfg;
+                const oldValue = activeInputs.cfg;
                 node.inputs.cfg = 7.0;
                 warnings.push(`[${node.class_type}] CFG invalid: ${oldValue} → setat la 7.0`);
                 console.warn(`⚠️ CFG invalid în nodul ${nodeId}: ${oldValue} → setat la 7.0`);
@@ -225,10 +299,10 @@ function validateWorkflowParameters(workflow, parameters) {
         }
         
         // Validează denoise
-        if (node.inputs.denoise !== undefined) {
-            let denoise = parseFloat(node.inputs.denoise);
+        if (activeInputs.denoise !== undefined) {
+            let denoise = parseFloat(activeInputs.denoise);
             if (isNaN(denoise) || denoise < 0 || denoise > 1) {
-                const oldValue = node.inputs.denoise;
+                const oldValue = activeInputs.denoise;
                 node.inputs.denoise = 1.0;
                 warnings.push(`[${node.class_type}] Denoise invalid: ${oldValue} → setat la 1.0`);
                 console.warn(`⚠️ Denoise invalid în nodul ${nodeId}: ${oldValue} → setat la 1.0`);
@@ -236,10 +310,10 @@ function validateWorkflowParameters(workflow, parameters) {
         }
         
         // Validează seed
-        if (node.inputs.seed !== undefined) {
-            let seed = parseInt(node.inputs.seed);
+        if (activeInputs.seed !== undefined) {
+            let seed = parseInt(activeInputs.seed);
             if (isNaN(seed) || seed < 0) {
-                const oldValue = node.inputs.seed;
+                const oldValue = activeInputs.seed;
                 seed = generateRandomSeed();
                 node.inputs.seed = seed;
                 warnings.push(`[${node.class_type}] Seed invalid: ${oldValue} → generat nou: ${seed}`);
@@ -748,18 +822,22 @@ adminApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req,
 // Rulează workflow
 adminApp.post('/api/workflow/run', async (req, res) => {
     try {
-        const { mediaFiles, parameters } = req.body;
+        const { mediaFiles, parameters, bypassedNodes } = req.body;
         if (!currentWorkflowData || !currentWorkflowData.workflowApi) {
             return res.status(400).json({ error: 'Nu există workflow încărcat' });
         }
         
-        const workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi));
+        let workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi));
+
+        // Aplicăm bypass-ul pentru noduri (graph surgery)
+        workflow = applyBypass(workflow, bypassedNodes);
         
         // Înlocuim fișierele media
         for (const [inputKey, filename] of Object.entries(mediaFiles || {})) {
             for (const inputGroup of currentWorkflowData.analysis.inputs) {
                 for (const input of inputGroup.inputs || []) {
                     if (input.key === inputKey && input.nodeId && workflow[input.nodeId]) {
+                        if (bypassedNodes && bypassedNodes[input.nodeId]) continue;
                         workflow[input.nodeId].inputs[input.inputName] = filename;
                     }
                 }
@@ -792,6 +870,7 @@ adminApp.post('/api/workflow/run', async (req, res) => {
             for (const paramGroup of currentWorkflowData.analysis.advancedInputs) {
                 for (const param of paramGroup.inputs || []) {
                     if (param.key === paramKey && param.nodeId && workflow[param.nodeId]) {
+                        if (bypassedNodes && bypassedNodes[param.nodeId]) continue;
                         let finalValue = value;
                         if (param.valueType === 'number' || param.valueType === 'float') {
                             finalValue = parseFloat(value);
@@ -1031,7 +1110,7 @@ publicApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req
 // Rulează workflow pentru public
 publicApp.post('/api/workflow/run', async (req, res) => {
     try {
-        const { mediaFiles, parameters, workflowId } = req.body;
+        const { mediaFiles, parameters, workflowId, bypassedNodes } = req.body;
         
         const savedDir = path.join('workflows', 'saved');
         const files = fs.readdirSync(savedDir);
@@ -1040,7 +1119,10 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         
         const filePath = path.join(savedDir, file);
         const savedData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        const workflow = JSON.parse(JSON.stringify(savedData.analysis.workflowApi));
+        let workflow = JSON.parse(JSON.stringify(savedData.analysis.workflowApi));
+
+        // Aplicăm bypass-ul pentru noduri (graph surgery)
+        workflow = applyBypass(workflow, bypassedNodes);
         const analysis = savedData.analysis;
         
         // Extrage valorile originale
@@ -1050,6 +1132,7 @@ publicApp.post('/api/workflow/run', async (req, res) => {
             for (const inputGroup of analysis.inputs) {
                 for (const input of inputGroup.inputs || []) {
                     if (input.key === inputKey && input.nodeId && workflow[input.nodeId]) {
+                        if (bypassedNodes && bypassedNodes[input.nodeId]) continue;
                         workflow[input.nodeId].inputs[input.inputName] = filename;
                     }
                 }
@@ -1079,6 +1162,7 @@ publicApp.post('/api/workflow/run', async (req, res) => {
             for (const paramGroup of analysis.advancedInputs) {
                 for (const param of paramGroup.inputs || []) {
                     if (param.key === paramKey && param.nodeId && workflow[param.nodeId]) {
+                        if (bypassedNodes && bypassedNodes[param.nodeId]) continue;
                         let finalValue = value;
                         if (param.valueType === 'number' || param.valueType === 'float') {
                             finalValue = parseFloat(value);

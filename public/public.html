@@ -361,6 +361,7 @@
         let workflowPresets = [];
         let uiConfig = { inputOrder: [], inputNames: {}, visibleParams: {} };
         let autoRandomSeed = {};
+        let bypassedNodes = {};
         
         const workflowSelect = document.getElementById('workflowSelect');
         const statusDiv = document.getElementById('status');
@@ -478,8 +479,21 @@
             const btn = document.getElementById('generateBtn');
             btn.disabled = true;
             try {
-                const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mediaFiles, parameters: params, workflowId: currentWorkflowId }) });
-                const data = await res.json();
+                const res = await fetch('/api/workflow/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mediaFiles, parameters: params, workflowId: currentWorkflowId, bypassedNodes })
+                });
+
+                let data;
+                const responseText = await res.text();
+                try {
+                    data = JSON.parse(responseText);
+                } catch (e) {
+                    console.error('Failed to parse JSON response:', responseText);
+                    throw new Error(`Server returned invalid response: ${responseText.substring(0, 200)}...`);
+                }
+
                 if (data.error) {
                     resultArea.innerHTML = `<div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--error); border-radius: 8px; color: var(--error); font-size: 0.875rem; display: flex; align-items: flex-start; gap: 12px;"><i data-lucide="alert-circle" style="flex-shrink: 0; width: 18px; height: 18px;"></i> <span>${escapeHtml(data.error)}</span></div>`;
                     lucide.createIcons();
@@ -520,9 +534,16 @@
                     const dName = uiConfig.inputNames?.[input.key] || input.title || input.groupTitle;
                     const presets = workflowPresets.filter(p => !p.assignedInputs || p.assignedInputs.length === 0 || p.assignedInputs.includes(input.key));
                     
-                    html += `<div class="input-container">
-                        <div class="input-header"><i data-lucide="${isV ? 'film' : 'image'}" style="width: 16px; height: 16px;"></i><span class="name">${escapeHtml(dName)}</span></div>
-                        <div class="upload-area" onclick="document.getElementById('file_${input.key}').click()">
+                    const isBypassed = bypassedNodes[input.nodeId] === true;
+                    html += `<div class="input-container" style="${isBypassed ? 'opacity: 0.5; filter: grayscale(1);' : ''}">
+                        <div class="input-header">
+                            <i data-lucide="${isV ? 'film' : 'image'}" style="width: 16px; height: 16px;"></i>
+                            <span class="name">${escapeHtml(dName)}</span>
+                            <button class="bypass-btn" data-node-id="${input.nodeId}" title="${getTranslation('bypass')}" style="padding: 4px; background: ${isBypassed ? 'var(--primary)' : 'transparent'}; border-color: ${isBypassed ? 'var(--primary)' : 'var(--border)'}; margin-left: auto;">
+                                <i data-lucide="skip-forward" style="width: 14px; height: 14px;"></i>
+                            </button>
+                        </div>
+                        <div class="upload-area" onclick="${isBypassed ? '' : `document.getElementById('file_${input.key}').click()`}">
                             <i data-lucide="upload" style="width: 24px; height: 24px; color: var(--secondary);"></i>
                             <div style="font-size: 0.8125rem;"><span data-i18n="click_or_drag">Click or drag</span> ${isV ? 'video' : 'image'}</div>
                             <input type="file" id="file_${input.key}" accept="${isV ? 'video/*' : 'image/*'}" style="display: none">
@@ -544,7 +565,14 @@
                 html += `<div class="card"><h2><i data-lucide="sliders"></i> <span data-i18n="params">Parameters</span></h2>`;
                 workflowAnalysis.advancedInputs.forEach(group => {
                     let hasV = false;
-                    let gHtml = `<div style="margin-bottom: 24px;"><h3>${escapeHtml(group.title)}</h3>`;
+                    const isBypassed = bypassedNodes[group.nodeId] === true;
+                    let gHtml = `<div style="margin-bottom: 24px; ${isBypassed ? 'opacity: 0.5; filter: grayscale(1);' : ''}">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <h3>${escapeHtml(group.title)}</h3>
+                            <button class="bypass-btn" data-node-id="${group.nodeId}" title="${getTranslation('bypass')}" style="padding: 4px; background: ${isBypassed ? 'var(--primary)' : 'transparent'}; border-color: ${isBypassed ? 'var(--primary)' : 'var(--border)'};">
+                                <i data-lucide="skip-forward" style="width: 14px; height: 14px;"></i>
+                            </button>
+                        </div>`;
                     group.inputs.forEach(p => {
                         if (uiConfig.visibleParams?.[p.key] === false) return;
                         hasV = true;
@@ -581,6 +609,14 @@
             lucide.createIcons();
             translatePage(langSelect.value);
             
+            // Bypass listeners
+            document.querySelectorAll('.bypass-btn').forEach(btn => btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const nid = btn.dataset.nodeId;
+                bypassedNodes[nid] = !bypassedNodes[nid];
+                renderInterface();
+            }));
+
             // Listeners
             document.getElementById('generateBtn').addEventListener('click', runWorkflow);
             document.querySelectorAll('.random-btn').forEach(b => b.addEventListener('click', () => {
