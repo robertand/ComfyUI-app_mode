@@ -91,6 +91,17 @@
                             <!-- Populated dynamically -->
                         </div>
 
+                        <!-- Presets for User -->
+                        <div id="presets-card" class="slate-card rounded-xl p-6 shadow-xl hidden">
+                            <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
+                                <i data-lucide="layout-template" class="w-5 h-5 text-purple-500"></i>
+                                <span data-i18n="preset_images">Presets</span>
+                            </h3>
+                            <div id="presets-container" class="grid grid-cols-3 gap-3">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+
                         <div id="parameters-card" class="slate-card rounded-xl p-6 shadow-xl hidden">
                             <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
                                 <i data-lucide="sliders" class="w-5 h-5 text-blue-500"></i>
@@ -204,8 +215,34 @@
                 document.getElementById('generator-interface').classList.remove('hidden');
                 
                 renderInterface();
+                renderPresets(data.presets || []);
                 translatePage(localStorage.getItem('preferredLanguage') || 'en');
             } catch (e) { console.error(e); }
+        }
+
+        function renderPresets(presets) {
+            const container = document.getElementById('presets-container');
+            const card = document.getElementById('presets-card');
+            container.innerHTML = '';
+
+            if (!presets || presets.length === 0) {
+                card.classList.add('hidden');
+                return;
+            }
+
+            card.classList.remove('hidden');
+            presets.forEach(p => {
+                const div = document.createElement('div');
+                div.className = 'relative group aspect-square rounded-lg overflow-hidden border border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
+                div.innerHTML = `<img src="${p.url}" class="w-full h-full object-cover">`;
+                div.onclick = () => {
+                    if (p.mediaFiles) mediaFiles = { ...mediaFiles, ...p.mediaFiles };
+                    if (p.parameters) parameters = { ...parameters, ...p.parameters };
+                    if (p.bypassedNodes) bypassedNodes = { ...bypassedNodes, ...p.bypassedNodes };
+                    renderInterface();
+                };
+                container.appendChild(div);
+            });
         }
 
         async function refreshOutputs() {
@@ -224,7 +261,7 @@
                 data.files.forEach(file => {
                     const card = document.createElement('div');
                     card.className = 'slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square';
-                    
+
                     if (file.type === 'video') {
                         card.innerHTML = `<video src="${file.url}" class="w-full h-full object-cover"></video>
                                          <div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-all">
