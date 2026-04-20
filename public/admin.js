@@ -127,8 +127,9 @@ function renderMediaInputs() {
     currentWorkflow.inputs.forEach(group => {
         group.inputs.forEach(input => {
             const isVisible = uiConfig.visibleInputs[input.key] !== false;
+            const isBypassed = bypassedNodes[input.nodeId];
             const div = document.createElement('div');
-            div.className = 'space-y-3';
+            div.className = 'space-y-3 p-4 rounded-xl bg-slate-900/30 border border-slate-800/50';
 
             div.innerHTML = `
                 <div class="flex items-center justify-between">
@@ -137,8 +138,9 @@ function renderMediaInputs() {
                                ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked">
                         <span class="text-sm font-bold text-slate-300">${uiConfig.inputNames?.[input.key] || input.title}</span>
                     </div>
+                    <button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-800 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}" data-i18n="bypass">Bypass</button>
                 </div>
-                <div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer">
+                <div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
                     <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${input.key}')">
                     <div id="preview-${input.key}" class="text-center p-4">
                         <i data-lucide="${input.valueType === 'video' ? 'video' : 'image'}" class="w-8 h-8 mb-2 mx-auto text-slate-600"></i>
@@ -173,9 +175,13 @@ async function handleMediaUpload(file, inputKey) {
     } catch (e) { console.error(e); }
 }
 
-function toggleBypass(nodeId) {
+function toggleBypass(nodeId, source = 'params') {
     bypassedNodes[nodeId] = !bypassedNodes[nodeId];
-    renderParameters();
+    if (source === 'media') {
+        renderMediaInputs();
+    } else {
+        renderParameters();
+    }
 }
 
 async function runWorkflow() {
