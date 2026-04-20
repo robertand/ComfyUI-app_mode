@@ -3,1215 +3,297 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title data-i18n="app_title">ComfyUI Remote - Workflow Manager</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <title data-i18n="app_title">ComfyUI Remote Generator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --bg-main: #0f172a;
-            --bg-card: #1e293b;
-            --bg-sidebar: #0f172a;
-            --primary: #3b82f6;
-            --primary-hover: #2563eb;
-            --secondary: #64748b;
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --border: #334155;
-            --success: #10b981;
-            --error: #ef4444;
-        }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        
-        body {
-            font-family: 'Inter', system-ui, -apple-system, sans-serif;
-            background-color: var(--bg-main);
-            color: var(--text-main);
-            min-height: 100vh;
-            line-height: 1.5;
-        }
-        
-        .navbar {
-            height: 64px;
-            background: rgba(15, 23, 42, 0.8);
-            backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 24px;
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            z-index: 1001;
-        }
-
-        .navbar-brand {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            font-weight: 600;
-            font-size: 1.25rem;
-            color: var(--text-main);
-            text-decoration: none;
-        }
-
-        .navbar-actions {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .nav-link {
-            color: var(--text-muted);
-            text-decoration: none;
-            font-size: 0.875rem;
-            font-weight: 500;
-            transition: color 0.2s;
-        }
-
-        .nav-link:hover {
-            color: var(--text-main);
-        }
-
-        .lang-select {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            color: var(--text-main);
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 0.875rem;
-            cursor: pointer;
-        }
-
-        .app {
-            display: flex;
-            padding-top: 64px;
-            min-height: 100vh;
-        }
-        
-        .sidebar {
-            width: 400px;
-            background: var(--bg-sidebar);
-            border-right: 1px solid var(--border);
-            padding: 24px;
-            position: fixed;
-            height: calc(100vh - 64px);
-            left: 0;
-            top: 64px;
-            transform: translateX(-100%);
-            transition: transform 0.3s ease;
-            z-index: 1000;
-            overflow-y: auto;
-        }
-        
-        .sidebar.open { transform: translateX(0); }
-        
-        .sidebar-toggle {
-            position: fixed;
-            left: 20px;
-            bottom: 20px;
-            background: var(--primary);
-            border: none;
-            width: 48px;
-            height: 48px;
-            border-radius: 50%;
-            cursor: pointer;
-            z-index: 1002;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
-            transition: transform 0.2s;
-        }
-        
-        .sidebar-toggle:hover { transform: scale(1.05); background: var(--primary-hover); }
-        
-        .main-content {
-            flex: 1;
-            margin-left: 0;
-            transition: margin-left 0.3s ease;
-            padding: 32px;
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-        
-        .main-content.sidebar-open { margin-left: 400px; }
-        
-        .status { 
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            padding: 6px 12px;
-            border-radius: 20px;
-            background: rgba(255, 255, 255, 0.05);
-            font-size: 0.75rem;
-            font-weight: 500;
-            margin-bottom: 24px;
-        }
-        .status-online { color: var(--success); }
-        .status-offline { color: var(--error); }
-        
-        .card {
-            background: var(--bg-card);
-            border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 24px;
-            border: 1px solid var(--border);
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-        }
-        
-        .card h2 { 
-            color: var(--text-main);
-            margin-bottom: 20px; 
-            font-size: 1.125rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        h4 {
-            font-size: 0.875rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-bottom: 16px;
-            margin-top: 24px;
-        }
-        
-        .input-container {
-            margin-bottom: 20px;
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            overflow: hidden;
-            background: rgba(15, 23, 42, 0.3);
-        }
-        
-        .input-header {
-            background: rgba(15, 23, 42, 0.5);
-            padding: 12px 16px;
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .input-header .name { flex: 1; font-weight: 500; font-size: 0.875rem; }
-        
-        .upload-area {
-            border: 2px dashed var(--border);
-            border-radius: 8px;
-            padding: 32px;
-            text-align: center;
-            cursor: pointer;
-            margin: 16px;
-            background: rgba(15, 23, 42, 0.2);
-            transition: all 0.2s;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 12px;
-        }
-        
-        .upload-area:hover { border-color: var(--primary); background: rgba(59, 130, 246, 0.05); }
-        
-        .image-preview { margin: 16px; text-align: center; }
-        .image-preview img, .image-preview video { max-width: 100%; max-height: 200px; border-radius: 8px; }
-        
-        .preset-section {
-            margin: 16px;
-            padding: 16px;
-            background: rgba(15, 23, 42, 0.3);
-            border-radius: 8px;
-        }
-        
-        .preset-title {
-            font-size: 0.75rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            margin-bottom: 12px;
-        }
-        
-        .preset-list { display: flex; flex-wrap: wrap; gap: 10px; }
-        
-        .preset-thumb {
-            width: 56px;
-            height: 56px;
-            border-radius: 8px;
-            cursor: pointer;
-            object-fit: cover;
-            border: 2px solid transparent;
-            transition: all 0.2s;
-        }
-        
-        .preset-thumb:hover { border-color: var(--primary); transform: translateY(-2px); }
-        
-        .input-group { margin-bottom: 16px; }
-        .input-group label {
-            display: block;
-            margin-bottom: 6px;
-            font-size: 0.875rem;
-            font-weight: 500;
-            color: var(--text-muted);
-        }
-        
-        input, textarea, select {
-            width: 100%;
-            padding: 10px 14px;
-            background: var(--bg-main);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text-main);
-            font-size: 0.875rem;
-            font-family: inherit;
-            transition: border-color 0.2s;
-        }
-        
-        input:focus, textarea:focus, select:focus {
-            outline: none;
-            border-color: var(--primary);
-        }
-        
-        button {
-            padding: 10px 20px;
-            background: var(--bg-sidebar);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            color: var(--text-main);
-            font-size: 0.875rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-        }
-        
-        button:hover:not(:disabled) { background: var(--border); }
-
-        .btn-primary {
-            background: var(--primary);
-            border: none;
-        }
-
-        .btn-primary:hover:not(:disabled) {
-            background: var(--primary-hover);
-        }
-
-        .generate-btn {
-            width: 100%;
-            padding: 16px;
-            font-size: 1rem;
-            font-weight: 600;
-            margin-top: 24px;
-            background: var(--primary);
-            border: none;
-            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
-        }
-        
-        .workflow-item {
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 12px;
-            cursor: pointer;
-            border: 1px solid transparent;
-            transition: all 0.2s;
-        }
-        .workflow-item:hover { background: rgba(255, 255, 255, 0.05); border-color: var(--border); }
-        .workflow-item.active { background: rgba(59, 130, 246, 0.1); border-color: var(--primary); }
-        
-        .workflow-name { font-weight: 600; font-size: 0.875rem; margin-bottom: 4px; }
-        .workflow-meta { font-size: 0.75rem; color: var(--text-muted); display: flex; gap: 12px; }
-        
-        .results { margin-top: 32px; }
-        .image-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
-        .image-card {
-            background: var(--bg-card);
-            border-radius: 12px;
-            overflow: hidden;
-            border: 1px solid var(--border);
-        }
-        .image-card img, .image-card video { width: 100%; display: block; }
-        
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 3px solid rgba(59, 130, 246, 0.1);
-            border-top-color: var(--primary);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin: 0 auto 20px;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-
-        .param-group {
-            margin-bottom: 16px;
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            overflow: hidden;
-        }
-        
-        .param-group-header {
-            background: rgba(15, 23, 42, 0.4);
-            padding: 14px 18px;
-            cursor: pointer;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-weight: 500;
-            font-size: 0.9375rem;
-        }
-        
-        .param-group-header:hover { background: rgba(15, 23, 42, 0.6); }
-        .param-group-content { padding: 18px; }
-        .param-group-content.collapsed { display: none; }
-        
-        @media (max-width: 768px) {
-            .sidebar { width: 100%; top: 64px; height: calc(100vh - 64px); }
-            .main-content.sidebar-open { margin-left: 0; }
-        }
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f1f5f9; }
+        .slate-card { background-color: #1e293b; border: 1px solid #334155; }
+        .accent-primary { background-color: #3b82f6; }
+        .accent-primary:hover { background-color: #2563eb; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .loader { border-top-color: #3b82f6; animation: spinner 1.5s linear infinite; }
+        @keyframes spinner { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .modal-bg { background-color: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px); }
+        .sidebar-transition { transition: transform 0.3s ease-in-out; }
     </style>
 </head>
-<body>
-    <nav class="navbar">
-        <a href="/" class="navbar-brand">
-            <i data-lucide="cpu"></i>
-            <span data-i18n="app_title">ComfyUI Remote</span>
-        </a>
-        <div class="navbar-actions">
-            <a href="/public.html" class="nav-link" data-i18n="user_view">User View</a>
-            <select class="lang-select" id="langSelect">
-                <option value="en">English</option>
-                <option value="hr">Hrvatski</option>
-                <option value="sl">Slovenščina</option>
-                <option value="sk">Slovenčina</option>
-                <option value="ro">Română</option>
-            </select>
+<body class="min-h-screen flex flex-col">
+    <!-- Navbar -->
+    <nav class="bg-slate-900 border-b border-slate-800 px-6 py-4 flex items-center justify-between sticky top-0 z-50">
+        <div class="flex items-center gap-3">
+            <div class="p-2 bg-blue-600 rounded-lg">
+                <i data-lucide="cpu" class="text-white w-6 h-6"></i>
+            </div>
+            <h1 class="text-xl font-bold tracking-tight" data-i18n="app_title">ComfyUI Remote Generator</h1>
+            <span class="ml-2 px-2 py-0.5 bg-slate-800 text-slate-400 text-xs rounded border border-slate-700 uppercase font-semibold tracking-wider" data-i18n="admin_title">Administrator</span>
+        </div>
+
+        <div class="flex items-center gap-6">
+            <div id="status-badge" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-900/30 border border-red-500/50 text-red-400 text-sm font-medium">
+                <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
+                <span data-i18n="disconnected">ComfyUI not responding</span>
+            </div>
+            
+            <div class="flex items-center gap-4">
+                <a href="#" id="view-user-link" class="text-sm font-medium text-slate-400 hover:text-white transition-colors flex items-center gap-2">
+                    <i data-lucide="external-link" class="w-4 h-4"></i>
+                    <span data-i18n="user_view">User View</span>
+                </a>
+
+                <div class="h-6 w-px bg-slate-800"></div>
+
+                <div class="flex items-center gap-2">
+                    <i data-lucide="languages" class="w-4 h-4 text-slate-400"></i>
+                    <select id="language-select" class="bg-slate-800 border border-slate-700 text-sm rounded-md px-2 py-1 outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+                        <option value="en">English</option>
+                        <option value="hr">Hrvatski</option>
+                        <option value="sl">Slovenščina</option>
+                        <option value="sk">Slovenčina</option>
+                        <option value="ro">Română</option>
+                    </select>
+                </div>
+            </div>
         </div>
     </nav>
 
-    <div class="app">
-        <button class="sidebar-toggle" id="sidebarToggle"><i data-lucide="settings"></i></button>
-        
-        <div class="sidebar" id="sidebar">
-            <h2 style="font-size: 1.25rem; margin-bottom: 24px;" data-i18n="admin_title">Administrator</h2>
-            
-            <div class="upload-area" id="workflowUploadArea">
-                <i data-lucide="upload-cloud" style="width: 32px; height: 32px; color: var(--primary);"></i>
-                <div data-i18n="upload_new_workflow">Upload new workflow</div>
-                <input type="file" id="workflowFile" accept=".json" style="display: none">
+    <div class="flex flex-1 overflow-hidden">
+        <!-- Sidebar: Workflow List -->
+        <aside class="w-80 bg-slate-900/50 border-r border-slate-800 flex flex-col">
+            <div class="p-4 border-b border-slate-800">
+                <button id="upload-btn" class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20">
+                    <i data-lucide="plus" class="w-4 h-4"></i>
+                    <span data-i18n="upload_new_workflow">Upload new workflow</span>
+                </button>
+                <input type="file" id="workflow-file" class="hidden" accept=".json">
             </div>
             
-            <h4 data-i18n="saved_workflows">Saved Workflows</h4>
-            <div id="workflowList" class="workflow-list"></div>
-            
-            <div class="save-workflow" id="saveWorkflowPanel" style="display: none; margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border);">
-                <h4 data-i18n="save_current_workflow">Save Current Workflow</h4>
-                <input type="text" id="workflowName" data-i18n="workflow_name" placeholder="Workflow Name" style="margin-bottom: 12px;">
-                <textarea id="workflowDescription" data-i18n="description" placeholder="Description" rows="2" style="margin-bottom: 12px;"></textarea>
-                <button id="saveWorkflowBtn" class="btn-primary" style="width: 100%;"><i data-lucide="save"></i> <span data-i18n="save">Save</span></button>
-            </div>
-            
-            <div class="admin-section" id="adminControls" style="display: none;">
-                <h4 data-i18n="input_order">Input Order</h4>
-                <div id="inputOrderList"></div>
-                <h4 data-i18n="param_visibility">Parameter Visibility</h4>
-                <div style="margin-bottom: 16px; display: flex; gap: 8px;">
-                    <button id="selectAllParamsBtn" style="flex: 1; font-size: 0.75rem;" data-i18n="select_all">Select All</button>
-                    <button id="deselectAllParamsBtn" style="flex: 1; font-size: 0.75rem;" data-i18n="deselect_all">Deselect All</button>
+            <div class="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
+                <div class="flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest px-2">
+                    <span data-i18n="saved_workflows">Saved Workflows</span>
+                    <i data-lucide="folder-open" class="w-3 h-3"></i>
                 </div>
-                <div id="paramVisibilityList" style="max-height: 300px; overflow-y: auto;"></div>
-                <button id="saveConfigBtn" class="btn-primary" style="margin-top: 24px; width: 100%;"><i data-lucide="check-circle"></i> <span data-i18n="save_config">Save Configuration</span></button>
-            </div>
-            
-            <div class="preset-management" id="presetManagement" style="display: none;">
-                <h4 data-i18n="preset_images">Preset Images</h4>
-                <div id="presetManagerList"></div>
-                <button id="addNewPresetBtn" style="margin-top: 16px; width: 100%;"><i data-lucide="plus"></i> <span data-i18n="add_preset">Add Preset</span></button>
-            </div>
-        </div>
-        
-        <div class="main-content" id="mainContent">
-            <div class="status" id="status">
-                <i data-lucide="refresh-cw" class="spin"></i>
-                <span data-i18n="check_connection">Checking connection...</span>
-            </div>
-            
-            <div id="workflowContainer">
-                <div class="card" style="text-align: center; padding: 80px;">
-                    <i data-lucide="folder-open" style="width: 48px; height: 48px; color: var(--secondary); margin-bottom: 16px;"></i>
-                    <p data-i18n="select_workflow_sidebar">Select a workflow from the left panel or upload a new one</p>
+                <div id="workflows-list" class="space-y-1">
+                    <!-- Workflows will be loaded here -->
+                    <div class="text-center py-8 text-slate-600 italic text-sm" data-i18n="no_workflows">No workflows found</div>
                 </div>
             </div>
+
+            <div class="p-4 border-t border-slate-800 bg-slate-900/80">
+                <div class="text-xs text-slate-500 mb-2 font-medium" data-i18n="save_current_workflow">Save current workflow</div>
+                <div class="space-y-2">
+                    <input type="text" id="save-name" data-i18n="workflow_name" placeholder="Workflow Name" class="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                    <textarea id="save-description" data-i18n="description" placeholder="Description" rows="2" class="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"></textarea>
+                    <button id="save-workflow-btn" class="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-sm font-semibold rounded-md transition-all">
+                        <span data-i18n="save">Save</span>
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 overflow-y-auto p-8 bg-slate-950 scrollbar-hide space-y-8">
+            <!-- Loading Overlay -->
+            <div id="loading-overlay" class="hidden fixed inset-0 z-[100] modal-bg flex items-center justify-center">
+                <div class="text-center">
+                    <div class="loader ease-linear rounded-full border-4 border-t-4 border-slate-700 h-16 w-16 mb-4 mx-auto"></div>
+                    <p class="text-xl font-semibold" data-i18n="processing">Processing...</p>
+                </div>
+            </div>
+
+            <!-- Header Info -->
+            <div id="workflow-header" class="hidden">
+                <h2 id="current-workflow-title" class="text-3xl font-bold text-white mb-2 tracking-tight"></h2>
+                <p id="current-workflow-desc" class="text-slate-400"></p>
+            </div>
+
+            <div id="empty-state" class="flex flex-col items-center justify-center h-full text-slate-600 py-20">
+                <i data-lucide="folder" class="w-20 h-20 mb-6 opacity-20"></i>
+                <p class="text-xl font-medium" data-i18n="select_workflow_sidebar">Select a workflow from the left panel or upload a new one</p>
+            </div>
+
+            <!-- Workflow Configuration (Hidden by default) -->
+            <div id="workflow-config" class="hidden grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- Parameters Controls -->
+                <div class="space-y-6">
+                    <div class="slate-card rounded-xl p-6 shadow-xl">
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="text-lg font-bold flex items-center gap-2">
+                                <i data-lucide="settings-2" class="w-5 h-5 text-blue-500"></i>
+                                <span data-i18n="params">Parameters</span>
+                            </h3>
+                            <div class="flex gap-2">
+                                <button id="select-all-btn" class="text-xs font-semibold px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded" data-i18n="select_all">Select All</button>
+                                <button id="deselect-all-btn" class="text-xs font-semibold px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded" data-i18n="deselect_all">Deselect All</button>
+                            </div>
+                        </div>
+
+                        <div id="parameters-container" class="space-y-8 max-h-[60vh] overflow-y-auto pr-2 scrollbar-hide">
+                            <!-- Populated dynamically -->
+                        </div>
+
+                        <div class="mt-8 pt-6 border-t border-slate-700">
+                            <button id="save-ui-config" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-2">
+                                <i data-lucide="check-circle" class="w-5 h-5"></i>
+                                <span data-i18n="save_config">Save Configuration</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Preset Images -->
+                    <div class="slate-card rounded-xl p-6 shadow-xl">
+                        <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
+                            <i data-lucide="image" class="w-5 h-5 text-purple-500"></i>
+                            <span data-i18n="preset_images">Preset Images</span>
+                        </h3>
+                        <div id="presets-container" class="grid grid-cols-3 gap-3 mb-4">
+                            <!-- Populated dynamically -->
+                        </div>
+                        <button id="add-preset-btn" class="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-dashed border-slate-600 text-slate-400 rounded-lg text-sm font-medium transition-all">
+                            + <span data-i18n="add_preset">Add Preset Image</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Preview & Interaction -->
+                <div class="space-y-6">
+                    <!-- Media Inputs Preview -->
+                    <div id="media-inputs-preview" class="slate-card rounded-xl p-6 shadow-xl min-h-[200px]">
+                        <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
+                            <i data-lucide="upload-cloud" class="w-5 h-5 text-emerald-500"></i>
+                            <span data-i18n="upload_media">Upload Media</span>
+                        </h3>
+                        <div id="media-containers" class="space-y-6">
+                            <!-- Dynamic media uploaders -->
+                        </div>
+                    </div>
+
+                    <!-- Execution Result -->
+                    <div id="result-container" class="slate-card rounded-xl p-6 shadow-xl min-h-[400px] flex flex-col">
+                        <div class="flex items-center justify-between mb-6">
+                            <h3 class="text-lg font-bold flex items-center gap-2">
+                                <i data-lucide="image" class="w-5 h-5 text-amber-500"></i>
+                                <span data-i18n="result">Result</span>
+                            </h3>
+                            <button id="generate-btn" class="px-8 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-lg shadow-lg transition-all transform hover:scale-[1.02] active:scale-[0.98]">
+                                <span data-i18n="generate">Generate</span>
+                            </button>
+                        </div>
+                        
+                        <div id="output-display" class="flex-1 flex items-center justify-center bg-slate-900/50 rounded-lg border-2 border-dashed border-slate-800 relative overflow-hidden min-h-[300px]">
+                            <div id="output-placeholder" class="text-slate-700 text-center p-8">
+                                <i data-lucide="sparkles" class="w-12 h-12 mb-4 mx-auto opacity-20"></i>
+                                <p data-i18n="check_connection">Checking connection...</p>
+                            </div>
+                            <div id="output-media-container" class="w-full h-full hidden flex items-center justify-center bg-black">
+                                <!-- Image or Video will appear here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Output Browser Gallery -->
+            <div class="slate-card rounded-xl p-6 shadow-xl mt-8">
+                <div class="flex items-center justify-between mb-6">
+                    <h3 class="text-lg font-bold flex items-center gap-2">
+                        <i data-lucide="gallery-thumbnails" class="w-5 h-5 text-pink-500"></i>
+                        <span data-i18n="output_browser">Output Browser</span>
+                    </h3>
+                    <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all" title="Refresh">
+                        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                <div id="outputs-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                    <!-- Items populated dynamically -->
+                    <div class="col-span-full text-center py-12 text-slate-600 italic" data-i18n="no_outputs">No items found in output folder</div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Settings Sidebar -->
+    <div id="settings-sidebar" class="fixed inset-y-0 left-0 w-80 bg-slate-900 border-r border-slate-800 shadow-2xl z-[60] sidebar-transition -translate-x-full">
+        <div class="p-6 h-full flex flex-col">
+            <div class="flex items-center justify-between mb-8">
+                <h3 class="text-xl font-bold flex items-center gap-2">
+                    <i data-lucide="settings" class="w-6 h-6 text-slate-400"></i>
+                    <span data-i18n="server_settings">Server Settings</span>
+                </h3>
+                <button id="close-settings" class="p-2 hover:bg-slate-800 rounded-lg text-slate-500">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
             
-            <div class="results" id="resultsContainer" style="display: none;">
-                <h2 data-i18n="result">Result</h2>
-                <div id="resultArea"></div>
+            <div class="space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-slate-400 mb-2" data-i18n="comfy_url">ComfyUI Server URL</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="comfy-url-input" placeholder="http://127.0.0.1:8188" class="flex-1 bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                </div>
+                <button id="update-url-btn" class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-all" data-i18n="update">Update</button>
+            </div>
+
+            <div class="mt-auto pt-6 border-t border-slate-800">
+                <p class="text-xs text-slate-600 text-center">ComfyUI Remote v2.0.0</p>
             </div>
         </div>
     </div>
-    
+
+    <!-- Floating Settings Button -->
+    <button id="settings-btn" class="fixed bottom-6 left-6 w-12 h-12 bg-slate-800 hover:bg-slate-700 text-white rounded-full shadow-2xl flex items-center justify-center transition-all z-50 border border-slate-700">
+        <i data-lucide="settings" class="w-6 h-6"></i>
+    </button>
+
+    <!-- Modal for Large View -->
+    <div id="media-modal" class="hidden fixed inset-0 z-[200] modal-bg flex items-center justify-center p-4">
+        <button id="close-modal" class="absolute top-6 right-6 p-3 bg-black/50 hover:bg-black text-white rounded-full transition-all">
+            <i data-lucide="x" class="w-8 h-8"></i>
+        </button>
+        <div id="modal-content" class="max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center">
+            <!-- Content dynamic -->
+        </div>
+    </div>
+
     <script src="/translations.js"></script>
+    <script src="/admin.js"></script>
     <script>
-        // Lucide initialization
-        lucide.createIcons();
-
-        let workflowAnalysis = null;
-        let uiConfig = null;
-        let mediaFiles = {};
-        let currentParameters = {};
-        let currentWorkflowId = null;
-        let inputOrder = [];
-        let workflowPresets = [];
-        let autoRandomSeed = {};
-        let bypassedNodes = {};
-        
-        // DOM elements
-        const sidebar = document.getElementById('sidebar');
-        const sidebarToggle = document.getElementById('sidebarToggle');
-        const mainContent = document.getElementById('mainContent');
-        const workflowUploadArea = document.getElementById('workflowUploadArea');
-        const workflowFile = document.getElementById('workflowFile');
-        const statusDiv = document.getElementById('status');
-        const workflowContainer = document.getElementById('workflowContainer');
-        const resultsContainer = document.getElementById('resultsContainer');
-        const resultArea = document.getElementById('resultArea');
-        const adminControls = document.getElementById('adminControls');
-        const saveConfigBtn = document.getElementById('saveConfigBtn');
-        const workflowList = document.getElementById('workflowList');
-        const saveWorkflowPanel = document.getElementById('saveWorkflowPanel');
-        const saveWorkflowBtn = document.getElementById('saveWorkflowBtn');
-        const workflowName = document.getElementById('workflowName');
-        const workflowDescription = document.getElementById('workflowDescription');
-        const inputOrderList = document.getElementById('inputOrderList');
-        const paramVisibilityList = document.getElementById('paramVisibilityList');
-        const presetManagement = document.getElementById('presetManagement');
-        const presetManagerList = document.getElementById('presetManagerList');
-        const addNewPresetBtn = document.getElementById('addNewPresetBtn');
-        const selectAllParamsBtn = document.getElementById('selectAllParamsBtn');
-        const deselectAllParamsBtn = document.getElementById('deselectAllParamsBtn');
-        const langSelect = document.getElementById('langSelect');
-        const userViewLink = document.querySelector('[data-i18n="user_view"]');
-        
-        sidebarToggle.addEventListener('click', () => {
-            sidebar.classList.toggle('open');
-            mainContent.classList.toggle('sidebar-open');
-        });
-
-        // Language selector
-        langSelect.value = localStorage.getItem('preferredLanguage') || 'en';
-        langSelect.addEventListener('change', (e) => {
-            translatePage(e.target.value);
-            renderCleanInterface(); // Re-render to update dynamic parts
-            renderAdminControls();
-            renderPresetManager();
-        });
-
-        // Initial translation
-        setTimeout(() => translatePage(langSelect.value), 100);
-        
-        // ============ PRESET IMAGES ============
-        
-        function renderPresetManager() {
-            if (!presetManagerList) return;
-            
-            if (!workflowAnalysis || !workflowAnalysis.inputs) {
-                presetManagerList.innerHTML = `<div style="color: var(--text-muted); padding: 10px; font-size: 0.875rem;">${getTranslation('add_preset_hint')}</div>`;
-                return;
-            }
-            
-            const availableInputs = [];
-            for (const group of workflowAnalysis.inputs) {
-                for (const input of group.inputs) {
-                    if (input.valueType !== 'video') {
-                        availableInputs.push({
-                            key: input.key,
-                            name: uiConfig?.inputNames?.[input.key] || input.title || group.title
-                        });
-                    }
-                }
-            }
-            
-            if (workflowPresets.length === 0) {
-                presetManagerList.innerHTML = `<div style="color: var(--text-muted); padding: 10px; text-align: center; font-size: 0.875rem;" data-i18n="no_presets_msg">Nicio imagine presetată</div>`;
-                translatePage(langSelect.value);
-                return;
-            }
-            
-            presetManagerList.innerHTML = workflowPresets.map((preset, idx) => `
-                <div class="preset-manager-item" style="background: rgba(255,255,255,0.03); border-radius: 8px; padding: 12px; margin-bottom: 12px; border: 1px solid var(--border);">
-                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-                        <img src="${preset.dataUrl}" style="width: 40px; height: 40px; border-radius: 4px; object-fit: cover;">
-                        <div style="flex: 1; font-weight: 500; font-size: 0.875rem;">${escapeHtml(preset.name)}</div>
-                        <button class="delete-preset" data-idx="${idx}" style="padding: 6px; border-color: var(--error); color: var(--error);"><i data-lucide="trash-2" style="width: 14px; height: 14px;"></i></button>
-                    </div>
-                    <div class="assigned-inputs" style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px;">
-                        ${(preset.assignedInputs || []).map(inputKey => {
-                            const inputName = availableInputs.find(i => i.key === inputKey)?.name || inputKey;
-                            return `<span style="background: var(--primary); color: white; padding: 2px 8px; border-radius: 12px; font-size: 0.65rem; display: flex; align-items: center; gap: 4px;">${escapeHtml(inputName)} <i data-lucide="x" style="width: 10px; height: 10px; cursor: pointer;" class="remove" data-preset="${idx}" data-input="${inputKey}"></i></span>`;
-                        }).join('')}
-                    </div>
-                    <div style="display: flex; gap: 6px;">
-                        <select id="preset_input_${idx}" style="flex: 1; padding: 6px; font-size: 0.75rem;">
-                            <option value="">${getTranslation('associate_with')}</option>
-                            ${availableInputs.map(inp => `<option value="${inp.key}">${escapeHtml(inp.name)}</option>`).join('')}
-                        </select>
-                        <button class="assign-preset" data-idx="${idx}" style="padding: 6px 12px; font-size: 0.75rem;">${getTranslation('add')}</button>
-                    </div>
-                </div>
-            `).join('');
-            
+        // Initialization script
+        document.addEventListener('DOMContentLoaded', () => {
             lucide.createIcons();
 
-            document.querySelectorAll('.delete-preset').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const idx = parseInt(btn.dataset.idx);
-                    if (confirm(getTranslation('confirm_delete_preset'))) {
-                        workflowPresets.splice(idx, 1);
-                        renderPresetManager();
-                        renderCleanInterface();
-                    }
-                });
+            // Toggle Settings Sidebar
+            const settingsBtn = document.getElementById('settings-btn');
+            const settingsSidebar = document.getElementById('settings-sidebar');
+            const closeSettings = document.getElementById('close-settings');
+
+            settingsBtn.addEventListener('click', () => {
+                settingsSidebar.classList.remove('-translate-x-full');
             });
-            
-            document.querySelectorAll('.assign-preset').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const idx = parseInt(btn.dataset.idx);
-                    const select = document.getElementById(`preset_input_${idx}`);
-                    const inputKey = select.value;
-                    if (!inputKey) return;
-                    if (!workflowPresets[idx].assignedInputs) workflowPresets[idx].assignedInputs = [];
-                    if (!workflowPresets[idx].assignedInputs.includes(inputKey)) {
-                        workflowPresets[idx].assignedInputs.push(inputKey);
-                        renderPresetManager();
-                        renderCleanInterface();
-                    }
-                });
+
+            closeSettings.addEventListener('click', () => {
+                settingsSidebar.classList.add('-translate-x-full');
             });
-            
-            document.querySelectorAll('.remove').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    const presetIdx = parseInt(btn.dataset.preset);
-                    const inputKey = btn.dataset.input;
-                    if (workflowPresets[presetIdx] && workflowPresets[presetIdx].assignedInputs) {
-                        workflowPresets[presetIdx].assignedInputs = workflowPresets[presetIdx].assignedInputs.filter(k => k !== inputKey);
-                        renderPresetManager();
-                        renderCleanInterface();
-                    }
-                });
+
+            // Language switcher
+            const langSelect = document.getElementById('language-select');
+            const preferredLang = localStorage.getItem('preferredLanguage') || 'en';
+            langSelect.value = preferredLang;
+            translatePage(preferredLang);
+
+            langSelect.addEventListener('change', (e) => {
+                translatePage(e.target.value);
             });
-        }
-        
-        function addPresetToWorkflow(name, dataUrl, filename) {
-            workflowPresets.push({
-                name: name,
-                filename: filename,
-                dataUrl: dataUrl,
-                assignedInputs: [],
-                addedAt: new Date().toISOString()
+
+            // Dynamic User View Link
+            fetch('/api/config').then(r => r.json()).then(cfg => {
+                const userLink = document.getElementById('view-user-link');
+                userLink.href = `http://${window.location.hostname}:${cfg.publicPort}`;
+                document.getElementById('comfy-url-input').value = cfg.comfyuiUrl || 'http://127.0.0.1:8188';
             });
-            renderPresetManager();
-            renderCleanInterface();
-        }
-        
-        addNewPresetBtn.addEventListener('click', () => {
-            if (!workflowAnalysis) return;
-            const name = prompt('Enter name for preset:', 'Preset');
-            if (!name) return;
-            
-            const fileInput = document.createElement('input');
-            fileInput.type = 'file';
-            fileInput.accept = 'image/*';
-            fileInput.onchange = (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                    addPresetToWorkflow(name, ev.target.result, file.name);
-                };
-                reader.readAsDataURL(file);
-            };
-            fileInput.click();
         });
-        
-        async function usePresetImageForInput(presetIdx, inputKey) {
-            const preset = workflowPresets[presetIdx];
-            if (!preset || !workflowAnalysis) return;
-            
-            const blob = await fetch(preset.dataUrl).then(r => r.blob());
-            const file = new File([blob], preset.filename || `${preset.name}.png`, { type: 'image/png' });
-            
-            const formData = new FormData();
-            formData.append('media', file);
-            
-            try {
-                const response = await fetch(`/api/upload/media/${inputKey}`, {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
-                if (data.success) {
-                    mediaFiles[inputKey] = data.filename;
-                    const previewDiv = document.getElementById(`preview_${inputKey}`);
-                    if (previewDiv) {
-                        previewDiv.innerHTML = `<img src="${preset.dataUrl}" alt="${preset.name}">`;
-                    }
-                }
-            } catch (error) {}
-        }
-        
-        // ============ WORKFLOW MANAGEMENT ============
-        
-        async function loadWorkflowList() {
-            try {
-                console.log('Loading workflow list...');
-                const response = await fetch('/api/workflows/list');
-                const data = await response.json();
-                
-                if (data.success && data.workflows && data.workflows.length > 0) {
-                    workflowList.innerHTML = data.workflows.map(wf => `
-                        <div class="workflow-item" data-id="${wf.id}">
-                            <div class="workflow-name">${escapeHtml(wf.name)}</div>
-                            <div class="workflow-meta">
-                                <span><i data-lucide="calendar" style="width: 12px; height: 12px;"></i> ${new Date(wf.createdAt).toLocaleDateString()}</span>
-                            </div>
-                            <div style="display: flex; gap: 8px; margin-top: 12px;">
-                                <button class="load-workflow btn-primary" data-id="${wf.id}" style="padding: 4px 10px; font-size: 0.75rem;">${getTranslation('load')}</button>
-                                <button class="delete-workflow" data-id="${wf.id}" style="padding: 4px 10px; font-size: 0.75rem; border-color: var(--error); color: var(--error);">${getTranslation('delete')}</button>
-                            </div>
-                        </div>
-                    `).join('');
-                    
-                    lucide.createIcons();
-
-                    document.querySelectorAll('.delete-workflow').forEach(btn => {
-                        btn.addEventListener('click', async (e) => {
-                            e.stopPropagation();
-                            const id = btn.dataset.id;
-                            if (confirm(getTranslation('confirm_delete_workflow'))) await deleteWorkflowById(id);
-                        });
-                    });
-                    
-                    document.querySelectorAll('.load-workflow').forEach(btn => {
-                        btn.addEventListener('click', (e) => { 
-                            e.stopPropagation(); 
-                            loadWorkflowById(btn.dataset.id); 
-                        });
-                    });
-                    
-                    document.querySelectorAll('.workflow-item').forEach(item => {
-                        item.addEventListener('click', () => loadWorkflowById(item.dataset.id));
-                    });
-                } else {
-                    workflowList.innerHTML = `<div style="text-align: center; padding: 20px; color: var(--text-muted); font-size: 0.875rem;">${getTranslation('no_workflows')}</div>`;
-                }
-            } catch (error) {
-                console.error('Error loading workflow list:', error);
-            }
-        }
-        
-        async function deleteWorkflowById(id) {
-            try {
-                const response = await fetch(`/api/workflows/delete/${id}`, { method: 'DELETE' });
-                const data = await response.json();
-                if (data.success) {
-                    await loadWorkflowList();
-                    if (currentWorkflowId === id) location.reload();
-                }
-            } catch (error) {}
-        }
-        
-        async function loadWorkflowById(id) {
-            try {
-                console.log('Loading workflow:', id);
-                const response = await fetch(`/api/workflows/load/${id}`, { method: 'POST' });
-                const data = await response.json();
-                
-                if (data.success) {
-                    workflowAnalysis = data.analysis;
-                    currentWorkflowId = id;
-                    uiConfig = data.uiConfig || { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
-                    workflowPresets = data.metadata?.presets || [];
-                    
-                    if (uiConfig.inputOrder && uiConfig.inputOrder.length > 0) inputOrder = [...uiConfig.inputOrder];
-                    else {
-                        inputOrder = [];
-                        if (workflowAnalysis.inputs) {
-                            for (const group of workflowAnalysis.inputs) {
-                                for (const input of group.inputs) inputOrder.push(input.key);
-                            }
-                        }
-                    }
-                    
-                    if (workflowAnalysis.advancedInputs) {
-                        for (const group of workflowAnalysis.advancedInputs) {
-                            for (const param of group.inputs) {
-                                if (param.key.includes('seed') || param.title?.toLowerCase().includes('seed')) {
-                                    if (autoRandomSeed[param.key] === undefined) autoRandomSeed[param.key] = true;
-                                }
-                            }
-                        }
-                    }
-                    
-                    renderCleanInterface();
-                    renderAdminControls();
-                    renderPresetManager();
-                    adminControls.style.display = 'block';
-                    saveWorkflowPanel.style.display = 'block';
-                    presetManagement.style.display = 'block';
-                    
-                    document.querySelectorAll('.workflow-item').forEach(el => {
-                        el.classList.remove('active');
-                        if (el.dataset.id === id) el.classList.add('active');
-                    });
-                    
-                    workflowName.value = data.metadata?.name || workflowAnalysis.title || 'Workflow';
-                    workflowDescription.value = data.metadata?.description || '';
-                }
-            } catch (error) {
-                console.error('Error loading workflow:', error);
-            }
-        }
-        
-        async function uploadWorkflow(file) {
-            const formData = new FormData();
-            formData.append('workflow', file);
-            
-            try {
-                const response = await fetch('/api/workflow/upload', { method: 'POST', body: formData });
-                const data = await response.json();
-                
-                if (data.success) {
-                    workflowAnalysis = data.analysis;
-                    currentWorkflowId = null;
-                    workflowPresets = [];
-                    uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
-                    
-                    inputOrder = [];
-                    if (workflowAnalysis.inputs) {
-                        for (const group of workflowAnalysis.inputs) {
-                            for (const input of group.inputs) inputOrder.push(input.key);
-                        }
-                    }
-                    
-                    for (const group of workflowAnalysis.advancedInputs) {
-                        for (const param of group.inputs) {
-                            if (param.key.includes('seed') || param.title?.toLowerCase().includes('seed')) autoRandomSeed[param.key] = true;
-                            if (uiConfig.visibleParams[param.key] === undefined) uiConfig.visibleParams[param.key] = true;
-                        }
-                    }
-                    
-                    renderCleanInterface();
-                    renderAdminControls();
-                    renderPresetManager();
-                    adminControls.style.display = 'block';
-                    saveWorkflowPanel.style.display = 'block';
-                    presetManagement.style.display = 'block';
-                    
-                    workflowName.value = workflowAnalysis.title || 'Workflow';
-                    workflowDescription.value = '';
-                    await loadWorkflowList();
-                }
-            } catch (error) {}
-        }
-        
-        workflowUploadArea.addEventListener('click', () => workflowFile.click());
-        workflowFile.addEventListener('change', async (e) => { if (e.target.files[0]) await uploadWorkflow(e.target.files[0]); });
-        
-        saveWorkflowBtn.addEventListener('click', async () => {
-            const name = workflowName.value.trim();
-            if (!name) return;
-            
-            try {
-                const response = await fetch('/api/workflows/save', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        name, 
-                        description: workflowDescription.value,
-                        presets: workflowPresets
-                    })
-                });
-                const data = await response.json();
-                if (data.success) {
-                    alert(getTranslation('saved_msg'));
-                    await loadWorkflowList();
-                }
-            } catch (error) {}
-        });
-        
-        // ============ CONFIGURATION ============
-        
-        function renderAdminControls() {
-            if (!workflowAnalysis) return;
-            
-            const allInputs = [];
-            for (const group of workflowAnalysis.inputs) {
-                for (const input of group.inputs) allInputs.push({ ...input, groupTitle: group.title });
-            }
-            
-            const sortedInputs = [...allInputs].sort((a, b) => {
-                const indexA = inputOrder.indexOf(a.key);
-                const indexB = inputOrder.indexOf(b.key);
-                if (indexA === -1) return 1;
-                if (indexB === -1) return -1;
-                return indexA - indexB;
-            });
-            
-            inputOrderList.innerHTML = sortedInputs.map((input, idx) => {
-                const displayName = uiConfig?.inputNames?.[input.key] || input.title || input.groupTitle;
-                return `
-                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; background: rgba(255,255,255,0.02); padding: 8px; border-radius: 6px; border: 1px solid var(--border);">
-                        <input type="text" id="name_${input.key}" value="${escapeHtml(displayName)}" style="flex: 1; padding: 6px; font-size: 0.75rem;">
-                        <div style="display: flex; gap: 4px;">
-                            <button onclick="moveInputUp(${idx})" ${idx === 0 ? 'disabled' : ''} style="padding: 4px 8px;"><i data-lucide="chevron-up" style="width: 14px; height: 14px;"></i></button>
-                            <button onclick="moveInputDown(${idx})" ${idx === sortedInputs.length - 1 ? 'disabled' : ''} style="padding: 4px 8px;"><i data-lucide="chevron-down" style="width: 14px; height: 14px;"></i></button>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            
-            lucide.createIcons();
-
-            for (const input of allInputs) {
-                const nameInput = document.getElementById(`name_${input.key}`);
-                if (nameInput) {
-                    nameInput.addEventListener('change', (e) => {
-                        if (!uiConfig.inputNames) uiConfig.inputNames = {};
-                        uiConfig.inputNames[input.key] = e.target.value;
-                        renderCleanInterface();
-                        renderPresetManager();
-                    });
-                }
-            }
-            
-            paramVisibilityList.innerHTML = '';
-            if (workflowAnalysis.advancedInputs) {
-                for (const group of workflowAnalysis.advancedInputs) {
-                    paramVisibilityList.innerHTML += `<div style="margin: 12px 0 6px; font-size: 0.7rem; color: var(--primary); font-weight: 600; text-transform: uppercase;">${escapeHtml(group.title)}</div>`;
-                    for (const param of group.inputs) {
-                        const isVisible = uiConfig?.visibleParams?.[param.key] !== false;
-                        paramVisibilityList.innerHTML += `
-                            <label style="display: flex; align-items: center; gap: 8px; padding: 6px; cursor: pointer; font-size: 0.8125rem;">
-                                <input type="checkbox" id="vis_${param.key}" ${isVisible ? 'checked' : ''} style="width: auto;">
-                                <span>${escapeHtml(param.title || param.originalName || param.key)}</span>
-                            </label>
-                        `;
-                    }
-                }
-            }
-            
-            selectAllParamsBtn.onclick = () => {
-                document.querySelectorAll('#paramVisibilityList input').forEach(cb => cb.checked = true);
-            };
-            
-            deselectAllParamsBtn.onclick = () => {
-                document.querySelectorAll('#paramVisibilityList input').forEach(cb => cb.checked = false);
-            };
-        }
-        
-        function moveInputUp(index) {
-            if (index > 0) {
-                [inputOrder[index], inputOrder[index - 1]] = [inputOrder[index - 1], inputOrder[index]];
-                renderAdminControls();
-                renderCleanInterface();
-            }
-        }
-        
-        function moveInputDown(index) {
-            if (index < inputOrder.length - 1) {
-                [inputOrder[index], inputOrder[index + 1]] = [inputOrder[index + 1], inputOrder[index]];
-                renderAdminControls();
-                renderCleanInterface();
-            }
-        }
-        
-        async function saveConfig() {
-            const visibleParams = {};
-            if (workflowAnalysis.advancedInputs) {
-                for (const group of workflowAnalysis.advancedInputs) {
-                    for (const param of group.inputs) {
-                        const cb = document.getElementById(`vis_${param.key}`);
-                        if (cb) visibleParams[param.key] = cb.checked;
-                    }
-                }
-            }
-            uiConfig = { ...uiConfig, visibleParams, inputOrder };
-            try {
-                await fetch('/api/config/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: uiConfig }) });
-                alert(getTranslation('saved_msg'));
-                renderCleanInterface();
-            } catch (error) {}
-        }
-        
-        saveConfigBtn.addEventListener('click', saveConfig);
-        
-        // ============ MEDIA HANDLING ============
-        
-        async function handleMediaUpload(file, inputKey, title) {
-            if (!file) return;
-            const formData = new FormData();
-            formData.append('media', file);
-            try {
-                const response = await fetch(`/api/upload/media/${inputKey}`, { method: 'POST', body: formData });
-                const data = await response.json();
-                if (data.success) {
-                    mediaFiles[inputKey] = data.filename;
-                    const reader = new FileReader();
-                    reader.onload = (e) => {
-                        const previewDiv = document.getElementById(`preview_${inputKey}`);
-                        if (previewDiv) {
-                            if (data.type === 'video') previewDiv.innerHTML = `<video controls autoplay loop muted><source src="${e.target.result}"></video>`;
-                            else previewDiv.innerHTML = `<img src="${e.target.result}" alt="${title}">`;
-                        }
-                    };
-                    reader.readAsDataURL(file);
-                }
-            } catch (error) {}
-        }
-        
-        function generateRandomSeed() { return Math.floor(Math.random() * 1000000000000); }
-        
-        // ============ INTERFAȚA ============
-        
-        function renderCleanInterface() {
-            if (!workflowAnalysis) return;
-            
-            let html = '';
-            
-            if (workflowAnalysis.inputs) {
-                const allInputs = [];
-                for (const group of workflowAnalysis.inputs) {
-                    for (const input of group.inputs) allInputs.push({ ...input, groupTitle: group.title });
-                }
-                const sortedInputs = [...allInputs].sort((a, b) => {
-                    const indexA = inputOrder.indexOf(a.key);
-                    const indexB = inputOrder.indexOf(b.key);
-                    if (indexA === -1) return 1;
-                    if (indexB === -1) return -1;
-                    return indexA - indexB;
-                });
-                
-                html += `<div class="card"><h2><i data-lucide="image"></i> <span data-i18n="upload_media">Upload Media</span></h2>`;
-                sortedInputs.forEach(input => {
-                    const isVideo = input.valueType === 'video';
-                    const displayName = uiConfig?.inputNames?.[input.key] || input.title || input.groupTitle;
-                    const associatedPresets = workflowPresets.filter(preset => !preset.assignedInputs || preset.assignedInputs.length === 0 || preset.assignedInputs.includes(input.key));
-                    
-                    const isBypassed = bypassedNodes[input.nodeId] === true;
-                    html += `<div class="input-container" style="${isBypassed ? 'opacity: 0.5; filter: grayscale(1);' : ''}">
-                        <div class="input-header">
-                            <i data-lucide="${isVideo ? 'film' : 'image'}" style="width: 16px; height: 16px;"></i>
-                            <span class="name">${escapeHtml(displayName)}</span>
-                            <button class="bypass-btn" data-node-id="${input.nodeId}" title="${getTranslation('bypass')}" style="padding: 4px; background: ${isBypassed ? 'var(--primary)' : 'transparent'}; border-color: ${isBypassed ? 'var(--primary)' : 'var(--border)'};">
-                                <i data-lucide="skip-forward" style="width: 14px; height: 14px;"></i>
-                            </button>
-                        </div>
-                        <div class="upload-area" onclick="${isBypassed ? '' : `document.getElementById('file_${input.key}').click()`}">
-                            <i data-lucide="upload" style="width: 24px; height: 24px; color: var(--secondary);"></i>
-                            <div style="font-size: 0.8125rem;"><span data-i18n="click_or_drag">Click or drag</span> ${isVideo ? 'video' : 'image'}</div>
-                            <input type="file" id="file_${input.key}" accept="${isVideo ? 'video/*' : 'image/*'}" style="display: none">
-                        </div>
-                        <div id="preview_${input.key}" class="image-preview"></div>`;
-                    
-                    if (!isVideo && associatedPresets.length > 0) {
-                        html += `<div class="preset-section">
-                            <div class="preset-title" data-i18n="preset_images">Preset Images</div>
-                            <div class="preset-list">`;
-                        associatedPresets.forEach(preset => {
-                            const pIdx = workflowPresets.findIndex(p => p.dataUrl === preset.dataUrl);
-                            html += `<img class="preset-thumb" src="${preset.dataUrl}" title="${escapeHtml(preset.name)}" onclick="usePresetImageForInput(${pIdx}, '${input.key}')">`;
-                        });
-                        html += `</div></div>`;
-                    }
-                    html += `</div>`;
-                });
-                html += `</div>`;
-            }
-            
-            if (workflowAnalysis.advancedInputs) {
-                html += `<div class="card"><h2><i data-lucide="sliders"></i> <span data-i18n="params">Parameters</span></h2>`;
-                for (const group of workflowAnalysis.advancedInputs) {
-                    let groupVisible = false;
-                    const isBypassed = bypassedNodes[group.nodeId] === true;
-                    let groupHtml = `<div class="param-group" style="${isBypassed ? 'opacity: 0.5; filter: grayscale(1);' : ''}">
-                        <div class="param-group-header">
-                            <span onclick="toggleParamGroup('group_${group.key.replace(/[^a-zA-Z0-9]/g, '_')}')">${escapeHtml(group.title)}</span>
-                            <div style="display: flex; gap: 8px; align-items: center;">
-                                <button class="bypass-btn" data-node-id="${group.nodeId}" title="${getTranslation('bypass')}" style="padding: 4px; background: ${isBypassed ? 'var(--primary)' : 'transparent'}; border-color: ${isBypassed ? 'var(--primary)' : 'var(--border)'};">
-                                    <i data-lucide="skip-forward" style="width: 14px; height: 14px;"></i>
-                                </button>
-                                <i data-lucide="chevron-down" style="width: 16px; height: 16px;" onclick="toggleParamGroup('group_${group.key.replace(/[^a-zA-Z0-9]/g, '_')}')"></i>
-                            </div>
-                        </div>
-                        <div class="param-group-content" id="group_${group.key.replace(/[^a-zA-Z0-9]/g, '_')}">`;
-                    
-                    for (const param of group.inputs) {
-                        if (uiConfig?.visibleParams?.[param.key] === false) continue;
-                        groupVisible = true;
-                        const defVal = param.defaultValue !== undefined ? param.defaultValue : param.value;
-                        currentParameters[param.key] = defVal;
-                        
-                        const isSeed = param.key.includes('seed') || param.title?.toLowerCase().includes('seed') || param.originalName === 'seed';
-                        let inputHtml = '';
-                        
-                        if (isSeed) {
-                            const isAuto = autoRandomSeed[param.key] !== false;
-                            inputHtml = `<div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                                <input type="number" id="param_${param.key}" value="${defVal}" ${isAuto ? 'disabled' : ''} style="flex: 1; ${isAuto ? 'opacity: 0.5;' : ''}">
-                                <button type="button" class="random-btn" data-param="${param.key}"><i data-lucide="shuffle" style="width: 14px; height: 14px;"></i></button>
-                                <label style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; background: rgba(255,255,255,0.05); padding: 4px 10px; border-radius: 6px; cursor: pointer;">
-                                    <input type="checkbox" class="auto-random-check" data-param="${param.key}" ${isAuto ? 'checked' : ''} style="width: auto;"> <span data-i18n="auto_random">Auto</span>
-                                </label>
-                            </div>`;
-                        } else if (param.valueType === 'boolean') {
-                            inputHtml = `<select id="param_${param.key}"><option value="true" ${defVal === true ? 'selected' : ''} data-i18n="yes">Yes</option><option value="false" ${defVal === false ? 'selected' : ''} data-i18n="no">No</option></select>`;
-                        } else if (param.valueType === 'number' || param.valueType === 'float') {
-                            inputHtml = `<input type="number" id="param_${param.key}" value="${defVal}" step="any">`;
-                        } else {
-                            inputHtml = `<input type="text" id="param_${param.key}" value="${defVal}">`;
-                        }
-                        groupHtml += `<div class="input-group"><label>${escapeHtml(param.title || param.originalName || param.key)}</label>${inputHtml}</div>`;
-                    }
-                    groupHtml += `</div></div>`;
-                    if (groupVisible) html += groupHtml;
-                }
-                html += `</div>`;
-            }
-            
-            html += `<button class="generate-btn" id="generateBtn"><i data-lucide="sparkles"></i> <span data-i18n="generate">Generate</span></button>`;
-            workflowContainer.innerHTML = html;
-            lucide.createIcons();
-            translatePage(langSelect.value);
-
-            // Bypass listeners
-            document.querySelectorAll('.bypass-btn').forEach(btn => btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const nid = btn.dataset.nodeId;
-                bypassedNodes[nid] = !bypassedNodes[nid];
-                renderCleanInterface();
-            }));
-
-            // Re-attach event listeners
-            document.getElementById('generateBtn').addEventListener('click', runWorkflow);
-            document.querySelectorAll('.random-btn').forEach(btn => btn.addEventListener('click', () => {
-                const pk = btn.dataset.param;
-                const rs = generateRandomSeed();
-                const inp = document.getElementById(`param_${pk}`);
-                if (inp) { inp.value = rs; currentParameters[pk] = rs; }
-            }));
-            document.querySelectorAll('.auto-random-check').forEach(cb => cb.addEventListener('change', () => {
-                const pk = cb.dataset.param;
-                autoRandomSeed[pk] = cb.checked;
-                const inp = document.getElementById(`param_${pk}`);
-                if (inp) { inp.disabled = cb.checked; inp.style.opacity = cb.checked ? '0.5' : '1'; }
-            }));
-            // Media upload listeners
-            if (workflowAnalysis.inputs) {
-                workflowAnalysis.inputs.forEach(g => g.inputs.forEach(i => {
-                    const fi = document.getElementById(`file_${i.key}`);
-                    if (fi) fi.addEventListener('change', (e) => { if (e.target.files[0]) handleMediaUpload(e.target.files[0], i.key, i.title); });
-                }));
-            }
-            // Param change listeners
-            if (workflowAnalysis.advancedInputs) {
-                workflowAnalysis.advancedInputs.forEach(g => g.inputs.forEach(p => {
-                    const inp = document.getElementById(`param_${p.key}`);
-                    if (inp && inp.tagName !== 'BUTTON') inp.addEventListener('change', (e) => { currentParameters[p.key] = e.target.value; });
-                }));
-            }
-        }
-        
-        window.toggleParamGroup = function(id) { document.getElementById(id).classList.toggle('collapsed'); };
-        
-        async function runWorkflow() {
-            if (!workflowAnalysis) return;
-            const params = { ...currentParameters, _autoRandomSeed: autoRandomSeed };
-            resultsContainer.style.display = 'block';
-            resultArea.innerHTML = `<div style="text-align: center; padding: 48px;"><div class="spinner"></div><p style="color: var(--text-muted); font-size: 0.875rem;" data-i18n="processing">Processing...</p></div>`;
-            translatePage(langSelect.value);
-            const btn = document.getElementById('generateBtn');
-            btn.disabled = true;
-            try {
-                const res = await fetch('/api/workflow/run', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mediaFiles, parameters: params, bypassedNodes })
-                });
-
-                let data;
-                const responseText = await res.text();
-                try {
-                    data = JSON.parse(responseText);
-                } catch (e) {
-                    console.error('Failed to parse JSON response:', responseText);
-                    throw new Error(`Server returned invalid response: ${responseText.substring(0, 200)}...`);
-                }
-
-                if (data.error) {
-                    resultArea.innerHTML = `<div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--error); border-radius: 8px; color: var(--error); font-size: 0.875rem; display: flex; align-items: flex-start; gap: 12px;"><i data-lucide="alert-circle" style="flex-shrink: 0; width: 18px; height: 18px;"></i> <span>${escapeHtml(data.error)}</span></div>`;
-                    lucide.createIcons();
-                } else if (data.files) {
-                    let fhtml = `<div style="margin-bottom: 24px; color: var(--success); font-weight: 500; display: flex; align-items: center; gap: 8px;"><i data-lucide="check-circle"></i> <span data-i18n="generation_complete">Complete!</span></div><div class="image-grid">`;
-                    data.files.forEach(f => {
-                        const url = `/output/${f.filename}`;
-                        fhtml += `<div class="image-card">${f.type === 'video' ? `<video controls autoplay loop muted><source src="${url}" type="video/mp4"></video>` : `<img src="${url}">`}<div style="padding: 12px; font-size: 0.75rem; color: var(--text-muted); text-align: center;">${f.filename}</div></div>`;
-                    });
-                    fhtml += `</div>`;
-                    resultArea.innerHTML = fhtml;
-                    lucide.createIcons();
-                    translatePage(langSelect.value);
-                }
-            } catch (error) {
-                resultArea.innerHTML = `<div style="padding: 16px; background: rgba(239, 68, 68, 0.1); border: 1px solid var(--error); border-radius: 8px; color: var(--error); font-size: 0.875rem;">Error: ${escapeHtml(error.message)}</div>`;
-            } finally { btn.disabled = false; }
-        }
-        
-        async function updateNavigationLinks() {
-            try {
-                const response = await fetch('/api/config');
-                const data = await response.json();
-                if (data.publicPort && userViewLink) {
-                    userViewLink.href = `${window.location.protocol}//${window.location.hostname}:${data.publicPort}/public.html`;
-                }
-            } catch (error) {
-                console.error('Error updating navigation links:', error);
-            }
-        }
-
-        function escapeHtml(t) { if (!t) return ''; const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
-        
-        async function checkHealth() {
-            try {
-                const res = await fetch('/api/health');
-                const data = await res.json();
-                statusDiv.innerHTML = data.status === 'ok' ? `<i data-lucide="check-circle" style="color: var(--success); width: 14px; height: 14px;"></i> <span class="status-online" data-i18n="connected">Connected</span>` : `<i data-lucide="alert-circle" style="color: var(--error); width: 14px; height: 14px;"></i> <span class="status-offline" data-i18n="disconnected">Disconnected</span>`;
-                lucide.createIcons();
-                translatePage(langSelect.value);
-            } catch (error) {
-                statusDiv.innerHTML = `<i data-lucide="alert-circle" style="color: var(--error); width: 14px; height: 14px;"></i> <span class="status-offline" data-i18n="server_unavailable">Unavailable</span>`;
-                lucide.createIcons();
-                translatePage(langSelect.value);
-            }
-        }
-        
-        window.moveInputUp = moveInputUp;
-        window.moveInputDown = moveInputDown;
-        window.usePresetImageForInput = usePresetImageForInput;
-        
-        loadWorkflowList();
-        checkHealth();
-        updateNavigationLinks();
-        setInterval(checkHealth, 30000);
     </script>
 </body>
 </html>

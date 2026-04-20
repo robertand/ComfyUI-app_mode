@@ -9,9 +9,26 @@ const { spawn } = require('child_process');
 const net = require('net');
 
 // ============ CONFIGURARE ============
-let ADMIN_PORT = parseInt(process.env.ADMIN_PORT) || 3001;
-let PUBLIC_PORT = parseInt(process.env.PUBLIC_PORT) || 3002;
-const COMFYUI_URL = process.env.COMFYUI_URL || 'http://127.0.0.1:8188';
+const CONFIG_FILE = path.join('workflows', 'config.json');
+let CONFIG = {
+    ADMIN_PORT: parseInt(process.env.ADMIN_PORT) || 3001,
+    PUBLIC_PORT: parseInt(process.env.PUBLIC_PORT) || 3002,
+    COMFYUI_URL: process.env.COMFYUI_URL || 'http://127.0.0.1:8188'
+};
+
+// Încărcăm configurația salvată dacă există
+if (fs.existsSync(CONFIG_FILE)) {
+    try {
+        const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+        CONFIG = { ...CONFIG, ...savedConfig };
+    } catch (e) {
+        console.error('Error loading config.json:', e.message);
+    }
+}
+
+let ADMIN_PORT = CONFIG.ADMIN_PORT;
+let PUBLIC_PORT = CONFIG.PUBLIC_PORT;
+let COMFYUI_URL = CONFIG.COMFYUI_URL;
 
 // Funcție pentru a găsi un port liber
 async function findFreePort(startPort) {
@@ -50,11 +67,15 @@ let originalWorkflowValues = {}; // Stochează valorile originale din workflow
 let wsClient = null;
 
 function connectWebSocket() {
+    if (wsClient) {
+        wsClient.removeAllListeners();
+        wsClient.close();
+    }
     const wsUrl = COMFYUI_URL.replace('http', 'ws') + '/ws';
     wsClient = new WebSocket(wsUrl);
     
     wsClient.on('open', () => {
-        console.log('✅ Conectat la ComfyUI WebSocket');
+        console.log(`✅ Conectat la ComfyUI WebSocket (${COMFYUI_URL})`);
     });
     
     wsClient.on('error', (err) => {
@@ -979,7 +1000,55 @@ adminApp.post('/api/workflow/run', async (req, res) => {
 
 // Port config endpoint
 adminApp.get('/api/config', (req, res) => {
-    res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT });
+    res.json({
+        adminPort: ADMIN_PORT,
+        publicPort: PUBLIC_PORT,
+        comfyuiUrl: COMFYUI_URL
+    });
+});
+
+// API pentru setări server
+adminApp.post('/api/settings', (req, res) => {
+    try {
+        const { comfyuiUrl } = req.body;
+        if (comfyuiUrl) {
+            COMFYUI_URL = comfyuiUrl;
+            CONFIG.COMFYUI_URL = COMFYUI_URL;
+            fs.writeFileSync(CONFIG_FILE, JSON.stringify(CONFIG, null, 2));
+            console.log(`🔧 URL ComfyUI actualizat la: ${COMFYUI_URL}`);
+            connectWebSocket();
+            res.json({ success: true, comfyuiUrl: COMFYUI_URL });
+        } else {
+            res.status(400).json({ error: 'URL invalid' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// API pentru browser de fișiere (Output)
+adminApp.get('/api/outputs', (req, res) => {
+    try {
+        const outputDir = 'output';
+        if (!fs.existsSync(outputDir)) return res.json({ files: [] });
+
+        const files = fs.readdirSync(outputDir)
+            .filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase()))
+            .map(f => {
+                const stat = fs.statSync(path.join(outputDir, f));
+                return {
+                    name: f,
+                    url: `/output/${f}`,
+                    type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image',
+                    mtime: stat.mtime
+                };
+            })
+            .sort((a, b) => b.mtime - a.mtime);
+
+        res.json({ files });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // Health check admin
@@ -1267,7 +1336,36 @@ publicApp.post('/api/workflow/run', async (req, res) => {
 
 // Port config endpoint
 publicApp.get('/api/config', (req, res) => {
-    res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT });
+    res.json({
+        adminPort: ADMIN_PORT,
+        publicPort: PUBLIC_PORT,
+        comfyuiUrl: COMFYUI_URL
+    });
+});
+
+// API pentru browser de fișiere (Public are acces doar la vizualizare)
+publicApp.get('/api/outputs', (req, res) => {
+    try {
+        const outputDir = 'output';
+        if (!fs.existsSync(outputDir)) return res.json({ files: [] });
+
+        const files = fs.readdirSync(outputDir)
+            .filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase()))
+            .map(f => {
+                const stat = fs.statSync(path.join(outputDir, f));
+                return {
+                    name: f,
+                    url: `/output/${f}`,
+                    type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image',
+                    mtime: stat.mtime
+                };
+            })
+            .sort((a, b) => b.mtime - a.mtime);
+
+        res.json({ files });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 // Health check public
