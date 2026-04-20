@@ -1,0 +1,7 @@
+node_modules/
+server.log
+uploads/
+output/
+workflows/config.json
+workflows/ui_config.json
+workflows/saved/*.json
