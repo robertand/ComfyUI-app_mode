@@ -4,6 +4,7 @@ let mediaFiles = {};
 let parameters = {};
 let bypassedNodes = {};
 let originalValues = {};
+let currentPresets = [];
 
 async function loadWorkflows() {
     try {
@@ -13,7 +14,7 @@ async function loadWorkflows() {
         list.innerHTML = '';
 
         if (data.workflows.length === 0) {
-            list.innerHTML = '<div class="text-center py-8 text-slate-600 italic text-sm" data-i18n="no_workflows">No workflows found</div>';
+            list.innerHTML = '<div class="text-center py-4 text-slate-600 italic text-xs" data-i18n="no_workflows">No workflows found</div>';
             translatePage(localStorage.getItem('preferredLanguage') || 'en');
             return;
         }
@@ -23,11 +24,11 @@ async function loadWorkflows() {
             div.className = 'group flex items-center justify-between p-2 rounded-md hover:bg-slate-800 transition-all cursor-pointer';
             div.innerHTML = `
                 <div class="flex-1 min-w-0" onclick="loadWorkflow('${w.id}')">
-                    <div class="text-sm font-medium text-slate-200 truncate">${w.name}</div>
-                    <div class="text-xs text-slate-500 truncate">${w.description || ''}</div>
+                    <div class="text-xs font-bold text-slate-300 truncate">${w.name}</div>
+                    <div class="text-[10px] text-slate-500 truncate">${w.description || ''}</div>
                 </div>
                 <button onclick="deleteWorkflow('${w.id}')" class="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-all">
-                    <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                 </button>
             `;
             list.appendChild(div);
@@ -52,6 +53,7 @@ function setupWorkflow(data) {
     mediaFiles = {};
     parameters = {};
     bypassedNodes = {};
+    currentPresets = data.metadata?.presets || [];
 
     document.getElementById('empty-state').classList.add('hidden');
     document.getElementById('workflow-config').classList.remove('hidden');
@@ -60,57 +62,48 @@ function setupWorkflow(data) {
     document.getElementById('current-workflow-title').textContent = data.metadata?.name || currentWorkflow.title;
     document.getElementById('current-workflow-desc').textContent = data.metadata?.description || '';
 
-    renderParameters();
-    renderMediaInputs();
-    renderPresets(data.metadata?.presets || []);
+    refreshUI();
+}
+
+function refreshUI() {
+    renderParametersConfig();
+    renderMediaConfig();
+    renderLiveUI();
+    renderPresets(currentPresets);
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }
 
-function renderParameters() {
+// Sidebar: Parameter Visibility & Labels
+function renderParametersConfig() {
     const container = document.getElementById('parameters-container');
     container.innerHTML = '';
 
     currentWorkflow.advancedInputs.forEach(group => {
         const groupDiv = document.createElement('div');
-        groupDiv.className = 'space-y-4 pb-4 border-b border-slate-800 last:border-0';
-        groupDiv.innerHTML = `<h4 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">${group.title}</h4>`;
+        groupDiv.className = 'space-y-3 pb-3 border-b border-slate-800 last:border-0';
+        groupDiv.innerHTML = `<h4 class="text-[9px] font-bold text-slate-500 uppercase tracking-widest">${group.title}</h4>`;
 
         const grid = document.createElement('div');
-        grid.className = 'grid grid-cols-1 gap-2';
+        grid.className = 'space-y-2';
 
         group.inputs.forEach(param => {
             const isVisible = uiConfig.visibleParams[param.key] !== false;
             const isBypassed = bypassedNodes[param.nodeId];
             const div = document.createElement('div');
-            div.className = 'flex flex-col gap-2 p-3 bg-slate-800/40 rounded-lg border border-slate-700/50 hover:border-blue-500/30 transition-all';
+            div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
 
             div.innerHTML = `
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
-                        <input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded border-slate-700 bg-slate-800 text-blue-600"
-                               data-key="${param.key}" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked">
-                        <span class="text-[10px] font-bold text-slate-400 truncate max-w-[150px]">${param.title}</span>
+                        <input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
+                               data-key="${param.key}" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();">
+                        <span class="text-[10px] font-bold text-slate-400 truncate max-w-[140px]">${param.title}</span>
                     </div>
-                    <button onclick="toggleBypass('${param.nodeId}')" class="text-[9px] font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-800 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}" data-i18n="bypass">Bypass</button>
+                    <button onclick="toggleBypass('${param.nodeId}', 'params')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
                 </div>
-
                 <input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}"
-                       class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-blue-500 transition-all"
-                       onchange="uiConfig.inputNames['${param.key}'] = this.value" placeholder="Custom Label">
-
-                <div>
-                    ${param.valueType === 'boolean' ? `
-                        <select class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] outline-none" onchange="parameters['${param.key}'] = this.value">
-                            <option value="true" ${param.defaultValue === true ? 'selected' : ''}>True</option>
-                            <option value="false" ${param.defaultValue === false ? 'selected' : ''}>False</option>
-                        </select>
-                    ` : `
-                        <input type="${param.valueType === 'number' ? 'number' : 'text'}"
-                               value="${param.defaultValue || ''}"
-                               class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] outline-none"
-                               onchange="parameters['${param.key}'] = this.value">
-                    `}
-                </div>
+                       class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none"
+                       onchange="uiConfig.inputNames['${param.key}'] = this.value; renderLiveUI();" placeholder="Custom Label">
             `;
             grid.appendChild(div);
         });
@@ -120,8 +113,9 @@ function renderParameters() {
     lucide.createIcons();
 }
 
-function renderMediaInputs() {
-    const container = document.getElementById('media-containers');
+// Sidebar: Media Visibility & Labels
+function renderMediaConfig() {
+    const container = document.getElementById('media-config-container');
     container.innerHTML = '';
 
     currentWorkflow.inputs.forEach(group => {
@@ -129,17 +123,50 @@ function renderMediaInputs() {
             const isVisible = uiConfig.visibleInputs[input.key] !== false;
             const isBypassed = bypassedNodes[input.nodeId];
             const div = document.createElement('div');
-            div.className = 'space-y-3 p-4 rounded-xl bg-slate-900/30 border border-slate-800/50';
+            div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
 
             div.innerHTML = `
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
-                        <input type="checkbox" class="w-4 h-4 rounded border-slate-700 bg-slate-800 text-blue-600"
-                               ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked">
-                        <span class="text-sm font-bold text-slate-300">${uiConfig.inputNames?.[input.key] || input.title}</span>
+                        <input type="checkbox" class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
+                               ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();">
+                        <span class="text-[10px] font-bold text-slate-400 truncate max-w-[140px]">${input.title}</span>
                     </div>
-                    <button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-800 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}" data-i18n="bypass">Bypass</button>
+                    <button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
                 </div>
+                <input type="text" value="${uiConfig.inputNames?.[input.key] || input.title}"
+                       class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none"
+                       onchange="uiConfig.inputNames['${input.key}'] = this.value; renderLiveUI();" placeholder="Custom Label">
+            `;
+            container.appendChild(div);
+        });
+    });
+    lucide.createIcons();
+}
+
+// Main Area: Actual Input Fields
+function renderLiveUI() {
+    const mediaContainer = document.getElementById('media-live-container');
+    const paramsLiveCard = document.getElementById('params-live-container');
+    const paramsList = document.getElementById('active-params-list');
+
+    mediaContainer.innerHTML = '';
+    paramsList.innerHTML = '';
+
+    // Render Live Media Inputs
+    currentWorkflow.inputs.forEach(group => {
+        const liveGroup = document.createElement('div');
+        liveGroup.className = 'grid grid-cols-1 md:grid-cols-2 gap-4';
+
+        group.inputs.forEach(input => {
+            if (uiConfig.visibleInputs[input.key] === false) return;
+
+            const isBypassed = bypassedNodes[input.nodeId];
+            const div = document.createElement('div');
+            div.className = 'slate-card p-4 rounded-xl space-y-3';
+
+            div.innerHTML = `
+                <label class="block text-sm font-bold text-slate-400 uppercase tracking-wider">${uiConfig.inputNames?.[input.key] || input.title}</label>
                 <div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
                     <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${input.key}')">
                     <div id="preview-${input.key}" class="text-center p-4">
@@ -148,9 +175,48 @@ function renderMediaInputs() {
                     </div>
                 </div>
             `;
-            container.appendChild(div);
+            liveGroup.appendChild(div);
+        });
+
+        if (liveGroup.children.length > 0) {
+            mediaContainer.appendChild(liveGroup);
+        }
+    });
+
+    // Render Live Parameters
+    let visibleParamsCount = 0;
+    currentWorkflow.advancedInputs.forEach(group => {
+        group.inputs.forEach(param => {
+            if (uiConfig.visibleParams[param.key] !== false) {
+                visibleParamsCount++;
+                const isBypassed = bypassedNodes[param.nodeId];
+                const div = document.createElement('div');
+                div.className = 'space-y-2';
+                const label = uiConfig.inputNames?.[param.key] || param.title;
+
+                const currentValue = parameters[param.key] !== undefined ? parameters[param.key] : param.defaultValue;
+
+                let inputHtml = '';
+                if (param.valueType === 'boolean') {
+                    inputHtml = `<select class="w-full bg-slate-900 border border-slate-800 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
+                                 onchange="parameters['${param.key}'] = this.value">
+                                    <option value="true" ${currentValue === 'true' || currentValue === true ? 'selected' : ''} data-i18n="yes">Yes</option>
+                                    <option value="false" ${currentValue === 'false' || currentValue === false ? 'selected' : ''} data-i18n="no">No</option>
+                                 </select>`;
+                } else {
+                    inputHtml = `<input type="${param.valueType === 'number' ? 'number' : 'text'}"
+                                 value="${currentValue || ''}"
+                                 class="w-full bg-slate-900 border border-slate-800 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
+                                 onchange="parameters['${param.key}'] = this.value">`;
+                }
+
+                div.innerHTML = `<label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label>${inputHtml}`;
+                paramsList.appendChild(div);
+            }
         });
     });
+
+    paramsLiveCard.classList.toggle('hidden', visibleParamsCount === 0);
     lucide.createIcons();
 }
 
@@ -175,13 +241,11 @@ async function handleMediaUpload(file, inputKey) {
     } catch (e) { console.error(e); }
 }
 
-function toggleBypass(nodeId, source = 'params') {
+function toggleBypass(nodeId, source) {
     bypassedNodes[nodeId] = !bypassedNodes[nodeId];
-    if (source === 'media') {
-        renderMediaInputs();
-    } else {
-        renderParameters();
-    }
+    if (source === 'media') renderMediaConfig();
+    else renderParametersConfig();
+    renderLiveUI();
 }
 
 async function runWorkflow() {
@@ -243,11 +307,7 @@ async function saveWorkflow() {
         const response = await fetch('/api/workflows/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                name,
-                description,
-                presets: currentPresets // Keep presets if they exist
-            })
+            body: JSON.stringify({ name, description, presets: currentPresets })
         });
         const data = await response.json();
         if (data.success) {
@@ -257,36 +317,31 @@ async function saveWorkflow() {
     } catch (e) { console.error(e); }
 }
 
-let currentPresets = [];
 function renderPresets(presets) {
     currentPresets = presets || [];
     const container = document.getElementById('presets-container');
     container.innerHTML = '';
 
     if (currentPresets.length === 0) {
-        container.innerHTML = '<div class="col-span-full text-center py-4 text-slate-600 text-xs italic" data-i18n="no_presets_msg">No presets</div>';
+        container.innerHTML = '<div class="col-span-full text-center py-4 text-slate-600 text-[10px] italic" data-i18n="no_presets_msg">No presets</div>';
         translatePage(localStorage.getItem('preferredLanguage') || 'en');
         return;
     }
 
     currentPresets.forEach((p, index) => {
         const div = document.createElement('div');
-        div.className = 'relative group aspect-square rounded-lg overflow-hidden border border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
+        div.className = 'relative group aspect-square rounded bg-slate-800 overflow-hidden border border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
         div.innerHTML = `
             <img src="${p.url}" class="w-full h-full object-cover">
             <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
-                <button onclick="event.stopPropagation(); deletePreset(${index})" class="p-1.5 bg-red-600 rounded-full text-white">
-                    <i data-lucide="trash-2" class="w-3 h-3"></i>
-                </button>
+                <button onclick="event.stopPropagation(); deletePreset(${index})" class="p-1 bg-red-600 rounded-full text-white"><i data-lucide="trash-2" class="w-2.5 h-2.5"></i></button>
             </div>
         `;
         div.onclick = () => {
-            // Apply preset
             if (p.mediaFiles) mediaFiles = { ...mediaFiles, ...p.mediaFiles };
             if (p.parameters) parameters = { ...parameters, ...p.parameters };
             if (p.bypassedNodes) bypassedNodes = { ...bypassedNodes, ...p.bypassedNodes };
-            renderMediaInputs();
-            renderParameters();
+            refreshUI();
         };
         container.appendChild(div);
     });
@@ -295,27 +350,15 @@ function renderPresets(presets) {
 
 async function addPreset() {
     if (!currentWorkflow) return alert(getTranslation('add_preset_hint'));
-
     const container = document.getElementById('output-media-container');
     const img = container.querySelector('img');
-    if (!img) return alert('Generate an image first to add it as a preset');
-
-    const preset = {
-        url: img.src,
-        mediaFiles: { ...mediaFiles },
-        parameters: { ...parameters },
-        bypassedNodes: { ...bypassedNodes }
-    };
-
-    currentPresets.push(preset);
+    if (!img) return alert('Generate an image first');
+    currentPresets.push({ url: img.src, mediaFiles: { ...mediaFiles }, parameters: { ...parameters }, bypassedNodes: { ...bypassedNodes } });
     renderPresets(currentPresets);
 }
 
 function deletePreset(index) {
-    if (confirm(getTranslation('confirm_delete_preset'))) {
-        currentPresets.splice(index, 1);
-        renderPresets(currentPresets);
-    }
+    if (confirm(getTranslation('confirm_delete_preset'))) { currentPresets.splice(index, 1); renderPresets(currentPresets); }
 }
 
 async function deleteWorkflow(id) {
@@ -332,13 +375,11 @@ async function refreshOutputs() {
         const data = await res.json();
         const gallery = document.getElementById('outputs-gallery');
         gallery.innerHTML = '';
-
         if (data.files.length === 0) {
             gallery.innerHTML = '<div class="col-span-full text-center py-12 text-slate-600 italic" data-i18n="no_outputs">No items found</div>';
             translatePage(localStorage.getItem('preferredLanguage') || 'en');
             return;
         }
-
         data.files.forEach(file => {
             const card = document.createElement('div');
             card.className = 'slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square';
@@ -355,13 +396,10 @@ async function refreshOutputs() {
 function showModal(url, type) {
     const modal = document.getElementById('media-modal');
     const content = document.getElementById('modal-content');
-    content.innerHTML = type === 'video'
-        ? `<video src="${url}" controls autoplay class="max-w-full max-h-full"></video>`
-        : `<img src="${url}" class="max-w-full max-h-full object-contain">`;
+    content.innerHTML = type === 'video' ? `<video src="${url}" controls autoplay class="max-w-full max-h-full"></video>` : `<img src="${url}" class="max-w-full max-h-full object-contain">`;
     modal.classList.remove('hidden');
 }
 
-// Event Listeners
 document.getElementById('upload-btn').onclick = () => document.getElementById('workflow-file').click();
 document.getElementById('workflow-file').onchange = async (e) => {
     const file = e.target.files[0];
@@ -381,11 +419,7 @@ document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
 document.getElementById('close-modal').onclick = () => document.getElementById('media-modal').classList.add('hidden');
 document.getElementById('update-url-btn').onclick = async () => {
     const comfyuiUrl = document.getElementById('comfy-url-input').value;
-    const res = await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ comfyuiUrl })
-    });
+    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comfyuiUrl }) });
     const data = await res.json();
     if (data.success) alert(getTranslation('url_updated'));
 };
@@ -395,6 +429,7 @@ document.getElementById('select-all-btn').onclick = () => {
         c.checked = true;
         uiConfig.visibleParams[c.dataset.key] = true;
     });
+    renderLiveUI();
 };
 
 document.getElementById('deselect-all-btn').onclick = () => {
@@ -402,9 +437,9 @@ document.getElementById('deselect-all-btn').onclick = () => {
         c.checked = false;
         uiConfig.visibleParams[c.dataset.key] = false;
     });
+    renderLiveUI();
 };
 
-// Initial Load
 loadWorkflows();
 refreshOutputs();
 setInterval(async () => {
