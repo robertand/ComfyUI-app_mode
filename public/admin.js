@@ -73,43 +73,43 @@ function renderParameters() {
     currentWorkflow.advancedInputs.forEach(group => {
         const groupDiv = document.createElement('div');
         groupDiv.className = 'space-y-4 pb-4 border-b border-slate-800 last:border-0';
-        groupDiv.innerHTML = `<h4 class="text-sm font-bold text-slate-400 uppercase tracking-wider mb-3">${group.title}</h4>`;
+        groupDiv.innerHTML = `<h4 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">${group.title}</h4>`;
 
         const grid = document.createElement('div');
-        grid.className = 'grid grid-cols-1 gap-4';
+        grid.className = 'grid grid-cols-1 gap-2';
 
         group.inputs.forEach(param => {
             const isVisible = uiConfig.visibleParams[param.key] !== false;
+            const isBypassed = bypassedNodes[param.nodeId];
             const div = document.createElement('div');
-            div.className = 'flex items-start gap-3 p-3 bg-slate-900/50 rounded-lg border border-slate-800 hover:border-slate-700 transition-all';
+            div.className = 'flex flex-col gap-2 p-3 bg-slate-800/40 rounded-lg border border-slate-700/50 hover:border-blue-500/30 transition-all';
 
             div.innerHTML = `
-                <div class="mt-1">
-                    <input type="checkbox" class="param-visibility-check w-4 h-4 rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-blue-500"
-                           data-key="${param.key}" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded border-slate-700 bg-slate-800 text-blue-600"
+                               data-key="${param.key}" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked">
+                        <span class="text-[10px] font-bold text-slate-400 truncate max-w-[150px]">${param.title}</span>
+                    </div>
+                    <button onclick="toggleBypass('${param.nodeId}')" class="text-[9px] font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-800 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}" data-i18n="bypass">Bypass</button>
                 </div>
-                <div class="flex-1 space-y-2">
-                    <div class="flex items-center justify-between">
-                        <span class="text-xs font-bold text-slate-500 uppercase">${param.title}</span>
-                        <button onclick="toggleBypass('${param.nodeId}')" class="text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-800 transition-all ${bypassedNodes[param.nodeId] ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}" data-i18n="bypass">Bypass</button>
-                    </div>
-                    <input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}"
-                           class="w-full bg-transparent border-0 border-b border-slate-800 focus:border-blue-500 text-sm py-1 px-0 outline-none transition-all"
-                           onchange="uiConfig.inputNames['${param.key}'] = this.value" placeholder="Custom Label">
 
-                    <div class="pt-1">
-                        ${param.valueType === 'boolean' ? `
-                            <select class="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs outline-none" onchange="parameters['${param.key}'] = this.value">
-                                <option value="true" ${param.defaultValue === true ? 'selected' : ''}>True</option>
-                                <option value="false" ${param.defaultValue === false ? 'selected' : ''}>False</option>
-                            </select>
-                        ` : `
-                            <input type="${param.valueType === 'number' ? 'number' : 'text'}"
-                                   value="${param.defaultValue || ''}"
-                                   class="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs outline-none"
-                                   onchange="parameters['${param.key}'] = this.value">
-                        `}
-                    </div>
+                <input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}"
+                       class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-blue-500 transition-all"
+                       onchange="uiConfig.inputNames['${param.key}'] = this.value" placeholder="Custom Label">
+
+                <div>
+                    ${param.valueType === 'boolean' ? `
+                        <select class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] outline-none" onchange="parameters['${param.key}'] = this.value">
+                            <option value="true" ${param.defaultValue === true ? 'selected' : ''}>True</option>
+                            <option value="false" ${param.defaultValue === false ? 'selected' : ''}>False</option>
+                        </select>
+                    ` : `
+                        <input type="${param.valueType === 'number' ? 'number' : 'text'}"
+                               value="${param.defaultValue || ''}"
+                               class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] outline-none"
+                               onchange="parameters['${param.key}'] = this.value">
+                    `}
                 </div>
             `;
             grid.appendChild(div);
@@ -240,14 +240,82 @@ async function saveWorkflow() {
     if (!name) return alert('Name is required');
 
     try {
-        await fetch('/api/workflows/save', {
+        const response = await fetch('/api/workflows/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, description })
+            body: JSON.stringify({
+                name,
+                description,
+                presets: currentPresets // Keep presets if they exist
+            })
         });
-        loadWorkflows();
-        alert('Workflow saved!');
+        const data = await response.json();
+        if (data.success) {
+            loadWorkflows();
+            alert(getTranslation('saved_msg'));
+        }
     } catch (e) { console.error(e); }
+}
+
+let currentPresets = [];
+function renderPresets(presets) {
+    currentPresets = presets || [];
+    const container = document.getElementById('presets-container');
+    container.innerHTML = '';
+
+    if (currentPresets.length === 0) {
+        container.innerHTML = '<div class="col-span-full text-center py-4 text-slate-600 text-xs italic" data-i18n="no_presets_msg">No presets</div>';
+        translatePage(localStorage.getItem('preferredLanguage') || 'en');
+        return;
+    }
+
+    currentPresets.forEach((p, index) => {
+        const div = document.createElement('div');
+        div.className = 'relative group aspect-square rounded-lg overflow-hidden border border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
+        div.innerHTML = `
+            <img src="${p.url}" class="w-full h-full object-cover">
+            <div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                <button onclick="event.stopPropagation(); deletePreset(${index})" class="p-1.5 bg-red-600 rounded-full text-white">
+                    <i data-lucide="trash-2" class="w-3 h-3"></i>
+                </button>
+            </div>
+        `;
+        div.onclick = () => {
+            // Apply preset
+            if (p.mediaFiles) mediaFiles = { ...mediaFiles, ...p.mediaFiles };
+            if (p.parameters) parameters = { ...parameters, ...p.parameters };
+            if (p.bypassedNodes) bypassedNodes = { ...bypassedNodes, ...p.bypassedNodes };
+            renderMediaInputs();
+            renderParameters();
+        };
+        container.appendChild(div);
+    });
+    lucide.createIcons();
+}
+
+async function addPreset() {
+    if (!currentWorkflow) return alert(getTranslation('add_preset_hint'));
+
+    const container = document.getElementById('output-media-container');
+    const img = container.querySelector('img');
+    if (!img) return alert('Generate an image first to add it as a preset');
+
+    const preset = {
+        url: img.src,
+        mediaFiles: { ...mediaFiles },
+        parameters: { ...parameters },
+        bypassedNodes: { ...bypassedNodes }
+    };
+
+    currentPresets.push(preset);
+    renderPresets(currentPresets);
+}
+
+function deletePreset(index) {
+    if (confirm(getTranslation('confirm_delete_preset'))) {
+        currentPresets.splice(index, 1);
+        renderPresets(currentPresets);
+    }
 }
 
 async function deleteWorkflow(id) {
@@ -306,6 +374,7 @@ document.getElementById('workflow-file').onchange = async (e) => {
 };
 
 document.getElementById('save-workflow-btn').onclick = saveWorkflow;
+document.getElementById('add-preset-btn').onclick = addPreset;
 document.getElementById('save-ui-config').onclick = saveUIConfig;
 document.getElementById('generate-btn').onclick = runWorkflow;
 document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;

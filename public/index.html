@@ -59,8 +59,9 @@
     </nav>
 
     <div class="flex flex-1 overflow-hidden">
-        <!-- Sidebar: Workflow List -->
-        <aside class="w-80 bg-slate-900/50 border-r border-slate-800 flex flex-col">
+        <!-- Sidebar: Left Panel -->
+        <aside class="w-96 bg-slate-900/50 border-r border-slate-800 flex flex-col">
+            <!-- Workflows List -->
             <div class="p-4 border-b border-slate-800">
                 <button id="upload-btn" class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-all shadow-lg shadow-blue-900/20">
                     <i data-lucide="plus" class="w-4 h-4"></i>
@@ -69,20 +70,37 @@
                 <input type="file" id="workflow-file" class="hidden" accept=".json">
             </div>
             
-            <div class="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
+            <div id="workflows-list-container" class="h-48 overflow-y-auto p-4 space-y-4 border-b border-slate-800 scrollbar-hide">
                 <div class="flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest px-2">
                     <span data-i18n="saved_workflows">Saved Workflows</span>
                     <i data-lucide="folder-open" class="w-3 h-3"></i>
                 </div>
-                <div id="workflows-list" class="space-y-1">
-                    <!-- Workflows will be loaded here -->
-                    <div class="text-center py-8 text-slate-600 italic text-sm" data-i18n="no_workflows">No workflows found</div>
+                <div id="workflows-list" class="space-y-1"></div>
+            </div>
+
+            <!-- Parameters Config (Admin) -->
+            <div id="admin-params-config" class="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-hide bg-slate-900/20">
+                <div class="flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest px-2 mb-2">
+                    <span data-i18n="params">Parameters</span>
+                    <div class="flex gap-2">
+                        <button id="select-all-btn" class="hover:text-blue-400" data-i18n="select_all">Select All</button>
+                        <button id="deselect-all-btn" class="hover:text-blue-400" data-i18n="deselect_all">Deselect All</button>
+                    </div>
+                </div>
+                <div id="parameters-container" class="space-y-6">
+                    <p class="text-center text-slate-600 text-xs italic py-10" data-i18n="add_preset_hint">Upload a workflow to see parameters</p>
                 </div>
             </div>
 
-            <div class="p-4 border-t border-slate-800 bg-slate-900/80">
-                <div class="text-xs text-slate-500 mb-2 font-medium" data-i18n="save_current_workflow">Save current workflow</div>
-                <div class="space-y-2">
+            <!-- Bottom Actions -->
+            <div class="p-4 border-t border-slate-800 bg-slate-900/80 space-y-4">
+                <button id="save-ui-config" class="w-full py-2.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 font-bold rounded-lg transition-all flex items-center justify-center gap-2">
+                    <i data-lucide="check-circle" class="w-4 h-4"></i>
+                    <span data-i18n="save_config">Save Configuration</span>
+                </button>
+
+                <div class="pt-4 border-t border-slate-800 space-y-3">
+                    <div class="text-xs text-slate-500 font-medium" data-i18n="save_current_workflow">Save current workflow</div>
                     <input type="text" id="save-name" data-i18n="workflow_name" placeholder="Workflow Name" class="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
                     <textarea id="save-description" data-i18n="description" placeholder="Description" rows="2" class="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"></textarea>
                     <button id="save-workflow-btn" class="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-sm font-semibold rounded-md transition-all">
@@ -113,82 +131,49 @@
                 <p class="text-xl font-medium" data-i18n="select_workflow_sidebar">Select a workflow from the left panel or upload a new one</p>
             </div>
 
-            <!-- Workflow Configuration (Hidden by default) -->
+            <!-- Main Interface Layout (Same as User) -->
             <div id="workflow-config" class="hidden grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <!-- Parameters Controls -->
+                <!-- Left Column: Media Inputs & Presets -->
                 <div class="space-y-6">
-                    <div class="slate-card rounded-xl p-6 shadow-xl">
-                        <div class="flex items-center justify-between mb-6">
-                            <h3 class="text-lg font-bold flex items-center gap-2">
-                                <i data-lucide="settings-2" class="w-5 h-5 text-blue-500"></i>
-                                <span data-i18n="params">Parameters</span>
-                            </h3>
-                            <div class="flex gap-2">
-                                <button id="select-all-btn" class="text-xs font-semibold px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded" data-i18n="select_all">Select All</button>
-                                <button id="deselect-all-btn" class="text-xs font-semibold px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded" data-i18n="deselect_all">Deselect All</button>
-                            </div>
-                        </div>
-
-                        <div id="parameters-container" class="space-y-8 max-h-[60vh] overflow-y-auto pr-2 scrollbar-hide">
-                            <!-- Populated dynamically -->
-                        </div>
-
-                        <div class="mt-8 pt-6 border-t border-slate-700">
-                            <button id="save-ui-config" class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-all flex items-center justify-center gap-2">
-                                <i data-lucide="check-circle" class="w-5 h-5"></i>
-                                <span data-i18n="save_config">Save Configuration</span>
-                            </button>
-                        </div>
+                    <div id="media-inputs-preview" class="slate-card rounded-xl p-6 shadow-xl">
+                        <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
+                            <i data-lucide="upload-cloud" class="w-5 h-5 text-emerald-500"></i>
+                            <span data-i18n="upload_media">Upload Media</span>
+                        </h3>
+                        <div id="media-containers" class="space-y-6"></div>
                     </div>
 
-                    <!-- Preset Images -->
                     <div class="slate-card rounded-xl p-6 shadow-xl">
                         <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
                             <i data-lucide="image" class="w-5 h-5 text-purple-500"></i>
                             <span data-i18n="preset_images">Preset Images</span>
                         </h3>
-                        <div id="presets-container" class="grid grid-cols-3 gap-3 mb-4">
-                            <!-- Populated dynamically -->
-                        </div>
+                        <div id="presets-container" class="grid grid-cols-3 gap-3 mb-4"></div>
                         <button id="add-preset-btn" class="w-full py-2 bg-slate-800 hover:bg-slate-700 border border-dashed border-slate-600 text-slate-400 rounded-lg text-sm font-medium transition-all">
                             + <span data-i18n="add_preset">Add Preset Image</span>
                         </button>
                     </div>
                 </div>
 
-                <!-- Preview & Interaction -->
+                <!-- Right Column: Result -->
                 <div class="space-y-6">
-                    <!-- Media Inputs Preview -->
-                    <div id="media-inputs-preview" class="slate-card rounded-xl p-6 shadow-xl min-h-[200px]">
-                        <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
-                            <i data-lucide="upload-cloud" class="w-5 h-5 text-emerald-500"></i>
-                            <span data-i18n="upload_media">Upload Media</span>
-                        </h3>
-                        <div id="media-containers" class="space-y-6">
-                            <!-- Dynamic media uploaders -->
-                        </div>
-                    </div>
-
-                    <!-- Execution Result -->
                     <div id="result-container" class="slate-card rounded-xl p-6 shadow-xl min-h-[400px] flex flex-col">
                         <div class="flex items-center justify-between mb-6">
                             <h3 class="text-lg font-bold flex items-center gap-2">
                                 <i data-lucide="image" class="w-5 h-5 text-amber-500"></i>
                                 <span data-i18n="result">Result</span>
                             </h3>
-                            <button id="generate-btn" class="px-8 py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-lg shadow-lg transition-all transform hover:scale-[1.02] active:scale-[0.98]">
+                            <button id="generate-btn" class="px-10 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-lg shadow-lg transition-all transform hover:scale-[1.02] active:scale-[0.98]">
                                 <span data-i18n="generate">Generate</span>
                             </button>
                         </div>
-                        
-                        <div id="output-display" class="flex-1 flex items-center justify-center bg-slate-900/50 rounded-lg border-2 border-dashed border-slate-800 relative overflow-hidden min-h-[300px]">
+
+                        <div id="output-display" class="flex-1 flex items-center justify-center bg-slate-900/50 rounded-lg border-2 border-dashed border-slate-800 relative overflow-hidden min-h-[400px]">
                             <div id="output-placeholder" class="text-slate-700 text-center p-8">
                                 <i data-lucide="sparkles" class="w-12 h-12 mb-4 mx-auto opacity-20"></i>
                                 <p data-i18n="check_connection">Checking connection...</p>
                             </div>
-                            <div id="output-media-container" class="w-full h-full hidden flex items-center justify-center bg-black">
-                                <!-- Image or Video will appear here -->
-                            </div>
+                            <div id="output-media-container" class="w-full h-full hidden flex items-center justify-center bg-black"></div>
                         </div>
                     </div>
                 </div>
@@ -201,13 +186,12 @@
                         <i data-lucide="gallery-thumbnails" class="w-5 h-5 text-pink-500"></i>
                         <span data-i18n="output_browser">Output Browser</span>
                     </h3>
-                    <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all" title="Refresh">
+                    <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all">
                         <i data-lucide="refresh-cw" class="w-5 h-5"></i>
                     </button>
                 </div>
                 <div id="outputs-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-                    <!-- Items populated dynamically -->
-                    <div class="col-span-full text-center py-12 text-slate-600 italic" data-i18n="no_outputs">No items found in output folder</div>
+                    <div class="col-span-full text-center py-12 text-slate-600 italic" data-i18n="no_outputs">No items found</div>
                 </div>
             </div>
         </main>
@@ -229,15 +213,9 @@
             <div class="space-y-6">
                 <div>
                     <label class="block text-sm font-medium text-slate-400 mb-2" data-i18n="comfy_url">ComfyUI Server URL</label>
-                    <div class="flex gap-2">
-                        <input type="text" id="comfy-url-input" placeholder="http://127.0.0.1:8188" class="flex-1 bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
-                    </div>
+                    <input type="text" id="comfy-url-input" placeholder="http://127.0.0.1:8188" class="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
                 </div>
                 <button id="update-url-btn" class="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-all" data-i18n="update">Update</button>
-            </div>
-
-            <div class="mt-auto pt-6 border-t border-slate-800">
-                <p class="text-xs text-slate-600 text-center">ComfyUI Remote v2.0.0</p>
             </div>
         </div>
     </div>
@@ -252,46 +230,28 @@
         <button id="close-modal" class="absolute top-6 right-6 p-3 bg-black/50 hover:bg-black text-white rounded-full transition-all">
             <i data-lucide="x" class="w-8 h-8"></i>
         </button>
-        <div id="modal-content" class="max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center">
-            <!-- Content dynamic -->
-        </div>
+        <div id="modal-content" class="max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center"></div>
     </div>
 
     <script src="/translations.js"></script>
     <script src="/admin.js"></script>
     <script>
-        // Initialization script
         document.addEventListener('DOMContentLoaded', () => {
             lucide.createIcons();
-
-            // Toggle Settings Sidebar
             const settingsBtn = document.getElementById('settings-btn');
             const settingsSidebar = document.getElementById('settings-sidebar');
             const closeSettings = document.getElementById('close-settings');
+            settingsBtn.onclick = () => settingsSidebar.classList.remove('-translate-x-full');
+            closeSettings.onclick = () => settingsSidebar.classList.add('-translate-x-full');
 
-            settingsBtn.addEventListener('click', () => {
-                settingsSidebar.classList.remove('-translate-x-full');
-            });
-
-            closeSettings.addEventListener('click', () => {
-                settingsSidebar.classList.add('-translate-x-full');
-            });
-
-            // Language switcher
             const langSelect = document.getElementById('language-select');
-            const preferredLang = localStorage.getItem('preferredLanguage') || 'en';
-            langSelect.value = preferredLang;
-            translatePage(preferredLang);
+            langSelect.value = localStorage.getItem('preferredLanguage') || 'en';
+            translatePage(langSelect.value);
+            langSelect.onchange = (e) => translatePage(e.target.value);
 
-            langSelect.addEventListener('change', (e) => {
-                translatePage(e.target.value);
-            });
-
-            // Dynamic User View Link
             fetch('/api/config').then(r => r.json()).then(cfg => {
-                const userLink = document.getElementById('view-user-link');
-                userLink.href = `http://${window.location.hostname}:${cfg.publicPort}`;
-                document.getElementById('comfy-url-input').value = cfg.comfyuiUrl || 'http://127.0.0.1:8188';
+                document.getElementById('view-user-link').href = `http://${window.location.hostname}:${cfg.publicPort}`;
+                document.getElementById('comfy-url-input').value = cfg.comfyuiUrl;
             });
         });
     </script>
