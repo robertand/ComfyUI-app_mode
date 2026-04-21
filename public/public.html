@@ -39,12 +39,10 @@
                     <i data-lucide="shield-check" class="w-4 h-4"></i>
                     <span data-i18n="admin_view">Admin View</span>
                 </a>
-
                 <div class="h-6 w-px bg-slate-800"></div>
-
                 <div class="flex items-center gap-2">
                     <i data-lucide="languages" class="w-4 h-4 text-slate-400"></i>
-                    <select id="language-select" class="bg-slate-800 border border-slate-700 text-sm rounded-md px-2 py-1 outline-none focus:ring-2 focus:ring-blue-500 transition-all">
+                    <select id="language-select" class="bg-slate-800 border border-slate-700 text-sm rounded-md px-2 py-1 outline-none">
                         <option value="en">English</option>
                         <option value="hr">Hrvatski</option>
                         <option value="sl">Slovenščina</option>
@@ -57,14 +55,13 @@
     </nav>
 
     <main class="flex-1 overflow-y-auto p-4 md:p-8 bg-slate-950 space-y-8 scrollbar-hide">
-        <!-- Workflow Selection for User -->
-        <div class="max-w-4xl mx-auto">
+        <div class="max-w-7xl mx-auto">
             <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
                 <div>
                     <h2 class="text-2xl font-bold text-white tracking-tight" data-i18n="select_workflow_menu">Select a workflow</h2>
                     <p class="text-slate-400 text-sm" data-i18n="admin_configured">Workflows are configured by the administrator</p>
                 </div>
-                <select id="workflow-select" class="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white outline-none focus:ring-2 focus:ring-blue-500 min-w-[250px] shadow-lg">
+                <select id="workflow-select" class="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-white outline-none focus:ring-2 focus:ring-blue-500 min-w-[300px] shadow-lg">
                     <option value="">-- Select a workflow --</option>
                 </select>
             </div>
@@ -82,40 +79,26 @@
                 <p class="text-xl font-medium" data-i18n="select_workflow_menu">Select a workflow from the menu above</p>
             </div>
 
-            <!-- Main Generator Interface -->
             <div id="generator-interface" class="hidden space-y-8">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <!-- Left: Media & Inputs -->
-                    <div class="space-y-6">
-                        <div id="media-inputs-container" class="space-y-6">
-                            <!-- Populated dynamically -->
-                        </div>
-
-                        <!-- Presets for User -->
+                    <!-- Left: Unified Inputs & Presets -->
+                    <div class="space-y-8">
                         <div id="presets-card" class="slate-card rounded-xl p-6 shadow-xl hidden">
                             <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
                                 <i data-lucide="layout-template" class="w-5 h-5 text-purple-500"></i>
                                 <span data-i18n="preset_images">Presets</span>
                             </h3>
-                            <div id="presets-container" class="grid grid-cols-3 gap-3">
-                                <!-- Populated dynamically -->
-                            </div>
+                            <div id="presets-container" class="grid grid-cols-4 gap-3"></div>
                         </div>
 
-                        <div id="parameters-card" class="slate-card rounded-xl p-6 shadow-xl hidden">
-                            <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
-                                <i data-lucide="sliders" class="w-5 h-5 text-blue-500"></i>
-                                <span data-i18n="params">Parameters</span>
-                            </h3>
-                            <div id="params-container" class="space-y-4">
-                                <!-- Populated dynamically -->
-                            </div>
+                        <div id="active-inputs-container" class="space-y-6">
+                            <!-- All visible inputs in admin-defined order -->
                         </div>
                     </div>
 
                     <!-- Right: Execution & Results -->
                     <div class="space-y-6">
-                        <div class="slate-card rounded-xl p-6 shadow-xl flex flex-col h-full">
+                        <div class="slate-card rounded-xl p-6 shadow-xl flex flex-col h-full min-h-[500px]">
                             <div class="flex items-center justify-between mb-6">
                                 <h3 class="text-lg font-bold flex items-center gap-2">
                                     <i data-lucide="image" class="w-5 h-5 text-amber-500"></i>
@@ -129,40 +112,38 @@
                             <div id="output-display" class="flex-1 flex items-center justify-center bg-slate-900/50 rounded-lg border-2 border-dashed border-slate-800 relative overflow-hidden min-h-[400px]">
                                 <div id="output-placeholder" class="text-slate-700 text-center p-8">
                                     <i data-lucide="sparkles" class="w-12 h-12 mb-4 mx-auto opacity-20"></i>
-                                    <p data-i18n="check_connection">Checking connection...</p>
+                                    <p data-i18n="check_connection">Ready to generate</p>
                                 </div>
-                                <div id="output-media-container" class="w-full h-full hidden flex items-center justify-center bg-black">
-                                    <!-- Dynamic content -->
-                                </div>
+                                <div id="output-media-container" class="w-full h-full hidden flex items-center justify-center bg-black"></div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Output Gallery for User -->
+                <!-- Output Browser (Collapsible for User) -->
                 <div class="slate-card rounded-xl p-6 shadow-xl">
                     <div class="flex items-center justify-between mb-6">
-                        <h3 class="text-lg font-bold flex items-center gap-2">
-                            <i data-lucide="history" class="w-5 h-5 text-pink-500"></i>
-                            <span data-i18n="output_browser">Output Browser</span>
-                        </h3>
+                        <div class="flex items-center gap-4">
+                            <h3 class="text-lg font-bold flex items-center gap-2 cursor-pointer" onclick="toggleCollapse('outputs-gallery-container')">
+                                <i data-lucide="history" class="w-5 h-5 text-pink-500"></i>
+                                <span data-i18n="output_browser">Output Browser</span>
+                                <i data-lucide="chevron-down" id="outputs-gallery-chevron" class="w-4 h-4 ml-2 transition-transform"></i>
+                            </h3>
+                        </div>
                         <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all">
                             <i data-lucide="refresh-cw" class="w-5 h-5"></i>
                         </button>
                     </div>
-                    <div id="outputs-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                        <div class="col-span-full text-center py-8 text-slate-600 italic" data-i18n="no_outputs">No items found</div>
+                    <div id="outputs-gallery-container" class="transition-all duration-300 overflow-hidden">
+                        <div id="outputs-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 pb-4"></div>
                     </div>
                 </div>
             </div>
         </div>
     </main>
 
-    <!-- Modal for Large View -->
     <div id="media-modal" class="hidden fixed inset-0 z-[200] modal-bg flex items-center justify-center p-4">
-        <button id="close-modal" class="absolute top-6 right-6 p-3 bg-black/50 hover:bg-black text-white rounded-full transition-all">
-            <i data-lucide="x" class="w-8 h-8"></i>
-        </button>
+        <button id="close-modal" class="absolute top-6 right-6 p-3 bg-black/50 text-white rounded-full transition-all"><i data-lucide="x" class="w-8 h-8"></i></button>
         <div id="modal-content" class="max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center"></div>
     </div>
 
@@ -174,10 +155,7 @@
         let bypassedNodes = {};
         let uiConfig = null;
 
-        function toggleBypass(nodeId) {
-            bypassedNodes[nodeId] = !bypassedNodes[nodeId];
-            renderInterface();
-        }
+        function toggleBypass(nodeId) { bypassedNodes[nodeId] = !bypassedNodes[nodeId]; renderInterface(); }
 
         async function loadWorkflows() {
             try {
@@ -201,22 +179,19 @@
                 document.getElementById('empty-state').classList.remove('hidden');
                 return;
             }
-
             try {
                 const res = await fetch(`/api/workflows/load/${id}`, { method: 'POST' });
                 const data = await res.json();
-                currentWorkflow = data.analysis;
-                uiConfig = data.uiConfig;
-                mediaFiles = {};
-                parameters = {};
-                bypassedNodes = {};
-
-                document.getElementById('empty-state').classList.add('hidden');
-                document.getElementById('generator-interface').classList.remove('hidden');
-                
-                renderInterface();
-                renderPresets(data.presets || []);
-                translatePage(localStorage.getItem('preferredLanguage') || 'en');
+                if (data.success) {
+                    currentWorkflow = data.analysis;
+                    uiConfig = data.uiConfig;
+                    mediaFiles = {}; parameters = {}; bypassedNodes = {};
+                    document.getElementById('empty-state').classList.add('hidden');
+                    document.getElementById('generator-interface').classList.remove('hidden');
+                    renderInterface();
+                    renderPresets(data.presets || []);
+                    translatePage(localStorage.getItem('preferredLanguage') || 'en');
+                }
             } catch (e) { console.error(e); }
         }
 
@@ -224,16 +199,11 @@
             const container = document.getElementById('presets-container');
             const card = document.getElementById('presets-card');
             container.innerHTML = '';
-
-            if (!presets || presets.length === 0) {
-                card.classList.add('hidden');
-                return;
-            }
-
+            if (!presets || presets.length === 0) { card.classList.add('hidden'); return; }
             card.classList.remove('hidden');
             presets.forEach(p => {
                 const div = document.createElement('div');
-                div.className = 'relative group aspect-square rounded-lg overflow-hidden border border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
+                div.className = 'relative aspect-square rounded-lg bg-slate-900 overflow-hidden border border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
                 div.innerHTML = `<img src="${p.url}" class="w-full h-full object-cover">`;
                 div.onclick = () => {
                     if (p.mediaFiles) mediaFiles = { ...mediaFiles, ...p.mediaFiles };
@@ -245,252 +215,113 @@
             });
         }
 
-        async function refreshOutputs() {
-            try {
-                const res = await fetch('/api/outputs');
-                const data = await res.json();
-                const gallery = document.getElementById('outputs-gallery');
-                gallery.innerHTML = '';
-
-                if (data.files.length === 0) {
-                    gallery.innerHTML = '<div class="col-span-full text-center py-8 text-slate-600 italic" data-i18n="no_outputs">No items found</div>';
-                    translatePage(localStorage.getItem('preferredLanguage') || 'en');
-                    return;
-                }
-
-                data.files.forEach(file => {
-                    const card = document.createElement('div');
-                    card.className = 'slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square';
-
-                    if (file.type === 'video') {
-                        card.innerHTML = `<video src="${file.url}" class="w-full h-full object-cover"></video>
-                                         <div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-all">
-                                            <i data-lucide="play-circle" class="w-10 h-10 text-white opacity-80"></i>
-                                         </div>`;
-                    } else {
-                        card.innerHTML = `<img src="${file.url}" class="w-full h-full object-cover group-hover:scale-105 transition-all duration-500">`;
-                    }
-
-                    card.onclick = () => showModal(file.url, file.type);
-                    gallery.appendChild(card);
-                });
-                lucide.createIcons();
-            } catch (e) { console.error(e); }
-        }
-
-        function showModal(url, type) {
-            const modal = document.getElementById('media-modal');
-            const content = document.getElementById('modal-content');
-            content.innerHTML = '';
-
-            if (type === 'video') {
-                content.innerHTML = `<video src="${url}" controls autoplay class="max-w-full max-h-full rounded-lg"></video>`;
-            } else {
-                content.innerHTML = `<img src="${url}" class="max-w-full max-h-full object-contain rounded-lg shadow-2xl">`;
-            }
-
-            modal.classList.remove('hidden');
-        }
-
         function renderInterface() {
-            const mediaContainer = document.getElementById('media-inputs-container');
-            const paramsContainer = document.getElementById('params-container');
-            mediaContainer.innerHTML = '';
-            paramsContainer.innerHTML = '';
+            const container = document.getElementById('active-inputs-container');
+            container.innerHTML = '';
 
-            // Render Media Inputs
-            currentWorkflow.inputs.forEach(group => {
-                const groupEl = document.createElement('div');
-                groupEl.className = 'slate-card rounded-xl p-6 shadow-lg';
-                groupEl.innerHTML = `<h4 class="font-bold mb-4 text-slate-300 flex items-center gap-2">
-                                        <i data-lucide="image" class="w-4 h-4"></i> ${group.groupTitle || group.title}
-                                     </h4>`;
+            const order = uiConfig.inputOrder || [];
+            const visibleInputs = uiConfig.visibleInputs || {};
+            const visibleParams = uiConfig.visibleParams || {};
 
-                const grid = document.createElement('div');
-                grid.className = 'grid grid-cols-1 sm:grid-cols-2 gap-4';
+            order.forEach(key => {
+                let obj = null;
+                currentWorkflow.inputs.forEach(g => { const f = g.inputs.find(i => i.key === key); if (f) obj = { type: 'media', data: f }; });
+                if (!obj) { currentWorkflow.advancedInputs.forEach(g => { const f = g.inputs.find(p => p.key === key); if (f) obj = { type: 'param', data: f }; }); }
+                if (!obj) return;
 
-                group.inputs.forEach(input => {
-                    if (uiConfig.visibleInputs && uiConfig.visibleInputs[input.key] === false) return;
+                const isVisible = (obj.type === 'media' ? visibleInputs[key] : visibleParams[key]) !== false;
+                if (!isVisible) return;
 
-                    const isBypassed = bypassedNodes[input.nodeId];
-                    const div = document.createElement('div');
-                    div.className = 'space-y-3 p-4 rounded-xl bg-slate-900/30 border border-slate-800/50';
-                    const label = uiConfig.inputNames?.[input.key] || input.title;
+                const isBypassed = bypassedNodes[obj.data.nodeId];
+                const label = uiConfig.inputNames?.[key] || obj.data.title;
 
+                const div = document.createElement('div');
+                div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
+
+                if (obj.type === 'media') {
                     div.innerHTML = `
-                        <div class="flex items-center justify-between">
-                            <label class="block text-sm font-medium text-slate-400">${label}</label>
-                            <button onclick="toggleBypass('${input.nodeId}')" class="text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-800 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}" data-i18n="bypass">Bypass</button>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label>
+                            <button onclick="toggleBypass('${obj.data.nodeId}')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
                         </div>
-                        <div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
-                            <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${input.key}')">
-                            <div id="preview-${input.key}" class="text-center p-4">
-                                <i data-lucide="${input.valueType === 'video' ? 'video' : 'image'}" class="w-8 h-8 mb-2 mx-auto text-slate-600"></i>
-                                <p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p>
-                            </div>
+                        <div class="relative aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
+                            <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')">
+                            <div id="preview-${key}" class="text-center"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500">Click or drag</p></div>
                         </div>
                     `;
-                    grid.appendChild(div);
-                });
-
-                if (grid.children.length > 0) {
-                    groupEl.appendChild(grid);
-                    mediaContainer.appendChild(groupEl);
-                }
-            });
-
-            // Render Parameters
-            let visibleParamsCount = 0;
-            currentWorkflow.advancedInputs.forEach(group => {
-                group.inputs.forEach(param => {
-                    if (uiConfig.visibleParams && uiConfig.visibleParams[param.key] === true) {
-                        visibleParamsCount++;
-                        const div = document.createElement('div');
-                        div.className = 'space-y-1.5 p-3 rounded-lg bg-slate-900/30 border border-slate-800/50';
-                        const label = uiConfig.inputNames?.[param.key] || param.title;
-
-                        const isBypassed = bypassedNodes[param.nodeId];
-                        const currentValue = parameters[param.key] !== undefined ? parameters[param.key] : param.defaultValue;
-
-                        let inputHtml = '';
-                        if (param.valueType === 'boolean') {
-                            inputHtml = `<select class="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
-                                         onchange="parameters['${param.key}'] = this.value">
-                                            <option value="true" ${currentValue === 'true' || currentValue === true ? 'selected' : ''} data-i18n="yes">Yes</option>
-                                            <option value="false" ${currentValue === 'false' || currentValue === false ? 'selected' : ''} data-i18n="no">No</option>
-                                         </select>`;
-                        } else {
-                            inputHtml = `<input type="${param.valueType === 'number' ? 'number' : 'text'}"
-                                         value="${currentValue || ''}"
-                                         class="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
-                                         onchange="parameters['${param.key}'] = this.value">`;
-                        }
-
-                        div.innerHTML = `
-                            <div class="flex items-center justify-between mb-1">
-                                <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider">${label}</label>
-                                <button onclick="toggleBypass('${param.nodeId}')" class="text-[10px] font-bold px-1.5 py-0.5 rounded border border-slate-700 hover:bg-slate-800 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}" data-i18n="bypass">Bypass</button>
-                            </div>
-                            ${inputHtml}
-                        `;
-                        paramsContainer.appendChild(div);
+                } else {
+                    const cur = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
+                    let html = '';
+                    if (obj.data.valueType === 'boolean') {
+                        html = `<select class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}" onchange="parameters['${key}'] = this.value">
+                                    <option value="true" ${cur === 'true' || cur === true ? 'selected' : ''}>Yes</option>
+                                    <option value="false" ${cur === 'false' || cur === false ? 'selected' : ''}>No</option>
+                                </select>`;
+                    } else {
+                        html = `<input type="${obj.data.valueType === 'number' ? 'number' : 'text'}" value="${cur || ''}" class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}" onchange="parameters['${key}'] = this.value">`;
                     }
-                });
+                    div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div>${html}`;
+                }
+                container.appendChild(div);
             });
-
-            document.getElementById('parameters-card').classList.toggle('hidden', visibleParamsCount === 0);
-            lucide.createIcons();
+            if (window.lucide) window.lucide.createIcons();
         }
 
-        async function handleMediaUpload(file, inputKey) {
+        async function handleMediaUpload(file, key) {
             if (!file) return;
-            const preview = document.getElementById(`preview-${inputKey}`);
-            preview.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-slate-700 h-6 w-6 mx-auto"></div>';
-
-            const formData = new FormData();
-            formData.append('media', file);
-
+            const p = document.getElementById(`preview-${key}`);
+            p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-6 w-6 mx-auto"></div>';
+            const fd = new FormData(); fd.append('media', file);
             try {
-                const res = await fetch(`/api/upload/media/${inputKey}`, { method: 'POST', body: formData });
+                const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
                 const data = await res.json();
-                mediaFiles[inputKey] = data.filename;
-
-                if (data.type === 'video') {
-                    preview.innerHTML = `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>`;
-                } else {
-                    preview.innerHTML = `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
-                }
-            } catch (e) {
-                console.error(e);
-                preview.innerHTML = '<i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i>';
-                lucide.createIcons();
-            }
+                mediaFiles[key] = data.filename;
+                p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
+            } catch (e) { p.innerHTML = '<i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i>'; if (window.lucide) window.lucide.createIcons(); }
         }
 
         async function runWorkflow() {
             const btn = document.getElementById('generate-btn');
             const overlay = document.getElementById('loading-overlay');
-            const originalText = btn.innerHTML;
-
-            btn.disabled = true;
-            btn.classList.add('opacity-50');
-            overlay.classList.remove('hidden');
-
+            btn.disabled = true; overlay.classList.remove('hidden');
             try {
-                const res = await fetch('/api/workflow/run', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        workflowId: document.getElementById('workflow-select').value,
-                        mediaFiles,
-                        parameters,
-                        bypassedNodes
-                    })
-                });
-
+                const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflowId: document.getElementById('workflow-select').value, mediaFiles, parameters, bypassedNodes }) });
                 const data = await res.json();
                 if (data.success && data.files.length > 0) {
-                    const file = data.files[0];
-                    const container = document.getElementById('output-media-container');
-                    const placeholder = document.getElementById('output-placeholder');
-                    
-                    placeholder.classList.add('hidden');
-                    container.classList.remove('hidden');
-                    container.innerHTML = '';
-
-                    if (file.type === 'video') {
-                        container.innerHTML = `<video src="${file.url}" controls autoplay class="max-w-full max-h-full rounded"></video>`;
-                    } else {
-                        container.innerHTML = `<img src="${file.url}" class="max-w-full max-h-full object-contain cursor-pointer" onclick="showModal('${file.url}', 'image')">`;
-                    }
-
+                    const f = data.files[0]; const c = document.getElementById('output-media-container'); const ph = document.getElementById('output-placeholder');
+                    ph.classList.add('hidden'); c.classList.remove('hidden'); c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer" onclick="showModal('${f.url}', 'image')">`;
                     refreshOutputs();
-                } else if (data.error) {
-                    alert('Error: ' + data.error);
-                }
-            } catch (e) {
-                alert('Connection error');
-                console.error(e);
-            } finally {
-                btn.disabled = false;
-                btn.classList.remove('opacity-50');
-                overlay.classList.add('hidden');
-            }
+                } else if (data.error) { alert('Error: ' + data.error); }
+            } catch (e) { alert('Connection error'); } finally { btn.disabled = false; overlay.classList.add('hidden'); }
         }
 
+        async function refreshOutputs() {
+            try {
+                const res = await fetch('/api/outputs');
+                const data = await res.json();
+                const g = document.getElementById('outputs-gallery'); g.innerHTML = '';
+                if (data.files.length === 0) { g.innerHTML = '<div class="col-span-full text-center py-12 text-slate-600 italic">No items found</div>'; return; }
+                data.files.forEach(f => {
+                    const card = document.createElement('div'); card.className = 'slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square';
+                    card.innerHTML = f.type === 'video' ? `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40"><i data-lucide="play-circle" class="w-10 h-10 text-white opacity-80"></i></div>` : `<img src="${f.url}" class="w-full h-full object-cover group-hover:scale-105 transition-all duration-500">`;
+                    card.onclick = () => showModal(f.url, f.type); g.appendChild(card);
+                });
+                if (window.lucide) window.lucide.createIcons();
+            } catch (e) { console.error(e); }
+        }
+
+        function showModal(url, type) { const m = document.getElementById('media-modal'); const c = document.getElementById('modal-content'); c.innerHTML = type === 'video' ? `<video src="${url}" controls autoplay class="max-w-full max-h-full rounded-lg"></video>` : `<img src="${url}" class="max-w-full max-h-full object-contain rounded-lg">`; m.classList.remove('hidden'); }
+        function toggleCollapse(id) { const el = document.getElementById(id); const ch = document.getElementById(id.replace('container', 'chevron')); if (el.style.maxHeight === '0px') { el.style.maxHeight = '2000px'; if (ch) ch.style.transform = 'rotate(0deg)'; } else { el.style.maxHeight = '0px'; if (ch) ch.style.transform = 'rotate(-90deg)'; } }
+
         document.addEventListener('DOMContentLoaded', () => {
-            lucide.createIcons();
-            loadWorkflows();
-            refreshOutputs();
-
-            document.getElementById('workflow-select').addEventListener('change', (e) => loadWorkflow(e.target.value));
-            document.getElementById('generate-btn').addEventListener('click', runWorkflow);
-            document.getElementById('refresh-outputs-btn').addEventListener('click', refreshOutputs);
-            document.getElementById('close-modal').addEventListener('click', () => document.getElementById('media-modal').classList.add('hidden'));
-            
-            const langSelect = document.getElementById('language-select');
-            langSelect.value = localStorage.getItem('preferredLanguage') || 'en';
-            langSelect.addEventListener('change', (e) => translatePage(e.target.value));
-
-            fetch('/api/config').then(r => r.json()).then(cfg => {
-                document.getElementById('view-admin-link').href = `http://${window.location.hostname}:${cfg.adminPort}`;
-            });
-
-            setInterval(async () => {
-                try {
-                    const res = await fetch('/api/health');
-                    const data = await res.json();
-                    const badge = document.getElementById('status-badge');
-                    if (data.comfyui === 'connected') {
-                        badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-900/30 border border-emerald-500/50 text-emerald-400 text-sm font-medium';
-                        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span data-i18n="connected">Connected</span>';
-                    } else {
-                        badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-900/30 border border-red-500/50 text-red-400 text-sm font-medium';
-                        badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span><span data-i18n="disconnected">Disconnected</span>';
-                    }
-                    translatePage(localStorage.getItem('preferredLanguage') || 'en');
-                } catch (e) {}
-            }, 5000);
+            if (window.lucide) window.lucide.createIcons(); loadWorkflows(); refreshOutputs();
+            document.getElementById('workflow-select').onchange = (e) => loadWorkflow(e.target.value);
+            document.getElementById('generate-btn').onclick = runWorkflow;
+            document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
+            document.getElementById('close-modal').onclick = () => document.getElementById('media-modal').classList.add('hidden');
+            const ls = document.getElementById('language-select'); ls.value = localStorage.getItem('preferredLanguage') || 'en'; ls.onchange = (e) => translatePage(e.target.value);
+            fetch('/api/config').then(r => r.json()).then(cfg => { document.getElementById('view-admin-link').href = `http://${window.location.hostname}:${cfg.adminPort}`; });
+            setInterval(async () => { try { const r = await fetch('/api/health'); const d = await r.json(); const b = document.getElementById('status-badge'); if (d.comfyui === 'connected') { b.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-900/30 border border-emerald-500/50 text-emerald-400 text-sm font-medium'; b.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500"></span><span data-i18n="connected">Connected</span>'; } else { b.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full bg-red-900/30 border border-red-500/50 text-red-400 text-sm font-medium'; b.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span><span data-i18n="disconnected">Disconnected</span>'; } translatePage(localStorage.getItem('preferredLanguage') || 'en'); } catch (e) {} }, 5000);
         });
     </script>
 </body>
