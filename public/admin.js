@@ -55,6 +55,15 @@ function setupWorkflow(data) {
     bypassedNodes = {};
     currentPresets = data.metadata?.presets || [];
 
+    // Ensure inputOrder exists
+    if (!uiConfig.inputOrder) uiConfig.inputOrder = [];
+
+    // Auto-populate order if empty
+    if (uiConfig.inputOrder.length === 0) {
+        currentWorkflow.inputs.forEach(g => g.inputs.forEach(i => uiConfig.inputOrder.push(i.key)));
+        currentWorkflow.advancedInputs.forEach(g => g.inputs.forEach(p => uiConfig.inputOrder.push(p.key)));
+    }
+
     document.getElementById('empty-state').classList.add('hidden');
     document.getElementById('workflow-config').classList.remove('hidden');
     document.getElementById('workflow-header').classList.remove('hidden');
@@ -66,11 +75,24 @@ function setupWorkflow(data) {
 }
 
 function refreshUI() {
-    renderParametersConfig();
     renderMediaConfig();
+    renderParametersConfig();
     renderLiveUI();
     renderPresets(currentPresets);
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
+}
+
+function moveNode(key, direction) {
+    const idx = uiConfig.inputOrder.indexOf(key);
+    if (idx === -1) return;
+    const newIdx = idx + direction;
+    if (newIdx < 0 || newIdx >= uiConfig.inputOrder.length) return;
+
+    const temp = uiConfig.inputOrder[idx];
+    uiConfig.inputOrder[idx] = uiConfig.inputOrder[newIdx];
+    uiConfig.inputOrder[newIdx] = temp;
+
+    refreshUI();
 }
 
 // Sidebar: Parameter Visibility & Labels
@@ -78,37 +100,40 @@ function renderParametersConfig() {
     const container = document.getElementById('parameters-container');
     container.innerHTML = '';
 
-    currentWorkflow.advancedInputs.forEach(group => {
-        const groupDiv = document.createElement('div');
-        groupDiv.className = 'space-y-3 pb-3 border-b border-slate-800 last:border-0';
-        groupDiv.innerHTML = `<h4 class="text-[9px] font-bold text-slate-500 uppercase tracking-widest">${group.title}</h4>`;
+    // Sort according to inputOrder
+    const allParams = [];
+    currentWorkflow.advancedInputs.forEach(g => allParams.push(...g.inputs));
 
-        const grid = document.createElement('div');
-        grid.className = 'space-y-2';
+    const sortedParams = allParams.sort((a, b) => {
+        const idxA = uiConfig.inputOrder.indexOf(a.key);
+        const idxB = uiConfig.inputOrder.indexOf(b.key);
+        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+    });
 
-        group.inputs.forEach(param => {
-            const isVisible = uiConfig.visibleParams[param.key] !== false;
-            const isBypassed = bypassedNodes[param.nodeId];
-            const div = document.createElement('div');
-            div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
+    sortedParams.forEach(param => {
+        const isVisible = uiConfig.visibleParams[param.key] !== false;
+        const isBypassed = bypassedNodes[param.nodeId];
+        const div = document.createElement('div');
+        div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
 
-            div.innerHTML = `
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
-                               data-key="${param.key}" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();">
-                        <span class="text-[10px] font-bold text-slate-400 truncate max-w-[140px]">${param.title}</span>
-                    </div>
+        div.innerHTML = `
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
+                           data-key="${param.key}" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();">
+                    <span class="text-[10px] font-bold text-slate-400 truncate max-w-[120px]">${param.title}</span>
+                </div>
+                <div class="flex items-center gap-1">
+                    <button onclick="moveNode('${param.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button>
+                    <button onclick="moveNode('${param.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                     <button onclick="toggleBypass('${param.nodeId}', 'params')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
                 </div>
-                <input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}"
-                       class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none"
-                       onchange="uiConfig.inputNames['${param.key}'] = this.value; renderLiveUI();" placeholder="Custom Label">
-            `;
-            grid.appendChild(div);
-        });
-        groupDiv.appendChild(grid);
-        container.appendChild(groupDiv);
+            </div>
+            <input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}"
+                   class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none focus:border-blue-500"
+                   onchange="uiConfig.inputNames['${param.key}'] = this.value; renderLiveUI();" placeholder="Custom Label">
+        `;
+        container.appendChild(div);
     });
     lucide.createIcons();
 }
@@ -118,28 +143,39 @@ function renderMediaConfig() {
     const container = document.getElementById('media-config-container');
     container.innerHTML = '';
 
-    currentWorkflow.inputs.forEach(group => {
-        group.inputs.forEach(input => {
-            const isVisible = uiConfig.visibleInputs[input.key] !== false;
-            const isBypassed = bypassedNodes[input.nodeId];
-            const div = document.createElement('div');
-            div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
+    const allMedia = [];
+    currentWorkflow.inputs.forEach(g => allMedia.push(...g.inputs));
 
-            div.innerHTML = `
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                        <input type="checkbox" class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
-                               ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();">
-                        <span class="text-[10px] font-bold text-slate-400 truncate max-w-[140px]">${input.title}</span>
-                    </div>
+    const sortedMedia = allMedia.sort((a, b) => {
+        const idxA = uiConfig.inputOrder.indexOf(a.key);
+        const idxB = uiConfig.inputOrder.indexOf(b.key);
+        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+    });
+
+    sortedMedia.forEach(input => {
+        const isVisible = uiConfig.visibleInputs[input.key] !== false;
+        const isBypassed = bypassedNodes[input.nodeId];
+        const div = document.createElement('div');
+        div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
+
+        div.innerHTML = `
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <input type="checkbox" class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
+                           ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();">
+                    <span class="text-[10px] font-bold text-slate-400 truncate max-w-[120px]">${input.title}</span>
+                </div>
+                <div class="flex items-center gap-1">
+                    <button onclick="moveNode('${input.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button>
+                    <button onclick="moveNode('${input.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                     <button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
                 </div>
-                <input type="text" value="${uiConfig.inputNames?.[input.key] || input.title}"
-                       class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none"
-                       onchange="uiConfig.inputNames['${input.key}'] = this.value; renderLiveUI();" placeholder="Custom Label">
-            `;
-            container.appendChild(div);
-        });
+            </div>
+            <input type="text" value="${uiConfig.inputNames?.[input.key] || input.title}"
+                   class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none focus:border-blue-500"
+                   onchange="uiConfig.inputNames['${input.key}'] = this.value; renderLiveUI();" placeholder="Custom Label">
+        `;
+        container.appendChild(div);
     });
     lucide.createIcons();
 }
@@ -153,70 +189,73 @@ function renderLiveUI() {
     mediaContainer.innerHTML = '';
     paramsList.innerHTML = '';
 
-    // Render Live Media Inputs
-    currentWorkflow.inputs.forEach(group => {
-        const liveGroup = document.createElement('div');
-        liveGroup.className = 'grid grid-cols-1 md:grid-cols-2 gap-4';
+    // Collect all active nodes
+    const activeKeys = uiConfig.inputOrder.filter(k =>
+        (uiConfig.visibleInputs && uiConfig.visibleInputs[k] !== false) ||
+        (uiConfig.visibleParams && uiConfig.visibleParams[k] !== false)
+    );
 
-        group.inputs.forEach(input => {
-            if (uiConfig.visibleInputs[input.key] === false) return;
+    // Render in order
+    activeKeys.forEach(key => {
+        // Try to find as Media Input
+        let inputObj = null;
+        currentWorkflow.inputs.forEach(g => {
+            const found = g.inputs.find(i => i.key === key);
+            if (found) inputObj = { type: 'media', data: found };
+        });
 
-            const isBypassed = bypassedNodes[input.nodeId];
+        // Try to find as Parameter
+        if (!inputObj) {
+            currentWorkflow.advancedInputs.forEach(g => {
+                const found = g.inputs.find(p => p.key === key);
+                if (found) inputObj = { type: 'param', data: found };
+            });
+        }
+
+        if (!inputObj) return;
+
+        const isBypassed = bypassedNodes[inputObj.data.nodeId];
+        const label = uiConfig.inputNames?.[key] || inputObj.data.title;
+
+        if (inputObj.type === 'media') {
             const div = document.createElement('div');
-            div.className = 'slate-card p-4 rounded-xl space-y-3';
-
+            div.className = 'slate-card p-4 rounded-xl space-y-3 shadow-lg';
             div.innerHTML = `
-                <label class="block text-sm font-bold text-slate-400 uppercase tracking-wider">${uiConfig.inputNames?.[input.key] || input.title}</label>
+                <label class="block text-sm font-bold text-slate-400 uppercase tracking-wider">${label}</label>
                 <div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
-                    <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${input.key}')">
-                    <div id="preview-${input.key}" class="text-center p-4">
-                        <i data-lucide="${input.valueType === 'video' ? 'video' : 'image'}" class="w-8 h-8 mb-2 mx-auto text-slate-600"></i>
+                    <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')">
+                    <div id="preview-${key}" class="text-center p-4">
+                        <i data-lucide="${inputObj.data.valueType === 'video' ? 'video' : 'image'}" class="w-8 h-8 mb-2 mx-auto text-slate-600"></i>
                         <p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p>
                     </div>
                 </div>
             `;
-            liveGroup.appendChild(div);
-        });
+            mediaContainer.appendChild(div);
+        } else {
+            const div = document.createElement('div');
+            div.className = 'space-y-2';
+            const currentValue = parameters[key] !== undefined ? parameters[key] : inputObj.data.defaultValue;
 
-        if (liveGroup.children.length > 0) {
-            mediaContainer.appendChild(liveGroup);
+            let inputHtml = '';
+            if (inputObj.data.valueType === 'boolean') {
+                inputHtml = `<select class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
+                             onchange="parameters['${key}'] = this.value">
+                                <option value="true" ${currentValue === 'true' || currentValue === true ? 'selected' : ''} data-i18n="yes">Yes</option>
+                                <option value="false" ${currentValue === 'false' || currentValue === false ? 'selected' : ''} data-i18n="no">No</option>
+                             </select>`;
+            } else {
+                inputHtml = `<input type="${inputObj.data.valueType === 'number' ? 'number' : 'text'}"
+                             value="${currentValue || ''}"
+                             class="w-full bg-slate-900 border border-slate-800 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
+                             onchange="parameters['${key}'] = this.value">`;
+            }
+
+            div.innerHTML = `<label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label>${inputHtml}`;
+            paramsList.appendChild(div);
         }
     });
 
-    // Render Live Parameters
-    let visibleParamsCount = 0;
-    currentWorkflow.advancedInputs.forEach(group => {
-        group.inputs.forEach(param => {
-            if (uiConfig.visibleParams[param.key] !== false) {
-                visibleParamsCount++;
-                const isBypassed = bypassedNodes[param.nodeId];
-                const div = document.createElement('div');
-                div.className = 'space-y-2';
-                const label = uiConfig.inputNames?.[param.key] || param.title;
-
-                const currentValue = parameters[param.key] !== undefined ? parameters[param.key] : param.defaultValue;
-
-                let inputHtml = '';
-                if (param.valueType === 'boolean') {
-                    inputHtml = `<select class="w-full bg-slate-900 border border-slate-800 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
-                                 onchange="parameters['${param.key}'] = this.value">
-                                    <option value="true" ${currentValue === 'true' || currentValue === true ? 'selected' : ''} data-i18n="yes">Yes</option>
-                                    <option value="false" ${currentValue === 'false' || currentValue === false ? 'selected' : ''} data-i18n="no">No</option>
-                                 </select>`;
-                } else {
-                    inputHtml = `<input type="${param.valueType === 'number' ? 'number' : 'text'}"
-                                 value="${currentValue || ''}"
-                                 class="w-full bg-slate-900 border border-slate-800 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
-                                 onchange="parameters['${param.key}'] = this.value">`;
-                }
-
-                div.innerHTML = `<label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label>${inputHtml}`;
-                paramsList.appendChild(div);
-            }
-        });
-    });
-
-    paramsLiveCard.classList.toggle('hidden', visibleParamsCount === 0);
+    paramsLiveCard.classList.toggle('hidden', paramsList.children.length === 0);
     lucide.createIcons();
 }
 
@@ -383,13 +422,27 @@ async function refreshOutputs() {
         data.files.forEach(file => {
             const card = document.createElement('div');
             card.className = 'slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square';
-            card.innerHTML = file.type === 'video'
-                ? `<video src="${file.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>`
-                : `<img src="${file.url}" class="w-full h-full object-cover">`;
+            card.innerHTML = `
+                ${file.type === 'video'
+                    ? `<video src="${file.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>`
+                    : `<img src="${file.url}" class="w-full h-full object-cover">`
+                }
+                <button onclick="event.stopPropagation(); deleteOutput('${file.name}')" class="absolute top-2 right-2 p-1.5 bg-red-600 rounded-full text-white opacity-0 group-hover:opacity-100 transition-all">
+                    <i data-lucide="trash-2" class="w-3 h-3"></i>
+                </button>
+            `;
             card.onclick = () => showModal(file.url, file.type);
             gallery.appendChild(card);
         });
         lucide.createIcons();
+    } catch (e) { console.error(e); }
+}
+
+async function deleteOutput(filename) {
+    if (!confirm('Delete file?')) return;
+    try {
+        await fetch(`/api/outputs/${filename}`, { method: 'DELETE' });
+        refreshOutputs();
     } catch (e) { console.error(e); }
 }
 
@@ -399,6 +452,20 @@ function showModal(url, type) {
     content.innerHTML = type === 'video' ? `<video src="${url}" controls autoplay class="max-w-full max-h-full"></video>` : `<img src="${url}" class="max-w-full max-h-full object-contain">`;
     modal.classList.remove('hidden');
 }
+
+function toggleCollapse(id) {
+    const el = document.getElementById(id);
+    const chevron = document.getElementById(id.replace('container', 'chevron'));
+    if (el.style.maxHeight === '0px') {
+        el.style.maxHeight = '2000px';
+        if (chevron) chevron.style.transform = 'rotate(0deg)';
+    } else {
+        el.style.maxHeight = '0px';
+        if (chevron) chevron.style.transform = 'rotate(-90deg)';
+    }
+}
+// Export to window
+window.toggleCollapse = toggleCollapse;
 
 document.getElementById('upload-btn').onclick = () => document.getElementById('workflow-file').click();
 document.getElementById('workflow-file').onchange = async (e) => {

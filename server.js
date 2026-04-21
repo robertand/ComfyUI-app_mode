@@ -1026,6 +1026,22 @@ adminApp.post('/api/settings', (req, res) => {
     }
 });
 
+// API pentru ștergere fișier din output
+adminApp.delete('/api/outputs/:filename', (req, res) => {
+    try {
+        const { filename } = req.params;
+        const filePath = path.join('output', filename);
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ error: 'Fișier negăsit' });
+        }
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // API pentru browser de fișiere (Output)
 adminApp.get('/api/outputs', (req, res) => {
     try {
