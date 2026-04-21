@@ -110,6 +110,7 @@ function shouldGenerateRandomSeed(paramKey, paramValue, autoRandomFlags) {
 
 function extractOriginalWorkflowValues(workflowApi) {
     const values = {};
+    if (!workflowApi) return values;
     
     for (const [nodeId, node] of Object.entries(workflowApi)) {
         if (node.inputs) {
@@ -669,7 +670,7 @@ adminApp.post('/api/workflows/load/:id', (req, res) => {
         currentWorkflowData = {
             raw: savedData.workflow,
             analysis: savedData.analysis,
-            workflowApi: savedData.analysis.workflowApi
+            workflowApi: savedData.analysis.workflowApi || savedData.workflow
         };
         currentWorkflowId = id;
 
@@ -1241,7 +1242,7 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         
         const filePath = path.join(savedDir, file);
         const savedData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        let workflow = JSON.parse(JSON.stringify(savedData.analysis.workflowApi));
+        let workflow = JSON.parse(JSON.stringify(savedData.analysis.workflowApi || savedData.workflow));
 
         // Aplicăm bypass-ul pentru noduri (graph surgery)
         workflow = applyBypass(workflow, bypassedNodes);
