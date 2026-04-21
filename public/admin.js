@@ -1,4 +1,5 @@
 let currentWorkflow = null;
+let currentWorkflowId = null;
 let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
 let mediaFiles = {};
 let parameters = {};
@@ -33,7 +34,10 @@ async function loadWorkflow(id) {
     try {
         const res = await fetch(`/api/workflows/load/${id}`, { method: 'POST' });
         const data = await res.json();
-        if (data.success) setupWorkflow(data);
+        if (data.success) {
+            currentWorkflowId = id;
+            setupWorkflow(data);
+        }
         else alert('Error: ' + data.error);
     } catch (e) { console.error(e); }
 }
@@ -134,8 +138,32 @@ function renderLiveUI() {
             div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div><div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"><input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')"><div id="preview-${key}" class="text-center p-4"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p></div></div>`;
         } else {
             const cur = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
-            let html = obj.data.valueType === 'boolean' ? `<select class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}" onchange="parameters['${key}'] = this.value"><option value="true" ${cur === 'true' || cur === true ? 'selected' : ''}>Yes</option><option value="false" ${cur === 'false' || cur === false ? 'selected' : ''}>No</option></select>` : `<input type="${obj.data.valueType === 'number' ? 'number' : 'text'}" value="${cur || ''}" class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}" onchange="parameters['${key}'] = this.value">`;
-            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'params')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div>${html}`;
+            const isRandom = parameters['_autoRandomSeed']?.[key] === true;
+            let inputHtml = '';
+            if (obj.data.valueType === 'boolean') {
+                inputHtml = `<select class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}" onchange="parameters['${key}'] = this.value">
+                    <option value="true" ${cur === 'true' || cur === true ? 'selected' : ''}>Yes</option>
+                    <option value="false" ${cur === 'false' || cur === false ? 'selected' : ''}>No</option>
+                </select>`;
+            } else {
+                inputHtml = `
+                    <div class="relative">
+                        <input type="${obj.data.valueType === 'number' ? 'number' : 'text'}" value="${cur || ''}"
+                            class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 pr-12 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''} ${isRandom ? 'text-slate-500 italic' : ''}"
+                            ${isRandom ? 'disabled' : ''}
+                            onchange="parameters['${key}'] = this.value">
+                        ${obj.data.valueType === 'number' && (
+                            (obj.data.inputName || '').toLowerCase().includes('seed') ||
+                            (obj.data.originalName || '').toLowerCase().includes('seed') ||
+                            (label || '').toLowerCase().includes('seed') ||
+                            (key || '').toLowerCase().includes('seed')
+                        ) ? `
+                        <button onclick="toggleRandom('${key}')" class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded hover:bg-slate-700 transition-colors ${isRandom ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500'}" title="${getTranslation('toggle_randomization')}">
+                            <i data-lucide="dice-5" class="w-4 h-4"></i>
+                        </button>` : ''}
+                    </div>`;
+            }
+            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'params')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div>${inputHtml}`;
         }
         container.appendChild(div);
     });
@@ -158,6 +186,12 @@ async function handleMediaUpload(file, key) {
 function toggleBypass(id, src) {
     bypassedNodes[id] = !bypassedNodes[id];
     if (src === 'media') renderMediaConfig(); else renderParametersConfig();
+    renderLiveUI();
+}
+
+function toggleRandom(key) {
+    if (!parameters['_autoRandomSeed']) parameters['_autoRandomSeed'] = {};
+    parameters['_autoRandomSeed'][key] = !parameters['_autoRandomSeed'][key];
     renderLiveUI();
 }
 

@@ -46,7 +46,8 @@ const translations = {
         saved_msg: "Saved!",
         no_workflows: "No workflows found",
         add_preset_hint: "Upload a workflow to add presets",
-        no_presets_msg: "No preset images"
+        no_presets_msg: "No preset images",
+        toggle_randomization: "Toggle Randomization"
     },
     hr: {
         app_title: "ComfyUI Remote Generator",
@@ -95,7 +96,8 @@ const translations = {
         saved_msg: "Spremljeno!",
         no_workflows: "Nema pronađenih tijekova rada",
         add_preset_hint: "Prenesite tijek rada da biste dodali postavke",
-        no_presets_msg: "Nema unaprijed postavljenih slika"
+        no_presets_msg: "Nema unaprijed postavljenih slika",
+        toggle_randomization: "Prebaci nasumičnost"
     },
     sl: {
         app_title: "ComfyUI Remote Generator",
@@ -144,7 +146,8 @@ const translations = {
         saved_msg: "Shranjeno!",
         no_workflows: "Ni najdenih delovnih procesov",
         add_preset_hint: "Naložite delovni proces za dodajanje prednastavitev",
-        no_presets_msg: "Ni prednastavljenih slik"
+        no_presets_msg: "Ni prednastavljenih slik",
+        toggle_randomization: "Preklopi naključnost"
     },
     sk: {
         app_title: "ComfyUI Remote Generator",
@@ -193,7 +196,8 @@ const translations = {
         saved_msg: "Uložené!",
         no_workflows: "Nenašli sa žiadne pracovné postupy",
         add_preset_hint: "Nahrajte pracovný postup a pridajte predvoľby",
-        no_presets_msg: "Žiadne prednastavené obrázky"
+        no_presets_msg: "Žiadne prednastavené obrázky",
+        toggle_randomization: "Prepnúť náhodnosť"
     },
     ro: {
         app_title: "ComfyUI Remote Generator",
@@ -242,7 +246,8 @@ const translations = {
         saved_msg: "Salvat!",
         no_workflows: "Nu există workflow-uri",
         add_preset_hint: "Încarcă un workflow pentru a adăuga preseturi",
-        no_presets_msg: "Nicio imagine presetată"
+        no_presets_msg: "Nicio imagine presetată",
+        toggle_randomization: "Randomizare"
     }
 };
 

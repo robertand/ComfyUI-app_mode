@@ -156,6 +156,11 @@
         let uiConfig = null;
 
         function toggleBypass(nodeId) { bypassedNodes[nodeId] = !bypassedNodes[nodeId]; renderInterface(); }
+        function toggleRandom(key) {
+            if (!parameters['_autoRandomSeed']) parameters['_autoRandomSeed'] = {};
+            parameters['_autoRandomSeed'][key] = !parameters['_autoRandomSeed'][key];
+            renderInterface();
+        }
 
         async function loadWorkflows() {
             try {
@@ -251,16 +256,32 @@
                     `;
                 } else {
                     const cur = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
-                    let html = '';
+                    const isRandom = parameters['_autoRandomSeed']?.[key] === true;
+                    let inputHtml = '';
                     if (obj.data.valueType === 'boolean') {
-                        html = `<select class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}" onchange="parameters['${key}'] = this.value">
+                        inputHtml = `<select class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}" onchange="parameters['${key}'] = this.value">
                                     <option value="true" ${cur === 'true' || cur === true ? 'selected' : ''}>Yes</option>
                                     <option value="false" ${cur === 'false' || cur === false ? 'selected' : ''}>No</option>
                                 </select>`;
                     } else {
-                        html = `<input type="${obj.data.valueType === 'number' ? 'number' : 'text'}" value="${cur || ''}" class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}" onchange="parameters['${key}'] = this.value">`;
+                        inputHtml = `
+                        <div class="relative">
+                            <input type="${obj.data.valueType === 'number' ? 'number' : 'text'}" value="${cur || ''}"
+                                class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 pr-12 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''} ${isRandom ? 'text-slate-500 italic' : ''}"
+                                ${isRandom ? 'disabled' : ''}
+                                onchange="parameters['${key}'] = this.value">
+                            ${obj.data.valueType === 'number' && (
+                                (obj.data.inputName || '').toLowerCase().includes('seed') ||
+                                (obj.data.originalName || '').toLowerCase().includes('seed') ||
+                                (label || '').toLowerCase().includes('seed') ||
+                                (key || '').toLowerCase().includes('seed')
+                            ) ? `
+                            <button onclick="toggleRandom('${key}')" class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded hover:bg-slate-700 transition-colors ${isRandom ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500'}" title="${getTranslation('toggle_randomization')}">
+                                <i data-lucide="dice-5" class="w-4 h-4"></i>
+                            </button>` : ''}
+                        </div>`;
                     }
-                    div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div>${html}`;
+                    div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div>${inputHtml}`;
                 }
                 container.appendChild(div);
             });
