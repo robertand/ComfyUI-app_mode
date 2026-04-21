@@ -225,12 +225,9 @@
             const paramsList = document.getElementById('params-container');
             mediaContainer.innerHTML = ''; paramsList.innerHTML = '';
 
-            const activeKeys = (uiConfig.inputOrder || []).filter(k =>
-                (uiConfig.visibleInputs && uiConfig.visibleInputs[k] !== false) ||
-                (uiConfig.visibleParams && uiConfig.visibleParams[k] !== false)
-            );
+            const order = uiConfig.inputOrder || [];
 
-            activeKeys.forEach(key => {
+            order.forEach(key => {
                 let obj = null;
                 currentWorkflow.inputs.forEach(g => { const f = g.inputs.find(i => i.key === key); if (f) obj = { type: 'media', data: f }; });
                 if (!obj) { currentWorkflow.advancedInputs.forEach(g => { const f = g.inputs.find(p => p.key === key); if (f) obj = { type: 'param', data: f }; }); }
@@ -240,6 +237,8 @@
                 const label = uiConfig.inputNames?.[key] || obj.data.title;
 
                 if (obj.type === 'media') {
+                    if (uiConfig.visibleInputs && uiConfig.visibleInputs[key] === false) return;
+
                     const div = document.createElement('div');
                     div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
                     div.innerHTML = `
@@ -254,6 +253,8 @@
                     `;
                     mediaContainer.appendChild(div);
                 } else {
+                    if (uiConfig.visibleParams && uiConfig.visibleParams[key] === false) return;
+
                     const div = document.createElement('div'); div.className = 'space-y-2';
                     const cur = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
                     let html = '';

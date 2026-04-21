@@ -55,14 +55,20 @@ function setupWorkflow(data) {
     bypassedNodes = {};
     currentPresets = data.metadata?.presets || [];
 
-    // Ensure inputOrder exists
+    // Ensure all keys are in inputOrder and sync them
     if (!uiConfig.inputOrder) uiConfig.inputOrder = [];
 
-    // Auto-populate order if empty
-    if (uiConfig.inputOrder.length === 0) {
-        currentWorkflow.inputs.forEach(g => g.inputs.forEach(i => uiConfig.inputOrder.push(i.key)));
-        currentWorkflow.advancedInputs.forEach(g => g.inputs.forEach(p => uiConfig.inputOrder.push(p.key)));
-    }
+    const allWorkflowKeys = [];
+    currentWorkflow.inputs.forEach(g => g.inputs.forEach(i => allWorkflowKeys.push(i.key)));
+    currentWorkflow.advancedInputs.forEach(g => g.inputs.forEach(p => allWorkflowKeys.push(p.key)));
+
+    // Remove stale keys that don't exist in the current workflow
+    uiConfig.inputOrder = uiConfig.inputOrder.filter(k => allWorkflowKeys.includes(k));
+
+    // Add missing keys from current workflow to the end
+    allWorkflowKeys.forEach(k => {
+        if (!uiConfig.inputOrder.includes(k)) uiConfig.inputOrder.push(k);
+    });
 
     document.getElementById('empty-state').classList.add('hidden');
     document.getElementById('workflow-config').classList.remove('hidden');
@@ -104,10 +110,8 @@ function renderParametersConfig() {
     const allParams = [];
     currentWorkflow.advancedInputs.forEach(g => allParams.push(...g.inputs));
 
-    const sortedParams = allParams.sort((a, b) => {
-        const idxA = uiConfig.inputOrder.indexOf(a.key);
-        const idxB = uiConfig.inputOrder.indexOf(b.key);
-        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+    const sortedParams = allParams.filter(p => uiConfig.inputOrder.includes(p.key)).sort((a, b) => {
+        return uiConfig.inputOrder.indexOf(a.key) - uiConfig.inputOrder.indexOf(b.key);
     });
 
     sortedParams.forEach(param => {
@@ -146,10 +150,8 @@ function renderMediaConfig() {
     const allMedia = [];
     currentWorkflow.inputs.forEach(g => allMedia.push(...g.inputs));
 
-    const sortedMedia = allMedia.sort((a, b) => {
-        const idxA = uiConfig.inputOrder.indexOf(a.key);
-        const idxB = uiConfig.inputOrder.indexOf(b.key);
-        return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB);
+    const sortedMedia = allMedia.filter(m => uiConfig.inputOrder.includes(m.key)).sort((a, b) => {
+        return uiConfig.inputOrder.indexOf(a.key) - uiConfig.inputOrder.indexOf(b.key);
     });
 
     sortedMedia.forEach(input => {
@@ -189,14 +191,8 @@ function renderLiveUI() {
     mediaContainer.innerHTML = '';
     paramsList.innerHTML = '';
 
-    // Collect all active nodes
-    const activeKeys = uiConfig.inputOrder.filter(k =>
-        (uiConfig.visibleInputs && uiConfig.visibleInputs[k] !== false) ||
-        (uiConfig.visibleParams && uiConfig.visibleParams[k] !== false)
-    );
-
     // Render in order
-    activeKeys.forEach(key => {
+    uiConfig.inputOrder.forEach(key => {
         // Try to find as Media Input
         let inputObj = null;
         currentWorkflow.inputs.forEach(g => {
@@ -218,6 +214,8 @@ function renderLiveUI() {
         const label = uiConfig.inputNames?.[key] || inputObj.data.title;
 
         if (inputObj.type === 'media') {
+            if (uiConfig.visibleInputs[key] === false) return; // Explicit check
+
             const div = document.createElement('div');
             div.className = 'slate-card p-4 rounded-xl space-y-3 shadow-lg';
             div.innerHTML = `
@@ -232,6 +230,8 @@ function renderLiveUI() {
             `;
             mediaContainer.appendChild(div);
         } else {
+            if (uiConfig.visibleParams[key] === false) return; // Explicit check
+
             const div = document.createElement('div');
             div.className = 'space-y-2';
             const currentValue = parameters[key] !== undefined ? parameters[key] : inputObj.data.defaultValue;
