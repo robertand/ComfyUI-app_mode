@@ -122,12 +122,12 @@ function renderParametersConfig() {
 
         div.innerHTML = `
             <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 min-w-0">
                     <input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
                            data-key="${param.key}" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();">
-                    <span class="text-[10px] font-bold text-slate-400 truncate max-w-[120px]">${param.title}</span>
+                    <span class="text-[10px] font-bold text-slate-400 truncate">${param.title}</span>
                 </div>
-                <div class="flex items-center gap-1">
+                <div class="flex items-center gap-1 shrink-0">
                     <button onclick="moveNode('${param.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button>
                     <button onclick="moveNode('${param.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                     <button onclick="toggleBypass('${param.nodeId}', 'params')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
@@ -162,12 +162,12 @@ function renderMediaConfig() {
 
         div.innerHTML = `
             <div class="flex items-center justify-between">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 min-w-0">
                     <input type="checkbox" class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
                            ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();">
-                    <span class="text-[10px] font-bold text-slate-400 truncate max-w-[120px]">${input.title}</span>
+                    <span class="text-[10px] font-bold text-slate-400 truncate">${input.title}</span>
                 </div>
-                <div class="flex items-center gap-1">
+                <div class="flex items-center gap-1 shrink-0">
                     <button onclick="moveNode('${input.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button>
                     <button onclick="moveNode('${input.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button>
                     <button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 transition-all ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
@@ -211,7 +211,11 @@ function renderLiveUI() {
         if (!inputObj) return;
 
         const isBypassed = bypassedNodes[inputObj.data.nodeId];
-        const label = uiConfig.inputNames?.[key] || inputObj.data.title;
+        let label = uiConfig.inputNames?.[key] || inputObj.data.title;
+        const originalTitle = inputObj.data.nodeTitle || inputObj.data.title;
+        if (uiConfig.inputNames?.[key]) {
+            label = `${label} (${originalTitle})`;
+        }
 
         if (inputObj.type === 'media') {
             if (uiConfig.visibleInputs[key] === false) return; // Explicit check

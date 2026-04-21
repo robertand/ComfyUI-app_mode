@@ -234,7 +234,11 @@
                 if (!obj) return;
 
                 const isBypassed = bypassedNodes[obj.data.nodeId];
-                const label = uiConfig.inputNames?.[key] || obj.data.title;
+                let label = uiConfig.inputNames?.[key] || obj.data.title;
+                const originalTitle = obj.data.nodeTitle || obj.data.title;
+                if (uiConfig.inputNames?.[key]) {
+                    label = `${label} (${originalTitle})`;
+                }
 
                 if (obj.type === 'media') {
                     if (uiConfig.visibleInputs && uiConfig.visibleInputs[key] === false) return;
