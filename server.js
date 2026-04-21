@@ -60,6 +60,7 @@ if (!fs.existsSync('workflows/saved')) fs.mkdirSync('workflows/saved');
 
 // Store pentru workflow-ul curent
 let currentWorkflowData = null;
+let currentWorkflowId = null; // ID-ul workflow-ului salvat curent
 let uiConfig = null;
 let originalWorkflowValues = {}; // Stochează valorile originale din workflow
 
@@ -621,6 +622,40 @@ adminApp.get('/api/workflows/list', (req, res) => {
     }
 });
 
+// Helper pentru a reconcilia și completa uiConfig
+function reconcileUIConfig(analysis, existingConfig) {
+    const config = existingConfig || { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
+    if (!config.visibleInputs) config.visibleInputs = {};
+    if (!config.visibleParams) config.visibleParams = {};
+    if (!config.inputOrder) config.inputOrder = [];
+    if (!config.inputNames) config.inputNames = {};
+
+    const allKeys = [];
+    if (analysis.inputs) {
+        analysis.inputs.forEach(g => g.inputs.forEach(i => {
+            allKeys.push(i.key);
+            if (config.visibleInputs[i.key] === undefined) config.visibleInputs[i.key] = true;
+        }));
+    }
+    if (analysis.advancedInputs) {
+        analysis.advancedInputs.forEach(g => g.inputs.forEach(p => {
+            allKeys.push(p.key);
+            // Implicit parametrii sunt ascunși în public până când sunt bifați în admin?
+            // Nu, userul a zis că nu vede nimic. Să îi punem vizibili default dacă nu există config.
+            if (config.visibleParams[p.key] === undefined) config.visibleParams[p.key] = true;
+        }));
+    }
+
+    // Păstrează doar cheile valide în inputOrder
+    config.inputOrder = config.inputOrder.filter(k => allKeys.includes(k));
+    // Adaugă cheile noi la sfârșit
+    allKeys.forEach(k => {
+        if (!config.inputOrder.includes(k)) config.inputOrder.push(k);
+    });
+
+    return config;
+}
+
 // Încarcă workflow salvat
 adminApp.post('/api/workflows/load/:id', (req, res) => {
     try {
@@ -638,29 +673,20 @@ adminApp.post('/api/workflows/load/:id', (req, res) => {
             analysis: savedData.analysis,
             workflowApi: savedData.analysis.workflowApi
         };
-        uiConfig = savedData.uiConfig || { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
+        currentWorkflowId = id;
+
+        // Reconciliare config
+        uiConfig = reconcileUIConfig(savedData.analysis, savedData.uiConfig);
         
         // EXTRAGE TOATE VALORILE ORIGINALE DIN WORKFLOW
         originalWorkflowValues = extractOriginalWorkflowValues(currentWorkflowData.workflowApi);
-        console.log(`📦 Extrase ${Object.keys(originalWorkflowValues).length} valori originale din workflow`);
-        
-        // Asigurăm că toți parametrii sunt vizibili inițial
-        if (savedData.analysis && savedData.analysis.advancedInputs) {
-            for (const group of savedData.analysis.advancedInputs) {
-                for (const param of group.inputs) {
-                    if (uiConfig.visibleParams[param.key] === undefined) {
-                        uiConfig.visibleParams[param.key] = true;
-                    }
-                }
-            }
-        }
         
         res.json({ 
             success: true, 
             analysis: savedData.analysis, 
             metadata: savedData.metadata,
             uiConfig: uiConfig,
-            originalValues: originalWorkflowValues // Trimitem și valorile originale la frontend
+            originalValues: originalWorkflowValues
         });
     } catch (error) {
         console.error('Load workflow error:', error);
@@ -780,6 +806,23 @@ adminApp.post('/api/config/save', (req, res) => {
     try {
         const { config } = req.body;
         uiConfig = config;
+
+        // Dacă avem un workflow încărcat, salvăm configurația direct în fișierul lui
+        if (currentWorkflowId) {
+            const savedDir = path.join('workflows', 'saved');
+            const files = fs.readdirSync(savedDir);
+            const file = files.find(f => f.includes(currentWorkflowId));
+
+            if (file) {
+                const filePath = path.join(savedDir, file);
+                const savedData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                savedData.uiConfig = config;
+                fs.writeFileSync(filePath, JSON.stringify(savedData, null, 2));
+                console.log(`💾 UI Config salvat pentru workflow: ${currentWorkflowId}`);
+            }
+        }
+
+        // De asemenea, salvăm în locația globală pentru compatibilitate
         fs.writeFileSync(path.join('workflows', 'ui_config.json'), JSON.stringify(config, null, 2));
         res.json({ success: true });
     } catch (error) {
@@ -1132,21 +1175,16 @@ publicApp.post('/api/workflows/load/:id', (req, res) => {
             hasVideoOutput: savedData.analysis.hasVideoOutput
         };
         
-        const uiConfig = savedData.uiConfig || { 
-            inputOrder: [], 
-            inputNames: {}, 
-            visibleParams: {},
-            visibleInputs: {}
-        };
+        // Reconciliare config pentru public (folosim funcția comună)
+        const publicUIConfig = reconcileUIConfig(savedData.analysis, savedData.uiConfig);
         
-        // Extrage valorile originale pentru public (doar pentru a le păstra)
         const originalValues = extractOriginalWorkflowValues(savedData.analysis.workflowApi);
         
         res.json({ 
             success: true, 
             analysis: publicAnalysis, 
             presets: savedData.metadata?.presets || [],
-            uiConfig: uiConfig,
+            uiConfig: publicUIConfig,
             originalValues: originalValues
         });
     } catch (error) {

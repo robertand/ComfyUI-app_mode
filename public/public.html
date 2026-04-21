@@ -81,10 +81,8 @@
 
             <div id="generator-interface" class="hidden space-y-8">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <!-- Left: Inputs & Presets -->
+                    <!-- Left: Unified Inputs & Presets -->
                     <div class="space-y-8">
-                        <div id="media-inputs-container" class="space-y-6"></div>
-
                         <div id="presets-card" class="slate-card rounded-xl p-6 shadow-xl hidden">
                             <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
                                 <i data-lucide="layout-template" class="w-5 h-5 text-purple-500"></i>
@@ -93,12 +91,8 @@
                             <div id="presets-container" class="grid grid-cols-4 gap-3"></div>
                         </div>
 
-                        <div id="parameters-card" class="slate-card rounded-xl p-6 shadow-xl hidden">
-                            <h3 class="text-lg font-bold flex items-center gap-2 mb-6">
-                                <i data-lucide="sliders" class="w-5 h-5 text-blue-500"></i>
-                                <span data-i18n="params">Parameters</span>
-                            </h3>
-                            <div id="params-container" class="space-y-6"></div>
+                        <div id="active-inputs-container" class="space-y-6">
+                            <!-- All visible inputs in admin-defined order -->
                         </div>
                     </div>
 
@@ -234,11 +228,7 @@
                 if (!obj) return;
 
                 const isBypassed = bypassedNodes[obj.data.nodeId];
-                let label = uiConfig.inputNames?.[key] || obj.data.title;
-                const originalTitle = obj.data.nodeTitle || obj.data.title;
-                if (uiConfig.inputNames?.[key]) {
-                    label = `${label} (${originalTitle})`;
-                }
+                const label = uiConfig.inputNames?.[key] || obj.data.title;
 
                 if (obj.type === 'media') {
                     if (uiConfig.visibleInputs && uiConfig.visibleInputs[key] === false) return;

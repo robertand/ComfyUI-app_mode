@@ -55,21 +55,6 @@ function setupWorkflow(data) {
     bypassedNodes = {};
     currentPresets = data.metadata?.presets || [];
 
-    // Ensure all keys are in inputOrder and sync them
-    if (!uiConfig.inputOrder) uiConfig.inputOrder = [];
-
-    const allWorkflowKeys = [];
-    currentWorkflow.inputs.forEach(g => g.inputs.forEach(i => allWorkflowKeys.push(i.key)));
-    currentWorkflow.advancedInputs.forEach(g => g.inputs.forEach(p => allWorkflowKeys.push(p.key)));
-
-    // Remove stale keys that don't exist in the current workflow
-    uiConfig.inputOrder = uiConfig.inputOrder.filter(k => allWorkflowKeys.includes(k));
-
-    // Add missing keys from current workflow to the end
-    allWorkflowKeys.forEach(k => {
-        if (!uiConfig.inputOrder.includes(k)) uiConfig.inputOrder.push(k);
-    });
-
     document.getElementById('empty-state').classList.add('hidden');
     document.getElementById('workflow-config').classList.remove('hidden');
     document.getElementById('workflow-header').classList.remove('hidden');
@@ -106,7 +91,6 @@ function renderParametersConfig() {
     const container = document.getElementById('parameters-container');
     container.innerHTML = '';
 
-    // Sort according to inputOrder
     const allParams = [];
     currentWorkflow.advancedInputs.forEach(g => allParams.push(...g.inputs));
 
@@ -120,12 +104,13 @@ function renderParametersConfig() {
         const div = document.createElement('div');
         div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
 
+        const originalTitle = param.nodeTitle || param.title;
         div.innerHTML = `
             <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2 min-w-0">
                     <input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
                            data-key="${param.key}" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();">
-                    <span class="text-[10px] font-bold text-slate-400 truncate">${param.title}</span>
+                    <span class="text-[10px] font-bold text-slate-400 truncate">${param.title} <span class="text-slate-600 font-normal">(${originalTitle})</span></span>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
                     <button onclick="moveNode('${param.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button>
@@ -157,6 +142,7 @@ function renderMediaConfig() {
     sortedMedia.forEach(input => {
         const isVisible = uiConfig.visibleInputs[input.key] !== false;
         const isBypassed = bypassedNodes[input.nodeId];
+        const originalTitle = input.nodeTitle || input.title;
         const div = document.createElement('div');
         div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
 
@@ -165,7 +151,7 @@ function renderMediaConfig() {
                 <div class="flex items-center gap-2 min-w-0">
                     <input type="checkbox" class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600"
                            ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();">
-                    <span class="text-[10px] font-bold text-slate-400 truncate">${input.title}</span>
+                    <span class="text-[10px] font-bold text-slate-400 truncate">${input.title} <span class="text-slate-600 font-normal">(${originalTitle})</span></span>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
                     <button onclick="moveNode('${input.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button>
@@ -182,84 +168,66 @@ function renderMediaConfig() {
     lucide.createIcons();
 }
 
-// Main Area: Actual Input Fields
+// Main Area: Actual Input Fields (Interleaved by order)
 function renderLiveUI() {
-    const mediaContainer = document.getElementById('media-live-container');
-    const paramsLiveCard = document.getElementById('params-live-container');
-    const paramsList = document.getElementById('active-params-list');
+    const container = document.getElementById('active-inputs-container');
+    container.innerHTML = '';
 
-    mediaContainer.innerHTML = '';
-    paramsList.innerHTML = '';
-
-    // Render in order
     uiConfig.inputOrder.forEach(key => {
-        // Try to find as Media Input
-        let inputObj = null;
-        currentWorkflow.inputs.forEach(g => {
-            const found = g.inputs.find(i => i.key === key);
-            if (found) inputObj = { type: 'media', data: found };
-        });
+        let obj = null;
+        currentWorkflow.inputs.forEach(g => { const f = g.inputs.find(i => i.key === key); if (f) obj = { type: 'media', data: f }; });
+        if (!obj) { currentWorkflow.advancedInputs.forEach(g => { const f = g.inputs.find(p => p.key === key); if (f) obj = { type: 'param', data: f }; }); }
+        if (!obj) return;
 
-        // Try to find as Parameter
-        if (!inputObj) {
-            currentWorkflow.advancedInputs.forEach(g => {
-                const found = g.inputs.find(p => p.key === key);
-                if (found) inputObj = { type: 'param', data: found };
-            });
-        }
+        const isVisible = (obj.type === 'media' ? uiConfig.visibleInputs[key] : uiConfig.visibleParams[key]) !== false;
+        if (!isVisible) return;
 
-        if (!inputObj) return;
+        const isBypassed = bypassedNodes[obj.data.nodeId];
+        const label = uiConfig.inputNames?.[key] || obj.data.title;
 
-        const isBypassed = bypassedNodes[inputObj.data.nodeId];
-        let label = uiConfig.inputNames?.[key] || inputObj.data.title;
-        const originalTitle = inputObj.data.nodeTitle || inputObj.data.title;
-        if (uiConfig.inputNames?.[key]) {
-            label = `${label} (${originalTitle})`;
-        }
+        const div = document.createElement('div');
+        div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
 
-        if (inputObj.type === 'media') {
-            if (uiConfig.visibleInputs[key] === false) return; // Explicit check
-
-            const div = document.createElement('div');
-            div.className = 'slate-card p-4 rounded-xl space-y-3 shadow-lg';
+        if (obj.type === 'media') {
             div.innerHTML = `
-                <label class="block text-sm font-bold text-slate-400 uppercase tracking-wider">${label}</label>
+                <div class="flex items-center justify-between mb-2">
+                    <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label>
+                    <button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
+                </div>
                 <div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
                     <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')">
                     <div id="preview-${key}" class="text-center p-4">
-                        <i data-lucide="${inputObj.data.valueType === 'video' ? 'video' : 'image'}" class="w-8 h-8 mb-2 mx-auto text-slate-600"></i>
+                        <i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i>
                         <p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p>
                     </div>
                 </div>
             `;
-            mediaContainer.appendChild(div);
         } else {
-            if (uiConfig.visibleParams[key] === false) return; // Explicit check
-
-            const div = document.createElement('div');
-            div.className = 'space-y-2';
-            const currentValue = parameters[key] !== undefined ? parameters[key] : inputObj.data.defaultValue;
-
+            const currentValue = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
             let inputHtml = '';
-            if (inputObj.data.valueType === 'boolean') {
+            if (obj.data.valueType === 'boolean') {
                 inputHtml = `<select class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
                              onchange="parameters['${key}'] = this.value">
                                 <option value="true" ${currentValue === 'true' || currentValue === true ? 'selected' : ''} data-i18n="yes">Yes</option>
                                 <option value="false" ${currentValue === 'false' || currentValue === false ? 'selected' : ''} data-i18n="no">No</option>
                              </select>`;
             } else {
-                inputHtml = `<input type="${inputObj.data.valueType === 'number' ? 'number' : 'text'}"
+                inputHtml = `<input type="${obj.data.valueType === 'number' ? 'number' : 'text'}"
                              value="${currentValue || ''}"
                              class="w-full bg-slate-900 border border-slate-800 rounded-md px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"
                              onchange="parameters['${key}'] = this.value">`;
             }
 
-            div.innerHTML = `<label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label>${inputHtml}`;
-            paramsList.appendChild(div);
+            div.innerHTML = `
+                <div class="flex items-center justify-between mb-2">
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label>
+                    <button onclick="toggleBypass('${obj.data.nodeId}', 'params')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
+                </div>
+                ${inputHtml}
+            `;
         }
+        container.appendChild(div);
     });
-
-    paramsLiveCard.classList.toggle('hidden', paramsList.children.length === 0);
     lucide.createIcons();
 }
 
