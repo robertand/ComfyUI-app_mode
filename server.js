@@ -425,6 +425,7 @@ function analyzeWorkflow(workflowJson) {
                     inputs: [{
                         key: `node_${nodeId}_file`,
                         title: nodeTitle,
+                        nodeTitle: nodeTitle, // Duplicate for clarity
                         valueType: isVideo ? 'video' : 'image',
                         nodeId: nodeId,
                         inputName: fileInputName || (isVideo ? 'video' : 'image'),
@@ -624,11 +625,12 @@ adminApp.get('/api/workflows/list', (req, res) => {
 
 // Helper pentru a reconcilia și completa uiConfig
 function reconcileUIConfig(analysis, existingConfig) {
-    const config = existingConfig || { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
-    if (!config.visibleInputs) config.visibleInputs = {};
-    if (!config.visibleParams) config.visibleParams = {};
-    if (!config.inputOrder) config.inputOrder = [];
-    if (!config.inputNames) config.inputNames = {};
+    const config = {
+        visibleInputs: (existingConfig && existingConfig.visibleInputs) || {},
+        visibleParams: (existingConfig && existingConfig.visibleParams) || {},
+        inputOrder: (existingConfig && existingConfig.inputOrder) || [],
+        inputNames: (existingConfig && existingConfig.inputNames) || {}
+    };
 
     const allKeys = [];
     if (analysis.inputs) {
@@ -640,18 +642,14 @@ function reconcileUIConfig(analysis, existingConfig) {
     if (analysis.advancedInputs) {
         analysis.advancedInputs.forEach(g => g.inputs.forEach(p => {
             allKeys.push(p.key);
-            // Implicit parametrii sunt ascunși în public până când sunt bifați în admin?
-            // Nu, userul a zis că nu vede nimic. Să îi punem vizibili default dacă nu există config.
             if (config.visibleParams[p.key] === undefined) config.visibleParams[p.key] = true;
         }));
     }
 
-    // Păstrează doar cheile valide în inputOrder
-    config.inputOrder = config.inputOrder.filter(k => allKeys.includes(k));
-    // Adaugă cheile noi la sfârșit
-    allKeys.forEach(k => {
-        if (!config.inputOrder.includes(k)) config.inputOrder.push(k);
-    });
+    // Păstrează ordinea existentă, elimină cheile invalide, adaugă cheile noi la final
+    const filteredOrder = config.inputOrder.filter(k => allKeys.includes(k));
+    const newKeys = allKeys.filter(k => !filteredOrder.includes(k));
+    config.inputOrder = [...filteredOrder, ...newKeys];
 
     return config;
 }
@@ -718,6 +716,7 @@ adminApp.post('/api/workflows/save', (req, res) => {
         };
         
         fs.writeFileSync(filePath, JSON.stringify(savedData, null, 2));
+        currentWorkflowId = id; // Setăm ID-ul curent după salvare
         res.json({ success: true, filename, id, name });
     } catch (error) {
         console.error('Save workflow error:', error);
