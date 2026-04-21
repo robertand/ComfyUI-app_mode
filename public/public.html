@@ -270,7 +270,12 @@
                                 class="w-full bg-slate-800 border border-slate-700 rounded-md px-4 py-2.5 pr-12 text-sm focus:ring-2 focus:ring-blue-500 outline-none ${isBypassed ? 'opacity-30 pointer-events-none' : ''} ${isRandom ? 'text-slate-500 italic' : ''}"
                                 ${isRandom ? 'disabled' : ''}
                                 onchange="parameters['${key}'] = this.value">
-                            ${obj.data.valueType === 'number' ? `
+                            ${obj.data.valueType === 'number' && (
+                                (obj.data.inputName || '').toLowerCase().includes('seed') ||
+                                (obj.data.originalName || '').toLowerCase().includes('seed') ||
+                                (label || '').toLowerCase().includes('seed') ||
+                                (key || '').toLowerCase().includes('seed')
+                            ) ? `
                             <button onclick="toggleRandom('${key}')" class="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded hover:bg-slate-700 transition-colors ${isRandom ? 'text-blue-400 bg-blue-500/10' : 'text-slate-500'}" title="${getTranslation('toggle_randomization')}">
                                 <i data-lucide="dice-5" class="w-4 h-4"></i>
                             </button>` : ''}
