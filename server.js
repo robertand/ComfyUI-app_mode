@@ -542,6 +542,17 @@ function analyzeWorkflow(workflowJson) {
 // Server Admin (port 3001)
 const adminApp = express();
 adminApp.use(express.json({ limit: '100mb' }));
+
+// Middleware control cache pentru a asigura actualizarea rapidă a UI
+adminApp.use((req, res, next) => {
+    if (req.url.endsWith('.js') || req.url.endsWith('.html') || req.url === '/') {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+    next();
+});
+
 adminApp.use(express.static('public'));
 adminApp.use('/output', express.static('output', {
     setHeaders: (res, filePath) => {
@@ -562,6 +573,16 @@ adminApp.use('/output', express.static('output', {
 // Server Public (port 3002)
 const publicApp = express();
 publicApp.use(express.json({ limit: '100mb' }));
+
+// Middleware control cache public
+publicApp.use((req, res, next) => {
+    if (req.url.endsWith('.js') || req.url.endsWith('.html') || req.url === '/') {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+    next();
+});
 
 // Serve public.html for root on public port
 publicApp.get('/', (req, res) => {
