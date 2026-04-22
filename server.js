@@ -20,19 +20,34 @@ let CONFIG = {
 if (fs.existsSync(CONFIG_FILE)) {
     try {
         const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-        if (savedConfig.COMFYUI_URL && !savedConfig.COMFYUI_URLS) {
+
+        // Migrare robustă de la COMFYUI_URL (string) la COMFYUI_URLS (array)
+        if (savedConfig.COMFYUI_URL && (!savedConfig.COMFYUI_URLS || !Array.isArray(savedConfig.COMFYUI_URLS) || savedConfig.COMFYUI_URLS.length === 0)) {
             savedConfig.COMFYUI_URLS = [savedConfig.COMFYUI_URL];
-            delete savedConfig.COMFYUI_URL;
         }
+
+        // Asigurăm formatul corect pentru COMFYUI_URLS
+        if (savedConfig.COMFYUI_URLS && typeof savedConfig.COMFYUI_URLS === 'string') {
+            savedConfig.COMFYUI_URLS = savedConfig.COMFYUI_URLS.split(',').map(s => s.trim());
+        }
+
         CONFIG = { ...CONFIG, ...savedConfig };
     } catch (e) {
         console.error('Error loading config.json:', e.message);
     }
 }
 
+// Curățăm cheia veche dacă a rămas
+if (CONFIG.COMFYUI_URL) delete CONFIG.COMFYUI_URL;
+
 let ADMIN_PORT = CONFIG.ADMIN_PORT;
 let PUBLIC_PORT = CONFIG.PUBLIC_PORT;
 let COMFYUI_URLS = CONFIG.COMFYUI_URLS;
+
+// Fallback de siguranță
+if (!Array.isArray(COMFYUI_URLS) || COMFYUI_URLS.length === 0) {
+    COMFYUI_URLS = ['http://127.0.0.1:8188'];
+}
 
 // Funcție pentru a găsi un port liber
 async function findFreePort(startPort) {
