@@ -22,8 +22,13 @@ if (fs.existsSync(CONFIG_FILE)) {
         const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
 
         // Migrare robustă de la COMFYUI_URL (string) la COMFYUI_URLS (array)
-        if (savedConfig.COMFYUI_URL && (!savedConfig.COMFYUI_URLS || !Array.isArray(savedConfig.COMFYUI_URLS) || savedConfig.COMFYUI_URLS.length === 0)) {
-            savedConfig.COMFYUI_URLS = [savedConfig.COMFYUI_URL];
+        if (savedConfig.COMFYUI_URL) {
+            if (!savedConfig.COMFYUI_URLS || !Array.isArray(savedConfig.COMFYUI_URLS) || savedConfig.COMFYUI_URLS.length === 0) {
+                savedConfig.COMFYUI_URLS = [savedConfig.COMFYUI_URL];
+            } else if (!savedConfig.COMFYUI_URLS.includes(savedConfig.COMFYUI_URL)) {
+                // If both exist but the old one isn't in the new list, add it to the front
+                savedConfig.COMFYUI_URLS.unshift(savedConfig.COMFYUI_URL);
+            }
         }
 
         // Asigurăm formatul corect pentru COMFYUI_URLS
@@ -913,9 +918,9 @@ adminApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req,
         const inputKey = req.params.inputKey;
         const isVideo = req.file.mimetype.startsWith('video/');
         
-        // Save to local store for later upload to ComfyUI instances
+        // Save to output directory so it can be previewed by the frontend
         const localFilename = `${generateId()}${path.extname(req.file.originalname)}`;
-        const localPath = path.join('uploads', localFilename);
+        const localPath = path.join('output', localFilename);
         fs.renameSync(req.file.path, localPath);
         
         mediaStore[localFilename] = {
@@ -1267,9 +1272,9 @@ publicApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req
         const inputKey = req.params.inputKey;
         const isVideo = req.file.mimetype.startsWith('video/');
         
-        // Save to local store
+        // Save to output directory
         const localFilename = `${generateId()}${path.extname(req.file.originalname)}`;
-        const localPath = path.join('uploads', localFilename);
+        const localPath = path.join('output', localFilename);
         fs.renameSync(req.file.path, localPath);
         
         mediaStore[localFilename] = {
