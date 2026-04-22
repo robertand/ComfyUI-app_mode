@@ -293,29 +293,75 @@ function toggleCollapse(id) {
 }
 window.toggleCollapse = toggleCollapse;
 
-document.getElementById('upload-btn').onclick = () => document.getElementById('workflow-file').click();
-document.getElementById('workflow-file').onchange = async (e) => {
-    const f = e.target.files[0]; if (!f) return;
-    const fd = new FormData(); fd.append('workflow', f);
-    try { const res = await fetch('/api/workflow/upload', { method: 'POST', body: fd }); const data = await res.json(); setupWorkflow(data); } catch (e) { console.error(e); }
-};
+function initAdmin() {
+    const uploadBtn = document.getElementById('upload-btn');
+    if (uploadBtn) uploadBtn.onclick = () => document.getElementById('workflow-file').click();
 
-document.getElementById('save-workflow-btn').onclick = saveWorkflow;
-document.getElementById('add-preset-btn').onclick = addPreset;
-document.getElementById('save-ui-config').onclick = saveUIConfig;
-document.getElementById('generate-btn').onclick = runWorkflow;
-document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
-document.getElementById('close-modal').onclick = () => document.getElementById('media-modal').classList.add('hidden');
-document.getElementById('update-url-btn').onclick = async () => {
-    const comfyuiUrl = document.getElementById('comfy-url-input').value;
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comfyuiUrl }) });
-    const data = await res.json(); if (data.success) alert(getTranslation('url_updated'));
-};
+    const workflowFile = document.getElementById('workflow-file');
+    if (workflowFile) workflowFile.onchange = async (e) => {
+        const f = e.target.files[0]; if (!f) return;
+        const fd = new FormData(); fd.append('workflow', f);
+        try { const res = await fetch('/api/workflow/upload', { method: 'POST', body: fd }); const data = await res.json(); setupWorkflow(data); } catch (e) { console.error(e); }
+    };
 
-document.getElementById('select-all-btn').onclick = () => { document.querySelectorAll('.param-visibility-check').forEach(c => { c.checked = true; uiConfig.visibleParams[c.dataset.key] = true; }); renderLiveUI(); };
-document.getElementById('deselect-all-btn').onclick = () => { document.querySelectorAll('.param-visibility-check').forEach(c => { c.checked = false; uiConfig.visibleParams[c.dataset.key] = false; }); renderLiveUI(); };
+    if (document.getElementById('save-workflow-btn')) document.getElementById('save-workflow-btn').onclick = saveWorkflow;
+    if (document.getElementById('add-preset-btn')) document.getElementById('add-preset-btn').onclick = addPreset;
+    if (document.getElementById('save-ui-config')) document.getElementById('save-ui-config').onclick = saveUIConfig;
+    if (document.getElementById('generate-btn')) document.getElementById('generate-btn').onclick = runWorkflow;
+    if (document.getElementById('refresh-outputs-btn')) document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
+    if (document.getElementById('close-modal')) document.getElementById('close-modal').onclick = () => document.getElementById('media-modal').classList.add('hidden');
 
-loadWorkflows(); refreshOutputs();
+    const addUrlBtn = document.getElementById('add-url-btn');
+    if (addUrlBtn) addUrlBtn.onclick = () => {
+        const container = document.getElementById('comfy-urls-container');
+        const div = document.createElement('div');
+        div.className = 'flex items-center gap-2';
+        div.innerHTML = `<input type="text" value="http://127.0.0.1:8188" class="comfy-url-input flex-1 bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500"><button onclick="this.parentElement.remove()" class="p-2 text-slate-500 hover:text-red-400"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`;
+        container.appendChild(div);
+        initIcons();
+    };
+
+    const updateUrlBtn = document.getElementById('update-url-btn');
+    if (updateUrlBtn) updateUrlBtn.onclick = async () => {
+        const inputs = document.querySelectorAll('.comfy-url-input');
+        const comfyuiUrls = Array.from(inputs).map(i => i.value).filter(v => v.trim() !== '');
+        if (comfyuiUrls.length === 0) return alert(getTranslation('at_least_one_url'));
+
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ comfyuiUrls })
+            });
+            const data = await res.json();
+            if (data.success) alert(getTranslation('url_updated'));
+            else alert('Error: ' + data.error);
+        } catch (e) { alert('Error updating settings'); }
+    };
+
+    if (document.getElementById('select-all-btn')) document.getElementById('select-all-btn').onclick = () => { document.querySelectorAll('.param-visibility-check').forEach(c => { c.checked = true; uiConfig.visibleParams[c.dataset.key] = true; }); renderLiveUI(); };
+    if (document.getElementById('deselect-all-btn')) document.getElementById('deselect-all-btn').onclick = () => { document.querySelectorAll('.param-visibility-check').forEach(c => { c.checked = false; uiConfig.visibleParams[c.dataset.key] = false; }); renderLiveUI(); };
+
+    loadWorkflows(); refreshOutputs();
+}
+
+function renderUrlSettings(urls) {
+    const container = document.getElementById('comfy-urls-container');
+    if (!container) return;
+    container.innerHTML = '';
+    const urlList = (urls && urls.length > 0) ? urls : ['http://127.0.0.1:8188'];
+    urlList.forEach((url) => {
+        const div = document.createElement('div');
+        div.className = 'flex items-center gap-2';
+        div.innerHTML = `<input type="text" value="${url}" class="comfy-url-input flex-1 bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500"><button onclick="this.parentElement.remove()" class="p-2 text-slate-500 hover:text-red-400"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`;
+        container.appendChild(div);
+    });
+    initIcons();
+}
+window.renderUrlSettings = renderUrlSettings;
+
+document.addEventListener('DOMContentLoaded', initAdmin);
+
 setInterval(async () => {
     try {
         const res = await fetch('/api/health'); const data = await res.json();
