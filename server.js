@@ -13,13 +13,17 @@ const CONFIG_FILE = path.join('workflows', 'config.json');
 let CONFIG = {
     ADMIN_PORT: parseInt(process.env.ADMIN_PORT) || 3001,
     PUBLIC_PORT: parseInt(process.env.PUBLIC_PORT) || 3002,
-    COMFYUI_URL: process.env.COMFYUI_URL || 'http://127.0.0.1:8188'
+    COMFYUI_URLS: process.env.COMFYUI_URLS ? process.env.COMFYUI_URLS.split(',') : [process.env.COMFYUI_URL || 'http://127.0.0.1:8188']
 };
 
 // Încărcăm configurația salvată dacă există
 if (fs.existsSync(CONFIG_FILE)) {
     try {
         const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+        if (savedConfig.COMFYUI_URL && !savedConfig.COMFYUI_URLS) {
+            savedConfig.COMFYUI_URLS = [savedConfig.COMFYUI_URL];
+            delete savedConfig.COMFYUI_URL;
+        }
         CONFIG = { ...CONFIG, ...savedConfig };
     } catch (e) {
         console.error('Error loading config.json:', e.message);
@@ -28,7 +32,7 @@ if (fs.existsSync(CONFIG_FILE)) {
 
 let ADMIN_PORT = CONFIG.ADMIN_PORT;
 let PUBLIC_PORT = CONFIG.PUBLIC_PORT;
-let COMFYUI_URL = CONFIG.COMFYUI_URL;
+let COMFYUI_URLS = CONFIG.COMFYUI_URLS;
 
 // Funcție pentru a găsi un port liber
 async function findFreePort(startPort) {
@@ -64,32 +68,48 @@ let currentWorkflowId = null; // ID-ul workflow-ului salvat curent
 let uiConfig = null;
 let originalWorkflowValues = {}; // Stochează valorile originale din workflow
 
-// WebSocket connection
-let wsClient = null;
 
-function connectWebSocket() {
-    if (wsClient) {
-        wsClient.removeAllListeners();
-        wsClient.close();
+async function getFreestInstance() {
+    const instances = COMFYUI_URLS;
+    if (instances.length === 1) return instances[0];
+
+    const stats = await Promise.all(instances.map(async (url) => {
+        try {
+            const res = await fetch(`${url}/queue`, { timeout: 2000 });
+            if (!res.ok) return { url, load: Infinity };
+            const data = await res.json();
+            // Load = running + pending
+            const load = (data.queue_running ? data.queue_running.length : 0) +
+                         (data.queue_pending ? data.queue_pending.length : 0);
+            return { url, load };
+        } catch (e) {
+            return { url, load: Infinity };
+        }
+    }));
+
+    const sorted = stats.sort((a, b) => a.load - b.load);
+    if (sorted[0].load === Infinity) {
+        throw new Error('Nicio instanță ComfyUI nu este disponibilă');
     }
-    const wsUrl = COMFYUI_URL.replace('http', 'ws') + '/ws';
-    wsClient = new WebSocket(wsUrl);
-    
-    wsClient.on('open', () => {
-        console.log(`✅ Conectat la ComfyUI WebSocket (${COMFYUI_URL})`);
-    });
-    
-    wsClient.on('error', (err) => {
-        console.error('❌ WebSocket error:', err.message);
-    });
-    
-    wsClient.on('close', () => {
-        console.log('⚠️ WebSocket deconectat, reconectez...');
-        setTimeout(connectWebSocket, 5000);
-    });
+    return sorted[0].url;
 }
 
-connectWebSocket();
+async function uploadFileToInstance(instanceUrl, filePath, originalName, mimetype) {
+    const formData = new FormData();
+    formData.append('image', fs.createReadStream(filePath), {
+        filename: originalName,
+        contentType: mimetype
+    });
+    
+    const res = await fetch(`${instanceUrl}/upload/image`, {
+        method: 'POST',
+        body: formData,
+        headers: formData.getHeaders()
+    });
+    
+    if (!res.ok) throw new Error(`Upload failed to ${instanceUrl}: ${res.status}`);
+    return await res.json();
+}
 
 function generateId() {
     return Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
@@ -867,6 +887,9 @@ adminApp.get('/api/config/load', (req, res) => {
     }
 });
 
+// Media store to keep track of uploaded files local paths
+const mediaStore = {};
+
 // Upload media
 adminApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req, res) => {
     try {
@@ -875,26 +898,20 @@ adminApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req,
         const inputKey = req.params.inputKey;
         const isVideo = req.file.mimetype.startsWith('video/');
         
-        const formData = new FormData();
-        formData.append('image', fs.createReadStream(req.file.path), {
-            filename: req.file.originalname,
-            contentType: req.file.mimetype
-        });
+        // Save to local store for later upload to ComfyUI instances
+        const localFilename = `${generateId()}${path.extname(req.file.originalname)}`;
+        const localPath = path.join('uploads', localFilename);
+        fs.renameSync(req.file.path, localPath);
         
-        const uploadRes = await fetch(`${COMFYUI_URL}/upload/image`, {
-            method: 'POST',
-            body: formData,
-            headers: formData.getHeaders()
-        });
-        
-        if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
-        
-        const result = await uploadRes.json();
-        fs.unlinkSync(req.file.path);
+        mediaStore[localFilename] = {
+            path: localPath,
+            originalName: req.file.originalname,
+            mimetype: req.file.mimetype
+        };
         
         res.json({ 
             success: true, 
-            filename: result.name || req.file.originalname,
+            filename: localFilename,
             inputKey: inputKey,
             type: isVideo ? 'video' : 'image'
         });
@@ -911,26 +928,35 @@ adminApp.post('/api/workflow/run', async (req, res) => {
         if (!currentWorkflowData || !currentWorkflowData.workflowApi) {
             return res.status(400).json({ error: 'Nu există workflow încărcat' });
         }
+
+        // Selectăm instanța cea mai liberă
+        const targetInstance = await getFreestInstance();
+        console.log(`🎯 Executing on instance: ${targetInstance}`);
         
         let workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi));
 
         // Aplicăm bypass-ul pentru noduri (graph surgery)
         workflow = applyBypass(workflow, bypassedNodes);
         
-        // Înlocuim fișierele media
+        // Înlocuim fișierele media și le uploadăm la instanța țintă dacă e necesar
         for (const [inputKey, filename] of Object.entries(mediaFiles || {})) {
+            let finalFilename = filename;
+            if (mediaStore[filename]) {
+                const uploadResult = await uploadFileToInstance(targetInstance, mediaStore[filename].path, mediaStore[filename].originalName, mediaStore[filename].mimetype);
+                finalFilename = uploadResult.name;
+            }
+
             for (const inputGroup of currentWorkflowData.analysis.inputs) {
                 for (const input of inputGroup.inputs || []) {
                     if (input.key === inputKey && input.nodeId && workflow[input.nodeId]) {
                         if (bypassedNodes && bypassedNodes[input.nodeId]) continue;
-                        workflow[input.nodeId].inputs[input.inputName] = filename;
+                        workflow[input.nodeId].inputs[input.inputName] = finalFilename;
                     }
                 }
             }
         }
         
         // IMPORTANT: PĂSTRĂM VALORILE ORIGINALE PENTRU PARAMETRII ASCUNȘI
-        // Parametrii care nu sunt în `parameters` (pentru că sunt ascunși) vor folosi valorile originale din workflow
         const finalParameters = { ...originalWorkflowValues };
         
         // Actualizăm doar parametrii care au fost modificați explicit de utilizator (cei vizibili)
@@ -940,7 +966,6 @@ adminApp.post('/api/workflow/run', async (req, res) => {
             }
         }
         
-        // Procesează parametrii și generează random seed dacă este cazul
         const autoRandomFlags = parameters['_autoRandomSeed'] || {};
         
         for (const [paramKey, value] of Object.entries(finalParameters)) {
@@ -950,7 +975,6 @@ adminApp.post('/api/workflow/run', async (req, res) => {
             }
         }
         
-        // Aplică toți parametrii la nodurile corespunzătoare
         for (const [paramKey, value] of Object.entries(finalParameters)) {
             for (const paramGroup of currentWorkflowData.analysis.advancedInputs) {
                 for (const param of paramGroup.inputs || []) {
@@ -969,15 +993,11 @@ adminApp.post('/api/workflow/run', async (req, res) => {
             }
         }
         
-        // VALIDARE PARAMETRI - PREVENIRE ERORI MEMORIE
+        // VALIDARE PARAMETRI
         const { workflow: validatedWorkflow, warnings } = validateWorkflowParameters(workflow, finalParameters);
         
-        if (warnings.length > 0) {
-            console.log('⚠️ Validări aplicate:', warnings);
-        }
-        
-        // Trimitem workflow-ul validat la ComfyUI
-        const queueRes = await fetch(`${COMFYUI_URL}/prompt`, {
+        // Trimitem workflow-ul la instanța selectată
+        const queueRes = await fetch(`${targetInstance}/prompt`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt: validatedWorkflow })
@@ -1001,7 +1021,7 @@ adminApp.post('/api/workflow/run', async (req, res) => {
         
         while (!result && attempts < 380) {
             await new Promise(resolve => setTimeout(resolve, 2000));
-            const historyRes = await fetch(`${COMFYUI_URL}/history`);
+            const historyRes = await fetch(`${targetInstance}/history`);
             const history = await historyRes.json();
             if (history[promptId]) {
                 result = history[promptId];
@@ -1012,7 +1032,6 @@ adminApp.post('/api/workflow/run', async (req, res) => {
         
         if (!result) throw new Error('Timeout așteptând rezultatul');
         
-        // Verificăm dacă există erori în execuție
         if (result.status && result.status.messages) {
             const errors = result.status.messages.filter(m => m[0] === 'execution_error');
             if (errors.length > 0) {
@@ -1025,7 +1044,7 @@ adminApp.post('/api/workflow/run', async (req, res) => {
         for (const [nodeId, output] of Object.entries(result.outputs || {})) {
             if (output.images && Array.isArray(output.images)) {
                 for (const img of output.images) {
-                    const fileUrl = `${COMFYUI_URL}/view?filename=${encodeURIComponent(img.filename)}&type=${img.type}&subfolder=${img.subfolder || ''}`;
+                    const fileUrl = `${targetInstance}/view?filename=${encodeURIComponent(img.filename)}&type=${img.type}&subfolder=${img.subfolder || ''}`;
                     const fileRes = await fetch(fileUrl);
                     const fileBuffer = await fileRes.buffer();
                     const ext = path.extname(img.filename) || '.png';
@@ -1040,7 +1059,7 @@ adminApp.post('/api/workflow/run', async (req, res) => {
             }
             if (output.videos && Array.isArray(output.videos)) {
                 for (const video of output.videos) {
-                    const fileUrl = `${COMFYUI_URL}/view?filename=${encodeURIComponent(video.filename)}&type=${video.type}&subfolder=${video.subfolder || ''}`;
+                    const fileUrl = `${targetInstance}/view?filename=${encodeURIComponent(video.filename)}&type=${video.type}&subfolder=${video.subfolder || ''}`;
                     const fileRes = await fetch(fileUrl);
                     const fileBuffer = await fileRes.buffer();
                     const ext = path.extname(video.filename) || '.mp4';
@@ -1067,23 +1086,22 @@ adminApp.get('/api/config', (req, res) => {
     res.json({
         adminPort: ADMIN_PORT,
         publicPort: PUBLIC_PORT,
-        comfyuiUrl: COMFYUI_URL
+        comfyuiUrls: COMFYUI_URLS
     });
 });
 
 // API pentru setări server
 adminApp.post('/api/settings', (req, res) => {
     try {
-        const { comfyuiUrl } = req.body;
-        if (comfyuiUrl) {
-            COMFYUI_URL = comfyuiUrl;
-            CONFIG.COMFYUI_URL = COMFYUI_URL;
+        const { comfyuiUrls } = req.body;
+        if (comfyuiUrls && Array.isArray(comfyuiUrls) && comfyuiUrls.length > 0) {
+            COMFYUI_URLS = comfyuiUrls;
+            CONFIG.COMFYUI_URLS = COMFYUI_URLS;
             fs.writeFileSync(CONFIG_FILE, JSON.stringify(CONFIG, null, 2));
-            console.log(`🔧 URL ComfyUI actualizat la: ${COMFYUI_URL}`);
-            connectWebSocket();
-            res.json({ success: true, comfyuiUrl: COMFYUI_URL });
+            console.log(`🔧 URL-uri ComfyUI actualizate: ${COMFYUI_URLS.join(', ')}`);
+            res.json({ success: true, comfyuiUrls: COMFYUI_URLS });
         } else {
-            res.status(400).json({ error: 'URL invalid' });
+            res.status(400).json({ error: 'URL-uri invalide' });
         }
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -1134,9 +1152,21 @@ adminApp.get('/api/outputs', (req, res) => {
 // Health check admin
 adminApp.get('/api/health', async (req, res) => {
     try {
-        const response = await fetch(`${COMFYUI_URL}/system_stats`);
-        if (response.ok) res.json({ status: 'ok', comfyui: 'connected' });
-        else res.json({ status: 'error', comfyui: 'disconnected' });
+        const results = await Promise.all(COMFYUI_URLS.map(async (url) => {
+            try {
+                const response = await fetch(`${url}/system_stats`, { timeout: 2000 });
+                return { url, status: response.ok ? 'connected' : 'disconnected' };
+            } catch (e) {
+                return { url, status: 'disconnected' };
+            }
+        }));
+
+        const connectedCount = results.filter(r => r.status === 'connected').length;
+        res.json({
+            status: connectedCount > 0 ? 'ok' : 'error',
+            comfyui: connectedCount > 0 ? 'connected' : 'disconnected',
+            instances: results
+        });
     } catch (error) {
         res.json({ status: 'error', comfyui: 'disconnected' });
     }
@@ -1222,26 +1252,20 @@ publicApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req
         const inputKey = req.params.inputKey;
         const isVideo = req.file.mimetype.startsWith('video/');
         
-        const formData = new FormData();
-        formData.append('image', fs.createReadStream(req.file.path), {
-            filename: req.file.originalname,
-            contentType: req.file.mimetype
-        });
+        // Save to local store
+        const localFilename = `${generateId()}${path.extname(req.file.originalname)}`;
+        const localPath = path.join('uploads', localFilename);
+        fs.renameSync(req.file.path, localPath);
         
-        const uploadRes = await fetch(`${COMFYUI_URL}/upload/image`, {
-            method: 'POST',
-            body: formData,
-            headers: formData.getHeaders()
-        });
-        
-        if (!uploadRes.ok) throw new Error(`Upload failed: ${uploadRes.status}`);
-        
-        const result = await uploadRes.json();
-        fs.unlinkSync(req.file.path);
+        mediaStore[localFilename] = {
+            path: localPath,
+            originalName: req.file.originalname,
+            mimetype: req.file.mimetype
+        };
         
         res.json({ 
             success: true, 
-            filename: result.name || req.file.originalname,
+            filename: localFilename,
             inputKey: inputKey,
             type: isVideo ? 'video' : 'image'
         });
@@ -1260,6 +1284,10 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         const files = fs.readdirSync(savedDir);
         const file = files.find(f => f.includes(workflowId));
         if (!file) return res.status(404).json({ error: 'Workflow negăsit' });
+
+        // Selectăm instanța cea mai liberă
+        const targetInstance = await getFreestInstance();
+        console.log(`🎯 [Public] Executing on instance: ${targetInstance}`);
         
         const filePath = path.join(savedDir, file);
         const savedData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -1273,11 +1301,17 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         const originalValues = extractOriginalWorkflowValues(workflow);
         
         for (const [inputKey, filename] of Object.entries(mediaFiles || {})) {
+            let finalFilename = filename;
+            if (mediaStore[filename]) {
+                const uploadResult = await uploadFileToInstance(targetInstance, mediaStore[filename].path, mediaStore[filename].originalName, mediaStore[filename].mimetype);
+                finalFilename = uploadResult.name;
+            }
+
             for (const inputGroup of analysis.inputs) {
                 for (const input of inputGroup.inputs || []) {
                     if (input.key === inputKey && input.nodeId && workflow[input.nodeId]) {
                         if (bypassedNodes && bypassedNodes[input.nodeId]) continue;
-                        workflow[input.nodeId].inputs[input.inputName] = filename;
+                        workflow[input.nodeId].inputs[input.inputName] = finalFilename;
                     }
                 }
             }
@@ -1322,11 +1356,7 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         // VALIDARE PARAMETRI
         const { workflow: validatedWorkflow, warnings } = validateWorkflowParameters(workflow, finalParameters);
         
-        if (warnings.length > 0) {
-            console.log('⚠️ Validări aplicate:', warnings);
-        }
-        
-        const queueRes = await fetch(`${COMFYUI_URL}/prompt`, {
+        const queueRes = await fetch(`${targetInstance}/prompt`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ prompt: validatedWorkflow })
@@ -1348,7 +1378,7 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         
         while (!result && attempts < 180) {
             await new Promise(resolve => setTimeout(resolve, 1000));
-            const historyRes = await fetch(`${COMFYUI_URL}/history`);
+            const historyRes = await fetch(`${targetInstance}/history`);
             const history = await historyRes.json();
             if (history[promptId]) {
                 result = history[promptId];
@@ -1359,7 +1389,6 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         
         if (!result) throw new Error('Timeout așteptând rezultatul');
         
-        // Verificăm dacă există erori în execuție
         if (result.status && result.status.messages) {
             const errors = result.status.messages.filter(m => m[0] === 'execution_error');
             if (errors.length > 0) {
@@ -1372,7 +1401,7 @@ publicApp.post('/api/workflow/run', async (req, res) => {
         for (const [nodeId, output] of Object.entries(result.outputs || {})) {
             if (output.images && Array.isArray(output.images)) {
                 for (const img of output.images) {
-                    const fileUrl = `${COMFYUI_URL}/view?filename=${encodeURIComponent(img.filename)}&type=${img.type}&subfolder=${img.subfolder || ''}`;
+                    const fileUrl = `${targetInstance}/view?filename=${encodeURIComponent(img.filename)}&type=${img.type}&subfolder=${img.subfolder || ''}`;
                     const fileRes = await fetch(fileUrl);
                     const fileBuffer = await fileRes.buffer();
                     const ext = path.extname(img.filename) || '.png';
@@ -1387,7 +1416,7 @@ publicApp.post('/api/workflow/run', async (req, res) => {
             }
             if (output.videos && Array.isArray(output.videos)) {
                 for (const video of output.videos) {
-                    const fileUrl = `${COMFYUI_URL}/view?filename=${encodeURIComponent(video.filename)}&type=${video.type}&subfolder=${video.subfolder || ''}`;
+                    const fileUrl = `${targetInstance}/view?filename=${encodeURIComponent(video.filename)}&type=${video.type}&subfolder=${video.subfolder || ''}`;
                     const fileRes = await fetch(fileUrl);
                     const fileBuffer = await fileRes.buffer();
                     const ext = path.extname(video.filename) || '.mp4';
@@ -1414,7 +1443,7 @@ publicApp.get('/api/config', (req, res) => {
     res.json({
         adminPort: ADMIN_PORT,
         publicPort: PUBLIC_PORT,
-        comfyuiUrl: COMFYUI_URL
+        comfyuiUrls: COMFYUI_URLS
     });
 });
 
@@ -1446,9 +1475,21 @@ publicApp.get('/api/outputs', (req, res) => {
 // Health check public
 publicApp.get('/api/health', async (req, res) => {
     try {
-        const response = await fetch(`${COMFYUI_URL}/system_stats`);
-        if (response.ok) res.json({ status: 'ok', comfyui: 'connected' });
-        else res.json({ status: 'error', comfyui: 'disconnected' });
+        const results = await Promise.all(COMFYUI_URLS.map(async (url) => {
+            try {
+                const response = await fetch(`${url}/system_stats`, { timeout: 2000 });
+                return { url, status: response.ok ? 'connected' : 'disconnected' };
+            } catch (e) {
+                return { url, status: 'disconnected' };
+            }
+        }));
+
+        const connectedCount = results.filter(r => r.status === 'connected').length;
+        res.json({
+            status: connectedCount > 0 ? 'ok' : 'error',
+            comfyui: connectedCount > 0 ? 'connected' : 'disconnected',
+            instances: results
+        });
     } catch (error) {
         res.json({ status: 'error', comfyui: 'disconnected' });
     }
@@ -1478,7 +1519,7 @@ async function startServers() {
 
     console.log(`
     🚀 ComfyUI Remote Interface
-    🔗 ComfyUI: ${COMFYUI_URL}
+    🔗 ComfyUI Nodes: ${COMFYUI_URLS.join(', ')}
     📁 Workflows: workflows/saved/
     `);
 }

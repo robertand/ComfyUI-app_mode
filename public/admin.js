@@ -306,10 +306,44 @@ document.getElementById('save-ui-config').onclick = saveUIConfig;
 document.getElementById('generate-btn').onclick = runWorkflow;
 document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
 document.getElementById('close-modal').onclick = () => document.getElementById('media-modal').classList.add('hidden');
+function renderUrlSettings(urls) {
+    const container = document.getElementById('comfy-urls-container');
+    container.innerHTML = '';
+    const urlList = urls || ['http://127.0.0.1:8188'];
+    urlList.forEach((url, idx) => {
+        const div = document.createElement('div');
+        div.className = 'flex items-center gap-2';
+        div.innerHTML = `<input type="text" value="${url}" class="comfy-url-input flex-1 bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500"><button onclick="this.parentElement.remove()" class="p-2 text-slate-500 hover:text-red-400"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`;
+        container.appendChild(div);
+    });
+    initIcons();
+}
+window.renderUrlSettings = renderUrlSettings;
+
+document.getElementById('add-url-btn').onclick = () => {
+    const container = document.getElementById('comfy-urls-container');
+    const div = document.createElement('div');
+    div.className = 'flex items-center gap-2';
+    div.innerHTML = `<input type="text" value="http://127.0.0.1:8188" class="comfy-url-input flex-1 bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-blue-500"><button onclick="this.parentElement.remove()" class="p-2 text-slate-500 hover:text-red-400"><i data-lucide="trash-2" class="w-4 h-4"></i></button>`;
+    container.appendChild(div);
+    initIcons();
+};
+
 document.getElementById('update-url-btn').onclick = async () => {
-    const comfyuiUrl = document.getElementById('comfy-url-input').value;
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ comfyuiUrl }) });
-    const data = await res.json(); if (data.success) alert(getTranslation('url_updated'));
+    const inputs = document.querySelectorAll('.comfy-url-input');
+    const comfyuiUrls = Array.from(inputs).map(i => i.value).filter(v => v.trim() !== '');
+    if (comfyuiUrls.length === 0) return alert(getTranslation('at_least_one_url'));
+
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ comfyuiUrls })
+        });
+        const data = await res.json();
+        if (data.success) alert(getTranslation('url_updated'));
+        else alert('Error: ' + data.error);
+    } catch (e) { alert('Error updating settings'); }
 };
 
 document.getElementById('select-all-btn').onclick = () => { document.querySelectorAll('.param-visibility-check').forEach(c => { c.checked = true; uiConfig.visibleParams[c.dataset.key] = true; }); renderLiveUI(); };
