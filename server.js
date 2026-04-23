@@ -838,24 +838,31 @@ adminApp.post('/api/workflow/upload', upload.single('workflow'), async (req, res
             inputNames: {}
         };
         
-        // Inițializează toți parametrii ca vizibili
-        for (const group of analysis.advancedInputs) {
-            for (const param of group.inputs) {
-                uiConfig.visibleParams[param.key] = true;
-            }
-        }
-        
-        // Inițializează ordinea inputurilor
+        // Inițializează toți parametrii ca vizibili și adaugă-i în ordinea unică
         if (analysis.inputs) {
             for (const group of analysis.inputs) {
                 for (const input of group.inputs) {
-                    uiConfig.inputOrder.push(input.key);
+                    uiConfig.visibleInputs[input.key] = true;
+                    if (!uiConfig.inputOrder.includes(input.key)) {
+                        uiConfig.inputOrder.push(input.key);
+                    }
+                }
+            }
+        }
+
+        if (analysis.advancedInputs) {
+            for (const group of analysis.advancedInputs) {
+                for (const param of group.inputs) {
+                    uiConfig.visibleParams[param.key] = true;
+                    if (!uiConfig.inputOrder.includes(param.key)) {
+                        uiConfig.inputOrder.push(param.key);
+                    }
                 }
             }
         }
         
         fs.unlinkSync(req.file.path);
-        res.json({ success: true, analysis, originalValues: originalWorkflowValues });
+        res.json({ success: true, analysis, originalValues: originalWorkflowValues, uiConfig: uiConfig });
     } catch (error) {
         console.error('Workflow upload error:', error);
         res.status(500).json({ error: error.message });
