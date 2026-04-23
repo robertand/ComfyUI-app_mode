@@ -88,7 +88,7 @@ function renderParametersConfig() {
         const techInfo = originalTitle === nodeType ? originalTitle : `${originalTitle} - ${nodeType}`;
         const div = document.createElement('div');
         div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
-        div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${param.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${param.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${param.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${param.nodeId}', 'params')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${param.key}'] = this.value; renderLiveUI();">`;
+        div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" data-key="${param.key}" data-type="param" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${param.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${param.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${param.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${param.nodeId}', 'params')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${param.key}'] = this.value; renderLiveUI();">`;
         container.appendChild(div);
     });
     initIcons();
@@ -109,7 +109,7 @@ function renderMediaConfig() {
         const techInfo = originalTitle === nodeType ? originalTitle : `${originalTitle} - ${nodeType}`;
         const div = document.createElement('div');
         div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
-        div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${input.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${input.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${input.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[input.key] || input.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${input.key}'] = this.value; renderLiveUI();">`;
+        div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" data-key="${input.key}" data-type="media" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${input.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${input.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${input.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[input.key] || input.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${input.key}'] = this.value; renderLiveUI();">`;
         container.appendChild(div);
     });
     initIcons();
@@ -339,8 +339,29 @@ function initAdmin() {
         } catch (e) { alert('Error updating settings'); }
     };
 
-    if (document.getElementById('select-all-btn')) document.getElementById('select-all-btn').onclick = () => { document.querySelectorAll('.param-visibility-check').forEach(c => { c.checked = true; uiConfig.visibleParams[c.dataset.key] = true; }); renderLiveUI(); };
-    if (document.getElementById('deselect-all-btn')) document.getElementById('deselect-all-btn').onclick = () => { document.querySelectorAll('.param-visibility-check').forEach(c => { c.checked = false; uiConfig.visibleParams[c.dataset.key] = false; }); renderLiveUI(); };
+    const selectAllBtn = document.getElementById('select-all-btn');
+    if (selectAllBtn) selectAllBtn.onclick = () => {
+        document.querySelectorAll('.param-visibility-check').forEach(c => {
+            c.checked = true;
+            const key = c.getAttribute('data-key');
+            const type = c.getAttribute('data-type');
+            if (type === 'media') uiConfig.visibleInputs[key] = true;
+            else uiConfig.visibleParams[key] = true;
+        });
+        renderLiveUI();
+    };
+
+    const deselectAllBtn = document.getElementById('deselect-all-btn');
+    if (deselectAllBtn) deselectAllBtn.onclick = () => {
+        document.querySelectorAll('.param-visibility-check').forEach(c => {
+            c.checked = false;
+            const key = c.getAttribute('data-key');
+            const type = c.getAttribute('data-type');
+            if (type === 'media') uiConfig.visibleInputs[key] = false;
+            else uiConfig.visibleParams[key] = false;
+        });
+        renderLiveUI();
+    };
 
     loadWorkflows(); refreshOutputs();
 }
