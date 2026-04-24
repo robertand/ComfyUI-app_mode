@@ -1,3 +1,6 @@
+// Registry to store refresh functions for each 3D instance
+window.qwen3DRefreshRegistry = {};
+
 window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes) {
     const containerEl = document.getElementById(containerId);
     if (!containerEl || !window.THREE) return;
@@ -94,10 +97,10 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
 
     const linkedNodeId = findLinkedImageNode();
 
-    function updateTexture() {
+    function updateTexture(force = false) {
         if (!linkedNodeId || !window.mediaFiles) return;
         const filename = window.mediaFiles[`media_${linkedNodeId}`];
-        if (filename && filename !== currentTexturePath) {
+        if (filename && (filename !== currentTexturePath || force)) {
             currentTexturePath = filename;
             textureLoader.load(`/output/${filename}`, (txt) => {
                 subject.material.map = txt;
@@ -111,6 +114,9 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
             });
         }
     }
+
+    // Register refresh function
+    window.qwen3DRefreshRegistry[nodeId] = () => updateTexture(true);
 
     let isDragging = false;
     let prevMouse = { x: 0, y: 0 };
@@ -153,6 +159,7 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         if (!document.getElementById(containerId)) {
             window.removeEventListener('mousemove', onMouseMove);
             window.removeEventListener('mouseup', onMouseUp);
+            delete window.qwen3DRefreshRegistry[nodeId];
             renderer.dispose();
             return;
         }
@@ -173,7 +180,12 @@ window.renderQwen3DCard = function(container, nodeId, parameters, currentWorkflo
 
     div.innerHTML = `
         <div class="flex items-center justify-between mb-2">
-            <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label>
+            <div class="flex items-center gap-2">
+                <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label>
+                <button onclick="window.qwen3DRefreshRegistry['${nodeId}']?.()" class="p-1 hover:bg-slate-700 rounded text-blue-400 transition-colors" title="Load/Refresh Image">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                </button>
+            </div>
             <button id="bypass-btn-${nodeId}" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
         </div>
         <div id="qwen-3d-${nodeId}" class="w-full aspect-square bg-slate-900 rounded-lg overflow-hidden border border-slate-700 cursor-move relative ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
@@ -206,6 +218,8 @@ window.renderQwen3DCard = function(container, nodeId, parameters, currentWorkflo
     vIn.onchange = (e) => window.updateQwenFromInput(nodeId, 'vertical_angle', e.target.value, parameters);
     zIn.onchange = (e) => window.updateQwenFromInput(nodeId, 'zoom', e.target.value, parameters);
     bpBtn.onclick = () => toggleBypassFn(nodeId);
+
+    if (window.lucide) window.lucide.createIcons();
 
     setTimeout(() => window.initQwenCamera3D(`qwen-3d-${nodeId}`, nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes), 50);
 };
