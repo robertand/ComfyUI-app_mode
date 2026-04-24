@@ -120,11 +120,24 @@ function renderLiveUI() {
     container.innerHTML = '';
     if (!uiConfig.inputOrder) return;
 
+    // Track handled Qwen nodes to avoid double rendering
+    const handledNodes = new Set();
+
     uiConfig.inputOrder.forEach(key => {
         let obj = null;
         currentWorkflow.inputs.forEach(g => { const f = g.inputs.find(i => i.key === key); if (f) obj = { type: 'media', data: f }; });
         if (!obj) { currentWorkflow.advancedInputs.forEach(g => { const f = g.inputs.find(p => p.key === key); if (f) obj = { type: 'param', data: f }; }); }
         if (!obj) return;
+
+        // Specialized 3D handling for QwenMultiangleCameraNode
+        if (obj.type === 'param' && (obj.data.nodeType === 'QwenMultiangleCameraNode' || (obj.data.nodeTitle && obj.data.nodeTitle.includes('Camera')))) {
+            if (handledNodes.has(obj.data.nodeId)) return;
+            handledNodes.add(obj.data.nodeId);
+            if (window.renderQwen3DCard) {
+                window.renderQwen3DCard(container, obj.data.nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes, (id) => toggleBypass(id, 'params'));
+                return;
+            }
+        }
 
         const isVisible = (obj.type === 'media' ? uiConfig.visibleInputs[key] : uiConfig.visibleParams[key]) !== false;
         if (!isVisible) return;

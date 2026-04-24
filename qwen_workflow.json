@@ -1,0 +1,13 @@
+{
+  "10": {
+    "inputs": {
+      "horizontal_angle": 45,
+      "vertical_angle": 15,
+      "zoom": 5.2
+    },
+    "class_type": "QwenMultiangleCameraNode",
+    "_meta": {
+      "title": "Camera Control"
+    }
+  }
+}
