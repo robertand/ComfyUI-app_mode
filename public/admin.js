@@ -1,7 +1,8 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
 let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
-let mediaFiles = {};
+window.mediaFiles = {};
+let mediaFiles = window.mediaFiles;
 let parameters = {};
 let bypassedNodes = {};
 let originalValues = {};
@@ -46,7 +47,7 @@ function setupWorkflow(data) {
     currentWorkflow = data.analysis;
     uiConfig = data.uiConfig;
     originalValues = data.originalValues || {};
-    mediaFiles = {}; parameters = {}; bypassedNodes = {};
+    window.mediaFiles = {}; mediaFiles = window.mediaFiles; parameters = {}; bypassedNodes = {};
     currentPresets = data.metadata?.presets || [];
 
     document.getElementById('empty-state').classList.add('hidden');
@@ -191,7 +192,7 @@ async function handleMediaUpload(file, key) {
     try {
         const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
         const data = await res.json();
-        mediaFiles[key] = data.filename;
+        window.mediaFiles[key] = data.filename;
         p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
     } catch (e) { p.innerHTML = '<i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i>'; initIcons(); }
 }
@@ -254,7 +255,7 @@ function renderPresets(presets) {
         const div = document.createElement('div');
         div.className = 'relative group aspect-square rounded bg-slate-800 overflow-hidden border border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
         div.innerHTML = `<img src="${p.url}" class="w-full h-full object-cover"><div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all"><button onclick="event.stopPropagation(); deletePreset(${idx})" class="p-1 bg-red-600 rounded-full text-white"><i data-lucide="trash-2" class="w-2.5 h-2.5"></i></button></div>`;
-        div.onclick = () => { if (p.mediaFiles) mediaFiles = { ...mediaFiles, ...p.mediaFiles }; if (p.parameters) parameters = { ...parameters, ...p.parameters }; if (p.bypassedNodes) bypassedNodes = { ...bypassedNodes, ...p.bypassedNodes }; refreshUI(); };
+        div.onclick = () => { if (p.mediaFiles) { window.mediaFiles = { ...window.mediaFiles, ...p.mediaFiles }; mediaFiles = window.mediaFiles; } if (p.parameters) parameters = { ...parameters, ...p.parameters }; if (p.bypassedNodes) bypassedNodes = { ...bypassedNodes, ...p.bypassedNodes }; refreshUI(); };
         container.appendChild(div);
     });
     initIcons();
@@ -264,7 +265,7 @@ async function addPreset() {
     if (!currentWorkflow) return alert(getTranslation('add_preset_hint'));
     const c = document.getElementById('output-media-container'); const img = c.querySelector('img');
     if (!img) return alert('Generate an image first');
-    currentPresets.push({ url: img.src, mediaFiles: { ...mediaFiles }, parameters: { ...parameters }, bypassedNodes: { ...bypassedNodes } });
+    currentPresets.push({ url: img.src, mediaFiles: { ...window.mediaFiles }, parameters: { ...parameters }, bypassedNodes: { ...bypassedNodes } });
     renderPresets(currentPresets);
 }
 

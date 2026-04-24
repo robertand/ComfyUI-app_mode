@@ -18,11 +18,14 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         if (inputEl) inputEl.value = val;
     };
 
+    // Make it square
     const width = containerEl.clientWidth || 340;
-    const height = 220;
+    const height = width; // Forced square
+    containerEl.style.height = `${width}px`;
+
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0f172a);
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000); // Aspect ratio 1
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
     containerEl.appendChild(renderer.domElement);
@@ -30,11 +33,15 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     const grid = new THREE.GridHelper(10, 10, 0x334155, 0x1e293b);
     scene.add(grid);
 
-    // Simple Subject
-    const geometry = new THREE.BoxGeometry(1, 1.6, 0.5);
-    const material = new THREE.MeshPhongMaterial({ color: 0x3b82f6 });
+    // Subject: Plane instead of Box
+    const geometry = new THREE.PlaneGeometry(2, 2);
+    const material = new THREE.MeshPhongMaterial({
+        color: 0xffffff,
+        side: THREE.DoubleSide,
+        transparent: true
+    });
     const subject = new THREE.Mesh(geometry, material);
-    subject.position.y = 0.8;
+    subject.position.y = 1;
     scene.add(subject);
 
     // Lights
@@ -62,14 +69,47 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
 
         camMarker.position.set(
             radius * Math.sin(phi) * Math.cos(theta),
-            radius * Math.cos(phi) + 0.8,
+            radius * Math.cos(phi) + 1,
             radius * Math.sin(phi) * Math.sin(theta)
         );
-        camMarker.lookAt(0, 0.8, 0);
+        camMarker.lookAt(0, 1, 0);
 
         camera.position.copy(camMarker.position).multiplyScalar(1.4);
         camera.position.y += 1;
-        camera.lookAt(0, 0.8, 0);
+        camera.lookAt(0, 1, 0);
+    }
+
+    // Texture logic
+    const textureLoader = new THREE.TextureLoader();
+    let currentTexturePath = null;
+
+    function findLinkedImageNode() {
+        const node = currentWorkflow.workflowApi?.[nodeId];
+        if (!node || !node.inputs) return null;
+        for (const val of Object.values(node.inputs)) {
+            if (Array.isArray(val)) return val[0]; // Returns the source nodeId
+        }
+        return null;
+    }
+
+    const linkedNodeId = findLinkedImageNode();
+
+    function updateTexture() {
+        if (!linkedNodeId || !window.mediaFiles) return;
+        const filename = window.mediaFiles[`media_${linkedNodeId}`];
+        if (filename && filename !== currentTexturePath) {
+            currentTexturePath = filename;
+            textureLoader.load(`/output/${filename}`, (txt) => {
+                subject.material.map = txt;
+                subject.material.needsUpdate = true;
+
+                // Adjust aspect ratio of plane if needed, or just keep it square
+                if (txt.image) {
+                    const aspect = txt.image.width / txt.image.height;
+                    subject.scale.set(aspect > 1 ? 1 : aspect, aspect > 1 ? 1/aspect : 1, 1);
+                }
+            });
+        }
     }
 
     let isDragging = false;
@@ -88,7 +128,7 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         let h = (parseFloat(getVal('horizontal_angle')) || 0) - dx;
         let v = (parseFloat(getVal('vertical_angle')) || 0) + dy;
         if (h < 0) h += 360; if (h >= 360) h -= 360;
-        v = Math.max(-30, Math.min(60, v));
+        v = Math.max(-89, Math.min(89, v)); // Wider range for elevation
         setVal('horizontal_angle', Math.round(h));
         setVal('vertical_angle', Math.round(v));
         updateMarker();
@@ -116,6 +156,7 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
             renderer.dispose();
             return;
         }
+        updateTexture();
         requestAnimationFrame(animate);
         renderer.render(scene, camera);
     }
@@ -135,8 +176,8 @@ window.renderQwen3DCard = function(container, nodeId, parameters, currentWorkflo
             <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label>
             <button id="bypass-btn-${nodeId}" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
         </div>
-        <div id="qwen-3d-${nodeId}" class="w-full h-[220px] bg-slate-900 rounded-lg overflow-hidden border border-slate-700 cursor-move relative ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
-            <div class="absolute bottom-2 left-2 text-[9px] text-slate-500 pointer-events-none bg-slate-950/40 px-2 py-1 rounded tracking-wider">DRAG TO ROTATE • SCROLL TO ZOOM</div>
+        <div id="qwen-3d-${nodeId}" class="w-full aspect-square bg-slate-900 rounded-lg overflow-hidden border border-slate-700 cursor-move relative ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
+            <div class="absolute bottom-2 left-2 text-[9px] text-slate-500 pointer-events-none bg-slate-950/40 px-2 py-1 rounded tracking-wider uppercase">DRAG TO ROTATE • SCROLL TO ZOOM</div>
         </div>
         <div class="grid grid-cols-3 gap-2 ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
             <div>
