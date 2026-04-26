@@ -89,8 +89,17 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     function findLinkedImageNode() {
         const node = currentWorkflow.workflowApi?.[nodeId];
         if (!node || !node.inputs) return null;
+
+        // Prioritize inputs named "image" or "pixels"
+        for (const [name, val] of Object.entries(node.inputs)) {
+            if (Array.isArray(val) && (name.toLowerCase().includes('image') || name.toLowerCase().includes('pixels'))) {
+                return val[0];
+            }
+        }
+
+        // Fallback to any linked node
         for (const val of Object.values(node.inputs)) {
-            if (Array.isArray(val)) return val[0]; // Returns the source nodeId
+            if (Array.isArray(val)) return val[0];
         }
         return null;
     }
@@ -102,11 +111,15 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         const filename = window.mediaFiles[`media_${linkedNodeId}`];
         if (filename && (filename !== currentTexturePath || force)) {
             currentTexturePath = filename;
-            textureLoader.load(`/output/${filename}`, (txt) => {
+
+            // Add cache busting timestamp
+            const cacheBuster = force ? `&t=${Date.now()}` : '';
+            const textureUrl = `/output/${filename}${filename.includes('?') ? '&' : '?'}${cacheBuster}`;
+
+            textureLoader.load(textureUrl, (txt) => {
                 subject.material.map = txt;
                 subject.material.needsUpdate = true;
 
-                // Adjust aspect ratio of plane if needed, or just keep it square
                 if (txt.image) {
                     const aspect = txt.image.width / txt.image.height;
                     subject.scale.set(aspect > 1 ? 1 : aspect, aspect > 1 ? 1/aspect : 1, 1);

@@ -585,11 +585,11 @@ adminApp.use(express.json({ limit: '100mb' }));
 
 // Middleware control cache pentru a asigura actualizarea rapidă a UI
 adminApp.use((req, res, next) => {
-    if (req.url.endsWith('.js') || req.url.endsWith('.html') || req.url === '/') {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-    }
+    // Aggressive cache-busting for all assets and APIs
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
     next();
 });
 
@@ -616,11 +616,11 @@ publicApp.use(express.json({ limit: '100mb' }));
 
 // Middleware control cache public
 publicApp.use((req, res, next) => {
-    if (req.url.endsWith('.js') || req.url.endsWith('.html') || req.url === '/') {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-    }
+    // Aggressive cache-busting for all assets and APIs
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
     next();
 });
 
