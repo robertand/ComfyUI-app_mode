@@ -23,12 +23,12 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
 
     // Make it square
     const width = containerEl.clientWidth || 340;
-    const height = width; // Forced square
+    const height = width;
     containerEl.style.height = `${width}px`;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0f172a);
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000); // Aspect ratio 1
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
     containerEl.appendChild(renderer.domElement);
@@ -36,22 +36,22 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     const grid = new THREE.GridHelper(10, 10, 0x334155, 0x1e293b);
     scene.add(grid);
 
-    // Subject: Plane instead of Box
-    const geometry = new THREE.PlaneGeometry(2, 2);
+    // Subject: Plane
+    const geometry = new THREE.PlaneGeometry(2.5, 2.5);
     const material = new THREE.MeshPhongMaterial({
         color: 0xffffff,
         side: THREE.DoubleSide,
         transparent: true
     });
     const subject = new THREE.Mesh(geometry, material);
-    subject.position.y = 1;
+    subject.position.y = 1.25;
     scene.add(subject);
 
     // Lights
-    const light = new THREE.DirectionalLight(0xffffff, 1);
+    const light = new THREE.DirectionalLight(0xffffff, 1.2);
     light.position.set(5, 10, 7.5);
     scene.add(light);
-    scene.add(new THREE.AmbientLight(0x404040));
+    scene.add(new THREE.AmbientLight(0x606060));
 
     // Camera Marker
     const camMarker = new THREE.Group();
@@ -67,19 +67,24 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         const z = parseFloat(getVal('zoom')) || 5;
 
         const phi = (90 - v) * (Math.PI / 180);
-        const theta = (h + 90) * (Math.PI / 180);
+
+        // VISUAL CONSISTENCY:
+        // We use -h to keep the visual rotation consistent with user's "bine cum se misca" feedback
+        // while the numeric value (h) is adjusted for ComfyUI.
+        const theta = (-h + 90) * (Math.PI / 180);
+
         const radius = 11 - z;
 
         camMarker.position.set(
             radius * Math.sin(phi) * Math.cos(theta),
-            radius * Math.cos(phi) + 1,
+            radius * Math.cos(phi) + 1.25,
             radius * Math.sin(phi) * Math.sin(theta)
         );
-        camMarker.lookAt(0, 1, 0);
+        camMarker.lookAt(0, 1.25, 0);
 
         camera.position.copy(camMarker.position).multiplyScalar(1.4);
         camera.position.y += 1;
-        camera.lookAt(0, 1, 0);
+        camera.lookAt(0, 1.25, 0);
     }
 
     // Texture logic
@@ -87,17 +92,18 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     let currentTexturePath = null;
 
     function findLinkedImageNode() {
-        const node = currentWorkflow.workflowApi?.[nodeId];
+        const api = currentWorkflow.workflowApi || (currentWorkflow.raw && currentWorkflow.raw.workflow);
+        const node = api ? api[nodeId] : null;
         if (!node || !node.inputs) return null;
 
-        // Prioritize inputs named "image" or "pixels"
+        // Prioritize inputs named "image", "pixels", "pixels_image"
         for (const [name, val] of Object.entries(node.inputs)) {
             if (Array.isArray(val) && (name.toLowerCase().includes('image') || name.toLowerCase().includes('pixels'))) {
                 return val[0];
             }
         }
 
-        // Fallback to any linked node
+        // Fallback to first array input
         for (const val of Object.values(node.inputs)) {
             if (Array.isArray(val)) return val[0];
         }
@@ -110,32 +116,19 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         if (!linkedNodeId || !window.mediaFiles) return;
 
         // Try multiple keys for the linked media
-        const keys = [
-            `media_${linkedNodeId}`,
-            `node_${linkedNodeId}_image`,
-            `node_${linkedNodeId}_video`,
-            `node_${linkedNodeId}_file`
-        ];
-
-        let filename = null;
-        for (const k of keys) {
-            if (window.mediaFiles[k]) {
-                filename = window.mediaFiles[k];
-                break;
-            }
-        }
+        const filename = window.mediaFiles[`media_${linkedNodeId}`] ||
+                         window.mediaFiles[`node_${linkedNodeId}_image`] ||
+                         window.mediaFiles[`node_${linkedNodeId}_file`] ||
+                         window.mediaFiles[`node_${linkedNodeId}_pixels`];
 
         if (filename && (filename !== currentTexturePath || force)) {
             currentTexturePath = filename;
-
-            // Add cache busting timestamp
-            const cacheBuster = force ? `&t=${Date.now()}` : '';
-            const textureUrl = `/output/${filename}${filename.includes('?') ? '&' : '?'}${cacheBuster}`;
+            const textureUrl = `/output/${filename}${filename.includes('?') ? '&' : '?'}${force ? 't=' + Date.now() : ''}`;
 
             textureLoader.load(textureUrl, (txt) => {
                 subject.material.map = txt;
                 subject.material.needsUpdate = true;
-                subject.material.color.set(0xffffff); // Reset color to white so texture shows fully
+                subject.material.color.set(0xffffff); // Ensure plane is white to show texture perfectly
 
                 if (txt.image) {
                     const aspect = txt.image.width / txt.image.height;
@@ -164,12 +157,14 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         const dx = e.clientX - prevMouse.x;
         const dy = e.clientY - prevMouse.y;
 
-        // INVERTED horizontal orbit: changed - dx to + dx
-        let h = (parseFloat(getVal('horizontal_angle')) || 0) + dx;
+        // COMFYUI INVERSION FIX:
+        // Changed to - dx to flip numeric behavior for ComfyUI.
+        // theta logic above uses -h to preserve intuitive visual turn.
+        let h = (parseFloat(getVal('horizontal_angle')) || 0) - dx;
         let v = (parseFloat(getVal('vertical_angle')) || 0) + dy;
 
         if (h < 0) h += 360; if (h >= 360) h -= 360;
-        v = Math.max(-89, Math.min(89, v)); // Wider range for elevation
+        v = Math.max(-89, Math.min(89, v));
         setVal('horizontal_angle', Math.round(h));
         setVal('vertical_angle', Math.round(v));
         updateMarker();
