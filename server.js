@@ -478,14 +478,21 @@ function analyzeWorkflow(workflowJson) {
             // Pentru toate nodurile, extragem TOȚI parametrii (inclusiv frame_rate, etc.)
             if (node.inputs) {
                 for (const [inputName, inputValue] of Object.entries(node.inputs)) {
+                    // Detect Pixaroma Editor Widgets
+                    const isPixaromaWidget =
+                        (nodeType === 'Pixaroma3D' && inputName === 'SceneWidget') ||
+                        (nodeType === 'PixaromaPaint' && inputName === 'PaintWidget') ||
+                        (nodeType === 'PixaromaImageComposition' && inputName === 'ComposerWidget') ||
+                        (nodeType === 'PixaromaCrop' && inputName === 'CropWidget');
+
                     // Sărim peste inputurile care sunt linkuri către alte noduri
                     if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) {
                         continue;
                     }
                     
                     // Sărim peste inputurile care sunt fișiere (le tratăm separat)
-                    if (inputName === 'image' || inputName === 'video' || 
-                        inputName.toLowerCase().includes('file') || inputName === 'filename') {
+                    if (!isPixaromaWidget && (inputName === 'image' || inputName === 'video' ||
+                        inputName.toLowerCase().includes('file') || inputName === 'filename')) {
                         continue;
                     }
                     
@@ -493,7 +500,10 @@ function analyzeWorkflow(workflowJson) {
                     let valueType = 'text';
                     let defaultValue = inputValue;
                     
-                    if (typeof inputValue === 'number') {
+                    if (isPixaromaWidget) {
+                        valueType = 'pixaroma_editor';
+                        defaultValue = typeof inputValue === 'object' ? JSON.stringify(inputValue) : inputValue;
+                    } else if (typeof inputValue === 'number') {
                         valueType = 'number';
                         defaultValue = inputValue;
                     } else if (typeof inputValue === 'boolean') {
@@ -524,6 +534,10 @@ function analyzeWorkflow(workflowJson) {
                     else if (inputName === 'length') paramTitle = '🎬 Length (frames)';
                     else if (inputName === 'num_frames') paramTitle = '🎬 Num Frames';
                     else if (inputName === 'frame_rate') paramTitle = '📽️ Frame Rate (FPS)';
+                    else if (inputName === 'SceneWidget') paramTitle = '3D Builder';
+                    else if (inputName === 'PaintWidget') paramTitle = 'Paint Studio';
+                    else if (inputName === 'ComposerWidget') paramTitle = 'Image Composer';
+                    else if (inputName === 'CropWidget') paramTitle = 'Image Crop';
                     
                     nodeInputs.push({
                         key: `node_${nodeId}_${inputName}`,
@@ -616,8 +630,91 @@ adminApp.use('/output', express.static('output', {
     }
 }));
 
+// ============ PROXY PIXAROMA & COMFYUI ============
+
+async function proxyToComfy(req, res) {
+    try {
+        const targetInstance = await getFreestInstance();
+        const url = `${targetInstance}${req.originalUrl}`;
+
+        const fetchOptions = {
+            method: req.method,
+            headers: { ...req.headers }
+        };
+
+        // Remove host header to avoid issues with target
+        delete fetchOptions.headers.host;
+
+        if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
+            fetchOptions.body = JSON.stringify(req.body);
+            fetchOptions.headers['Content-Type'] = 'application/json';
+        }
+
+        const response = await fetch(url, fetchOptions);
+
+        // Forward headers
+        response.headers.forEach((value, name) => {
+            res.setHeader(name, value);
+        });
+
+        res.status(response.status);
+        let buffer;
+        if (response.buffer) {
+            buffer = await response.buffer();
+        } else {
+            const arrayBuffer = await response.arrayBuffer();
+            buffer = Buffer.from(arrayBuffer);
+        }
+        res.send(buffer);
+    } catch (error) {
+        console.error('Proxy error:', error);
+        res.status(500).json({ error: 'Proxy error' });
+    }
+}
+
+
 // Server Public (port 3002)
 const publicApp = express();
+
+// ============ PROXY ROUTES (CONTINUED) ============
+// These must be after both apps are initialized
+
+// Routes for Pixaroma assets and API
+adminApp.all('/pixaroma/*', proxyToComfy);
+publicApp.all('/pixaroma/*', proxyToComfy);
+
+// Route for ComfyUI view (previews)
+adminApp.all('/view', proxyToComfy);
+publicApp.all('/view', proxyToComfy);
+
+// Shim for ComfyUI scripts that Pixaroma imports
+const appShim = `
+export const app = {
+    registerExtension: (ext) => {
+        console.log("Shim: registered extension", ext.name);
+        if (!window._pixaroma_extensions) window._pixaroma_extensions = {};
+        window._pixaroma_extensions[ext.name] = ext;
+    },
+    ui: {
+        settings: {
+            getSettingValue: (id) => {
+                const s = JSON.parse(localStorage.getItem('pixaroma_settings') || '{}');
+                return s[id] || null;
+            }
+        }
+    }
+};
+`;
+
+adminApp.get('/scripts/app.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.send(appShim);
+});
+
+publicApp.get('/scripts/app.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.send(appShim);
+});
 publicApp.use(express.json({ limit: '100mb' }));
 
 // Middleware control cache public
@@ -1025,8 +1122,15 @@ adminApp.post('/api/workflow/run', async (req, res) => {
                             if (isNaN(finalValue)) finalValue = 0;
                         }
                         else if (param.valueType === 'boolean') finalValue = value === 'true' || value === true;
+                        else if (param.valueType === 'pixaroma_editor') {
+                            try {
+                                finalValue = typeof value === 'string' ? JSON.parse(value) : value;
+                            } catch (e) {
+                                console.error('Error parsing Pixaroma data:', e);
+                            }
+                        }
                         workflow[param.nodeId].inputs[param.inputName] = finalValue;
-                        console.log(`✅ Aplicat ${param.key} = ${finalValue} la nodul ${param.nodeId}.${param.inputName}`);
+                        console.log(`✅ Aplicat ${param.key} = (Type: ${param.valueType}) la nodul ${param.nodeId}.${param.inputName}`);
                     }
                 }
             }
@@ -1386,6 +1490,13 @@ publicApp.post('/api/workflow/run', async (req, res) => {
                             if (isNaN(finalValue)) finalValue = 0;
                         }
                         else if (param.valueType === 'boolean') finalValue = value === 'true' || value === true;
+                        else if (param.valueType === 'pixaroma_editor') {
+                            try {
+                                finalValue = typeof value === 'string' ? JSON.parse(value) : value;
+                            } catch (e) {
+                                console.error('Error parsing Pixaroma data:', e);
+                            }
+                        }
                         workflow[param.nodeId].inputs[param.inputName] = finalValue;
                     }
                 }

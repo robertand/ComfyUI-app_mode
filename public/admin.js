@@ -140,6 +140,44 @@ function renderLiveUI() {
             }
         }
 
+        // Pixaroma Editor Handling
+        if (obj.type === 'param' && obj.data.valueType === 'pixaroma_editor') {
+            const isVisible = uiConfig.visibleParams[key] !== false;
+            if (!isVisible) return;
+            const isBypassed = bypassedNodes[obj.data.nodeId];
+            const label = uiConfig.inputNames?.[key] || obj.data.title;
+            const div = document.createElement('div');
+            div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
+
+            const curValue = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
+
+            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'params')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div>
+            <button id="btn-editor-${key}" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-indigo-500/20 ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
+                <i data-lucide="layout" class="w-5 h-5"></i>
+                <span>Open ${label}</span>
+            </button>`;
+
+            container.appendChild(div);
+            const btn = div.querySelector(`#btn-editor-${key}`);
+            btn.onclick = () => {
+                if (window.openPixaromaEditor) {
+                    let initialData = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
+                    // If it's a string from server, parse it for the shim
+                    if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
+                        try { initialData = JSON.parse(initialData); } catch(e) {}
+                    }
+                    window.openPixaromaEditor(obj.data.nodeType, initialData, (jsonStr) => {
+                        parameters[key] = jsonStr;
+                        console.log(`Pixaroma ${obj.data.nodeType} saved data updated`);
+                    });
+                } else {
+                    alert('Pixaroma Bridge not loaded');
+                }
+            };
+            initIcons();
+            return;
+        }
+
         const isVisible = (obj.type === 'media' ? uiConfig.visibleInputs[key] : uiConfig.visibleParams[key]) !== false;
         if (!isVisible) return;
 

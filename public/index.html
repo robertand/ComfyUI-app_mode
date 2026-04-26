@@ -273,6 +273,10 @@
     </div>
 
     <script src="/translations.js?v=1.0.6"></script>
+    <script type="module">
+        import { openPixaromaEditor } from '/pixaroma_shim.js';
+        window.openPixaromaEditor = openPixaromaEditor;
+    </script>
     <script src="/qwen3d.js?v=1.0.6"></script>
     <script src="/admin.js?v=1.0.6"></script>
     <script>
