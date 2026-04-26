@@ -593,7 +593,13 @@ adminApp.use((req, res, next) => {
     next();
 });
 
-adminApp.use(express.static('public'));
+adminApp.use(express.static('public', {
+    setHeaders: (res, path) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+}));
 adminApp.use('/output', express.static('output', {
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.mp4')) {
@@ -629,7 +635,13 @@ publicApp.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'public.html'));
 });
 
-publicApp.use(express.static('public'));
+publicApp.use(express.static('public', {
+    setHeaders: (res, path) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+}));
 publicApp.use('/output', express.static('output', {
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.mp4')) {

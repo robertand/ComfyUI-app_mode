@@ -108,7 +108,23 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
 
     function updateTexture(force = false) {
         if (!linkedNodeId || !window.mediaFiles) return;
-        const filename = window.mediaFiles[`media_${linkedNodeId}`];
+
+        // Try multiple keys for the linked media
+        const keys = [
+            `media_${linkedNodeId}`,
+            `node_${linkedNodeId}_image`,
+            `node_${linkedNodeId}_video`,
+            `node_${linkedNodeId}_file`
+        ];
+
+        let filename = null;
+        for (const k of keys) {
+            if (window.mediaFiles[k]) {
+                filename = window.mediaFiles[k];
+                break;
+            }
+        }
+
         if (filename && (filename !== currentTexturePath || force)) {
             currentTexturePath = filename;
 
@@ -119,11 +135,14 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
             textureLoader.load(textureUrl, (txt) => {
                 subject.material.map = txt;
                 subject.material.needsUpdate = true;
+                subject.material.color.set(0xffffff); // Reset color to white so texture shows fully
 
                 if (txt.image) {
                     const aspect = txt.image.width / txt.image.height;
                     subject.scale.set(aspect > 1 ? 1 : aspect, aspect > 1 ? 1/aspect : 1, 1);
                 }
+            }, undefined, (err) => {
+                console.error('Failed to load 3D texture:', textureUrl, err);
             });
         }
     }
@@ -144,8 +163,11 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         if (!isDragging) return;
         const dx = e.clientX - prevMouse.x;
         const dy = e.clientY - prevMouse.y;
-        let h = (parseFloat(getVal('horizontal_angle')) || 0) - dx;
+
+        // INVERTED horizontal orbit: changed - dx to + dx
+        let h = (parseFloat(getVal('horizontal_angle')) || 0) + dx;
         let v = (parseFloat(getVal('vertical_angle')) || 0) + dy;
+
         if (h < 0) h += 360; if (h >= 360) h -= 360;
         v = Math.max(-89, Math.min(89, v)); // Wider range for elevation
         setVal('horizontal_angle', Math.round(h));
