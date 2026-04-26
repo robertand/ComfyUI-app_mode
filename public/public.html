@@ -6,6 +6,7 @@
     <title data-i18n="app_title">ComfyUI Remote Generator</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f1f5f9; }
@@ -25,6 +26,13 @@
         .processing-pulse { animation: pulse-text 2s ease-in-out infinite; }
         @keyframes pulse-text { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
         .modal-bg { background-color: rgba(0, 0, 0, 0.7); backdrop-filter: blur(4px); }
+        .generate-fab {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            z-index: 90;
+            box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.5);
+        }
     </style>
 </head>
 <body class="min-h-screen flex flex-col">
@@ -121,9 +129,6 @@
                                     <i data-lucide="image" class="w-5 h-5 text-amber-500"></i>
                                     <span data-i18n="result">Result</span>
                                 </h3>
-                                <button id="generate-btn" class="px-10 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-lg shadow-lg shadow-blue-900/20 transition-all transform hover:scale-[1.02] active:scale-[0.98]">
-                                    <span data-i18n="generate">Generate</span>
-                                </button>
                             </div>
 
                             <div id="output-display" class="flex-1 flex items-center justify-center bg-slate-900/50 rounded-lg border-2 border-dashed border-slate-800 relative overflow-hidden min-h-[400px]">
@@ -159,15 +164,23 @@
         </div>
     </main>
 
+    <!-- Floating Generate Button -->
+    <button id="generate-btn" class="generate-fab px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-full transition-all transform hover:scale-105 active:scale-95 flex items-center gap-2">
+        <i data-lucide="zap" class="w-5 h-5"></i>
+        <span data-i18n="generate">Generate</span>
+    </button>
+
     <div id="media-modal" class="hidden fixed inset-0 z-[200] modal-bg flex items-center justify-center p-4">
         <button id="close-modal" class="absolute top-6 right-6 p-3 bg-black/50 text-white rounded-full transition-all"><i data-lucide="x" class="w-8 h-8"></i></button>
         <div id="modal-content" class="max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center"></div>
     </div>
 
-    <script src="/translations.js?v=1.0.1"></script>
+    <script src="/translations.js?v=1.0.6"></script>
+    <script src="/qwen3d.js?v=1.0.6"></script>
     <script>
         let currentWorkflow = null;
-        let mediaFiles = {};
+        window.mediaFiles = {};
+        let mediaFiles = window.mediaFiles;
         let parameters = {};
         let bypassedNodes = {};
         let uiConfig = null;
@@ -207,7 +220,7 @@
                 if (data.success) {
                     currentWorkflow = data.analysis;
                     uiConfig = data.uiConfig;
-                    mediaFiles = {}; parameters = {}; bypassedNodes = {};
+                    window.mediaFiles = {}; mediaFiles = window.mediaFiles; parameters = {}; bypassedNodes = {};
                     document.getElementById('empty-state').classList.add('hidden');
                     document.getElementById('generator-interface').classList.remove('hidden');
                     renderInterface();
@@ -228,7 +241,7 @@
                 div.className = 'relative aspect-square rounded-lg bg-slate-900 overflow-hidden border border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
                 div.innerHTML = `<img src="${p.url}" class="w-full h-full object-cover">`;
                 div.onclick = () => {
-                    if (p.mediaFiles) mediaFiles = { ...mediaFiles, ...p.mediaFiles };
+                    if (p.mediaFiles) { window.mediaFiles = { ...window.mediaFiles, ...p.mediaFiles }; mediaFiles = window.mediaFiles; }
                     if (p.parameters) parameters = { ...parameters, ...p.parameters };
                     if (p.bypassedNodes) bypassedNodes = { ...bypassedNodes, ...p.bypassedNodes };
                     renderInterface();
@@ -245,11 +258,24 @@
             const visibleInputs = uiConfig.visibleInputs || {};
             const visibleParams = uiConfig.visibleParams || {};
 
+            // Track handled Qwen nodes
+            const handledNodes = new Set();
+
             order.forEach(key => {
                 let obj = null;
                 currentWorkflow.inputs.forEach(g => { const f = g.inputs.find(i => i.key === key); if (f) obj = { type: 'media', data: f }; });
                 if (!obj) { currentWorkflow.advancedInputs.forEach(g => { const f = g.inputs.find(p => p.key === key); if (f) obj = { type: 'param', data: f }; }); }
                 if (!obj) return;
+
+                // Specialized 3D handling
+                if (obj.type === 'param' && (obj.data.nodeType === 'QwenMultiangleCameraNode' || (obj.data.nodeTitle && obj.data.nodeTitle.includes('Camera')))) {
+                    if (handledNodes.has(obj.data.nodeId)) return;
+                    handledNodes.add(obj.data.nodeId);
+                    if (window.renderQwen3DCard) {
+                        window.renderQwen3DCard(container, obj.data.nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes, (id) => toggleBypass(id));
+                        return;
+                    }
+                }
 
                 const isVisible = (obj.type === 'media' ? visibleInputs[key] : visibleParams[key]) !== false;
                 if (!isVisible) return;
@@ -313,7 +339,7 @@
             try {
                 const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
                 const data = await res.json();
-                mediaFiles[key] = data.filename;
+                window.mediaFiles[key] = data.filename;
                 p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
             } catch (e) { p.innerHTML = '<i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i>'; if (window.lucide) window.lucide.createIcons(); }
         }
@@ -323,7 +349,7 @@
             const overlay = document.getElementById('loading-overlay');
             btn.disabled = true; overlay.classList.remove('hidden');
             try {
-                const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflowId: document.getElementById('workflow-select').value, mediaFiles, parameters, bypassedNodes }) });
+                const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflowId: document.getElementById('workflow-select').value, mediaFiles: window.mediaFiles, parameters, bypassedNodes }) });
                 const data = await res.json();
                 if (data.success && data.files.length > 0) {
                     const f = data.files[0]; const c = document.getElementById('output-media-container'); const ph = document.getElementById('output-placeholder');

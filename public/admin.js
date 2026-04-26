@@ -1,7 +1,8 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
 let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
-let mediaFiles = {};
+window.mediaFiles = {};
+let mediaFiles = window.mediaFiles;
 let parameters = {};
 let bypassedNodes = {};
 let originalValues = {};
@@ -46,7 +47,7 @@ function setupWorkflow(data) {
     currentWorkflow = data.analysis;
     uiConfig = data.uiConfig;
     originalValues = data.originalValues || {};
-    mediaFiles = {}; parameters = {}; bypassedNodes = {};
+    window.mediaFiles = {}; mediaFiles = window.mediaFiles; parameters = {}; bypassedNodes = {};
     currentPresets = data.metadata?.presets || [];
 
     document.getElementById('empty-state').classList.add('hidden');
@@ -88,7 +89,7 @@ function renderParametersConfig() {
         const techInfo = originalTitle === nodeType ? originalTitle : `${originalTitle} - ${nodeType}`;
         const div = document.createElement('div');
         div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
-        div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${param.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${param.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${param.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${param.nodeId}', 'params')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${param.key}'] = this.value; renderLiveUI();">`;
+        div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" data-key="${param.key}" data-type="param" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${param.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${param.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${param.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${param.nodeId}', 'params')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${param.key}'] = this.value; renderLiveUI();">`;
         container.appendChild(div);
     });
     initIcons();
@@ -109,7 +110,7 @@ function renderMediaConfig() {
         const techInfo = originalTitle === nodeType ? originalTitle : `${originalTitle} - ${nodeType}`;
         const div = document.createElement('div');
         div.className = 'flex flex-col gap-1.5 p-2 bg-slate-800/30 rounded border border-slate-700/50';
-        div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${input.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${input.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${input.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[input.key] || input.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${input.key}'] = this.value; renderLiveUI();">`;
+        div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" data-key="${input.key}" data-type="media" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${input.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${input.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${input.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[input.key] || input.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${input.key}'] = this.value; renderLiveUI();">`;
         container.appendChild(div);
     });
     initIcons();
@@ -120,11 +121,24 @@ function renderLiveUI() {
     container.innerHTML = '';
     if (!uiConfig.inputOrder) return;
 
+    // Track handled Qwen nodes to avoid double rendering
+    const handledNodes = new Set();
+
     uiConfig.inputOrder.forEach(key => {
         let obj = null;
         currentWorkflow.inputs.forEach(g => { const f = g.inputs.find(i => i.key === key); if (f) obj = { type: 'media', data: f }; });
         if (!obj) { currentWorkflow.advancedInputs.forEach(g => { const f = g.inputs.find(p => p.key === key); if (f) obj = { type: 'param', data: f }; }); }
         if (!obj) return;
+
+        // Specialized 3D handling for QwenMultiangleCameraNode
+        if (obj.type === 'param' && (obj.data.nodeType === 'QwenMultiangleCameraNode' || (obj.data.nodeTitle && obj.data.nodeTitle.includes('Camera')))) {
+            if (handledNodes.has(obj.data.nodeId)) return;
+            handledNodes.add(obj.data.nodeId);
+            if (window.renderQwen3DCard) {
+                window.renderQwen3DCard(container, obj.data.nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes, (id) => toggleBypass(id, 'params'));
+                return;
+            }
+        }
 
         const isVisible = (obj.type === 'media' ? uiConfig.visibleInputs[key] : uiConfig.visibleParams[key]) !== false;
         if (!isVisible) return;
@@ -178,7 +192,7 @@ async function handleMediaUpload(file, key) {
     try {
         const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
         const data = await res.json();
-        mediaFiles[key] = data.filename;
+        window.mediaFiles[key] = data.filename;
         p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
     } catch (e) { p.innerHTML = '<i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i>'; initIcons(); }
 }
@@ -241,7 +255,7 @@ function renderPresets(presets) {
         const div = document.createElement('div');
         div.className = 'relative group aspect-square rounded bg-slate-800 overflow-hidden border border-slate-700 hover:border-blue-500 transition-all cursor-pointer';
         div.innerHTML = `<img src="${p.url}" class="w-full h-full object-cover"><div class="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all"><button onclick="event.stopPropagation(); deletePreset(${idx})" class="p-1 bg-red-600 rounded-full text-white"><i data-lucide="trash-2" class="w-2.5 h-2.5"></i></button></div>`;
-        div.onclick = () => { if (p.mediaFiles) mediaFiles = { ...mediaFiles, ...p.mediaFiles }; if (p.parameters) parameters = { ...parameters, ...p.parameters }; if (p.bypassedNodes) bypassedNodes = { ...bypassedNodes, ...p.bypassedNodes }; refreshUI(); };
+        div.onclick = () => { if (p.mediaFiles) { window.mediaFiles = { ...window.mediaFiles, ...p.mediaFiles }; mediaFiles = window.mediaFiles; } if (p.parameters) parameters = { ...parameters, ...p.parameters }; if (p.bypassedNodes) bypassedNodes = { ...bypassedNodes, ...p.bypassedNodes }; refreshUI(); };
         container.appendChild(div);
     });
     initIcons();
@@ -251,7 +265,7 @@ async function addPreset() {
     if (!currentWorkflow) return alert(getTranslation('add_preset_hint'));
     const c = document.getElementById('output-media-container'); const img = c.querySelector('img');
     if (!img) return alert('Generate an image first');
-    currentPresets.push({ url: img.src, mediaFiles: { ...mediaFiles }, parameters: { ...parameters }, bypassedNodes: { ...bypassedNodes } });
+    currentPresets.push({ url: img.src, mediaFiles: { ...window.mediaFiles }, parameters: { ...parameters }, bypassedNodes: { ...bypassedNodes } });
     renderPresets(currentPresets);
 }
 
@@ -339,8 +353,29 @@ function initAdmin() {
         } catch (e) { alert('Error updating settings'); }
     };
 
-    if (document.getElementById('select-all-btn')) document.getElementById('select-all-btn').onclick = () => { document.querySelectorAll('.param-visibility-check').forEach(c => { c.checked = true; uiConfig.visibleParams[c.dataset.key] = true; }); renderLiveUI(); };
-    if (document.getElementById('deselect-all-btn')) document.getElementById('deselect-all-btn').onclick = () => { document.querySelectorAll('.param-visibility-check').forEach(c => { c.checked = false; uiConfig.visibleParams[c.dataset.key] = false; }); renderLiveUI(); };
+    const selectAllBtn = document.getElementById('select-all-btn');
+    if (selectAllBtn) selectAllBtn.onclick = () => {
+        document.querySelectorAll('.param-visibility-check').forEach(c => {
+            c.checked = true;
+            const key = c.getAttribute('data-key');
+            const type = c.getAttribute('data-type');
+            if (type === 'media') uiConfig.visibleInputs[key] = true;
+            else uiConfig.visibleParams[key] = true;
+        });
+        renderLiveUI();
+    };
+
+    const deselectAllBtn = document.getElementById('deselect-all-btn');
+    if (deselectAllBtn) deselectAllBtn.onclick = () => {
+        document.querySelectorAll('.param-visibility-check').forEach(c => {
+            c.checked = false;
+            const key = c.getAttribute('data-key');
+            const type = c.getAttribute('data-type');
+            if (type === 'media') uiConfig.visibleInputs[key] = false;
+            else uiConfig.visibleParams[key] = false;
+        });
+        renderLiveUI();
+    };
 
     loadWorkflows(); refreshOutputs();
 }

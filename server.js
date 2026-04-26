@@ -585,15 +585,21 @@ adminApp.use(express.json({ limit: '100mb' }));
 
 // Middleware control cache pentru a asigura actualizarea rapidă a UI
 adminApp.use((req, res, next) => {
-    if (req.url.endsWith('.js') || req.url.endsWith('.html') || req.url === '/') {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-    }
+    // Aggressive cache-busting for all assets and APIs
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
     next();
 });
 
-adminApp.use(express.static('public'));
+adminApp.use(express.static('public', {
+    setHeaders: (res, path) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+}));
 adminApp.use('/output', express.static('output', {
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.mp4')) {
@@ -616,11 +622,11 @@ publicApp.use(express.json({ limit: '100mb' }));
 
 // Middleware control cache public
 publicApp.use((req, res, next) => {
-    if (req.url.endsWith('.js') || req.url.endsWith('.html') || req.url === '/') {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-    }
+    // Aggressive cache-busting for all assets and APIs
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    res.setHeader('Surrogate-Control', 'no-store');
     next();
 });
 
@@ -629,7 +635,13 @@ publicApp.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'public.html'));
 });
 
-publicApp.use(express.static('public'));
+publicApp.use(express.static('public', {
+    setHeaders: (res, path) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+    }
+}));
 publicApp.use('/output', express.static('output', {
     setHeaders: (res, filePath) => {
         if (filePath.endsWith('.mp4')) {
@@ -838,24 +850,31 @@ adminApp.post('/api/workflow/upload', upload.single('workflow'), async (req, res
             inputNames: {}
         };
         
-        // Inițializează toți parametrii ca vizibili
-        for (const group of analysis.advancedInputs) {
-            for (const param of group.inputs) {
-                uiConfig.visibleParams[param.key] = true;
-            }
-        }
-        
-        // Inițializează ordinea inputurilor
+        // Inițializează toți parametrii ca vizibili și adaugă-i în ordinea unică
         if (analysis.inputs) {
             for (const group of analysis.inputs) {
                 for (const input of group.inputs) {
-                    uiConfig.inputOrder.push(input.key);
+                    uiConfig.visibleInputs[input.key] = true;
+                    if (!uiConfig.inputOrder.includes(input.key)) {
+                        uiConfig.inputOrder.push(input.key);
+                    }
+                }
+            }
+        }
+
+        if (analysis.advancedInputs) {
+            for (const group of analysis.advancedInputs) {
+                for (const param of group.inputs) {
+                    uiConfig.visibleParams[param.key] = true;
+                    if (!uiConfig.inputOrder.includes(param.key)) {
+                        uiConfig.inputOrder.push(param.key);
+                    }
                 }
             }
         }
         
         fs.unlinkSync(req.file.path);
-        res.json({ success: true, analysis, originalValues: originalWorkflowValues });
+        res.json({ success: true, analysis, originalValues: originalWorkflowValues, uiConfig: uiConfig });
     } catch (error) {
         console.error('Workflow upload error:', error);
         res.status(500).json({ error: error.message });
