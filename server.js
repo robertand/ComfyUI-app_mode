@@ -372,25 +372,34 @@ async function runWorkflowLogic(req, res, isPublic = false) {
             let finalFn = fn; if (mediaStore[fn]) finalFn = (await uploadFileToInstance(target, mediaStore[fn].path, mediaStore[fn].originalName, mediaStore[fn].mimetype)).name;
             analysis.inputs?.forEach(g => g.inputs?.forEach(i => { if (i.key === k && workflow[i.nodeId]) workflow[i.nodeId].inputs[i.inputName] = finalFn; }));
         }
-        const finalParams = { ...(isPublic ? extractOriginalWorkflowValues(workflow) : originalWorkflowValues), ...parameters };
+
+        // SYNC: Ensure we use the latest memory if this is the active admin session
+        const baseParams = (!isPublic && currentWorkflowId) ? originalWorkflowValues : extractOriginalWorkflowValues(workflow);
+        const finalParams = { ...baseParams, ...parameters };
+
         const auto = parameters?.['_autoRandomSeed'] || {};
         for (const [pk, v] of Object.entries(finalParams)) {
             if (shouldGenerateRandomSeed(pk, v, auto)) finalParams[pk] = generateRandomSeed();
-            analysis.advancedInputs?.forEach(g => g.inputs?.forEach(p => {
+            analysis.advancedInputs.forEach(g => g.inputs?.forEach(p => {
                 if (p.key === pk && workflow[p.nodeId]) {
                     let fv = finalParams[pk];
                     if (p.valueType === 'number') fv = parseFloat(fv); else if (p.valueType === 'boolean') fv = (fv === 'true' || fv === true);
                     else if (p.valueType === 'pixaroma_editor' && typeof fv === 'string') { try { fv = JSON.parse(fv); } catch(e){} }
                     workflow[p.nodeId].inputs[p.inputName] = fv;
+                    console.log(`[Run] Applying ${pk} to Node ${p.nodeId} (${p.inputName}):`, typeof fv === 'object' ? 'JSON object' : fv);
                 }
             }));
         }
+
         const { workflow: vw, warnings } = validateWorkflowParameters(workflow);
+        console.log('[Run] Submitting prompt to ComfyUI...');
         const qRes = await fetch(`${target}/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: vw }) });
         const qData = await qRes.json(); if (qData.error) throw new Error(qData.error.message || JSON.stringify(qData.error));
+
         let result = null, attempts = 0;
         while (!result && attempts < 180) { await new Promise(r => setTimeout(r, 2000)); const h = await (await fetch(`${target}/history`)).json(); if (h[qData.prompt_id]) { result = h[qData.prompt_id]; break; } attempts++; }
         if (!result) throw new Error('Timeout');
+
         const outputFiles = [];
         for (const [nodeId, output] of Object.entries(result.outputs || {})) {
             for (const item of [...(output.images || []), ...(output.videos || [])]) {
@@ -422,10 +431,19 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
                         let finalValue = value;
                         if (typeof value === 'string' && (value.startsWith('{') || value.startsWith('['))) { try { finalValue = JSON.parse(value); } catch(e){} }
                         workflow[nodeId].inputs[inputName] = finalValue;
+
+                        // SYNC: Update in-memory data if this is the active workflow
+                        if (currentWorkflowId && workflowId.includes(currentWorkflowId)) {
+                            originalWorkflowValues[key] = value;
+                            if (currentWorkflowData?.workflowApi?.[nodeId]) {
+                                currentWorkflowData.workflowApi[nodeId].inputs[inputName] = finalValue;
+                            }
+                        }
                     }
                 }
             });
             fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+            console.log(`[SaveParam] Persisted and synced parameters for ${workflowId}`);
             return res.json({ success: true });
         }
         res.status(400).json({ error: 'Analysis missing' });
@@ -469,7 +487,8 @@ async function startServers() {
         const wss = new WebSocket.Server({ noServer: true });
         server.on('upgrade', async (req, socket, head) => {
             if (req.url === '/ws') {
-                const remoteWs = new WebSocket((await getFreestInstance()).replace(/^http/, 'ws') + '/ws');
+                const targetInstance = await getFreestInstance();
+                const remoteWs = new WebSocket(targetInstance.replace(/^http/, 'ws') + '/ws');
                 wss.handleUpgrade(req, socket, head, (ws) => {
                     remoteWs.on('open', () => { ws.on('message', m => remoteWs.send(m)); remoteWs.on('message', m => ws.send(m)); });
                     remoteWs.on('close', () => ws.close()); ws.on('close', () => remoteWs.close());

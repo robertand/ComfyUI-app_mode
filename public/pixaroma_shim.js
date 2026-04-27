@@ -56,12 +56,40 @@ style.textContent = `
         background: #000 !important;
     }
 
+    /* Save Indicator */
+    #pixaroma-save-toast {
+        position: fixed;
+        bottom: 2rem;
+        left: 50%;
+        transform: translateX(-50%);
+        background: #10b981;
+        color: white;
+        padding: 0.75rem 1.5rem;
+        border-radius: 9999px;
+        font-weight: 600;
+        z-index: 1000002;
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        display: none;
+        animation: toast-in 0.3s ease-out;
+    }
+    @keyframes toast-in { from { bottom: 0; opacity: 0; } to { bottom: 2rem; opacity: 1; } }
+
     @font-face {
         font-family: 'Pixaroma';
         src: url('/pixaroma/assets/fonts/pixaroma.woff2') format('woff2');
     }
 `;
 document.head.appendChild(style);
+
+const toast = document.createElement('div');
+toast.id = 'pixaroma-save-toast';
+toast.textContent = 'Changes Saved Successfully';
+document.body.appendChild(toast);
+
+function showToast() {
+    toast.style.display = 'block';
+    setTimeout(() => { toast.style.display = 'none'; }, 3000);
+}
 
 // Robust Mock for ComfyUI environment
 window.app = window.app || {
@@ -112,7 +140,7 @@ window.LiteGraph = window.LiteGraph || {
     createNode: () => ({ widgets: [], addWidget: () => ({}) }),
     LGraph: function() {
         this._nodes = [];
-        this.add = (n) => { if (n) this._nodes.push(n); };
+        this.add = (n) => { if (n) { n.graph = this; this._nodes.push(n); } };
         this.getNodeById = (id) => this._nodes.find(n => n.id === id);
     }
 };
@@ -120,38 +148,35 @@ window.LiteGraph = window.LiteGraph || {
 let activeEditorCallback = null;
 
 export async function openPixaromaEditor(nodeType, initialData, onSave) {
-    console.log(`Opening Pixaroma Editor for ${nodeType} with data:`, initialData);
+    console.log(`[Shim] Opening Editor: ${nodeType}`);
     activeEditorCallback = onSave;
 
     await loadPixaromaExtension(nodeType);
 
     const extName = getExtensionName(nodeType);
     const ext = window._pixaroma_extensions[extName];
-
     if (!ext) throw new Error(`Extension ${extName} not found`);
 
     const editorClassName = getEditorClass(nodeType);
     const OriginalClass = window._pixaroma_classes[editorClassName];
 
-    // Process initialData - ensure it's an object if it's a string
     let parsedData = initialData;
     if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
-        try { parsedData = JSON.parse(initialData); } catch(e) { console.error("Shim: Error parsing initial data", e); }
+        try { parsedData = JSON.parse(initialData); } catch(e) { console.error("[Shim] Parse error", e); }
     }
 
     if (OriginalClass && !OriginalClass._hijacked) {
         const origOpen = OriginalClass.prototype.open;
         OriginalClass.prototype.open = function(data) {
-            console.log(`${editorClassName}.open() called with:`, data);
-
-            // If we have parsedData from our closure, prioritize it if the call data is empty or default
+            console.log(`[Shim] ${editorClassName}.open() called`);
             const finalData = (parsedData && Object.keys(parsedData).length > 0) ? parsedData : data;
 
             let internalOnSave = null;
             Object.defineProperty(this, 'onSave', {
                 get: () => {
                     return (jsonStr, dataURL) => {
-                        console.log(`${editorClassName} triggered onSave`);
+                        console.log(`[Shim] ${editorClassName} Save Intercepted`);
+                        showToast();
                         if (internalOnSave) internalOnSave.call(this, jsonStr, dataURL);
                         if (activeEditorCallback) activeEditorCallback(jsonStr, dataURL);
                         if (typeof this.unmount === 'function') this.unmount();
@@ -175,18 +200,15 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
         size: [300, 300],
         serialize: function() { return { widgets_values: this.widgets.map(w => w.value) }; },
         addWidget: function(type, name, value, callback, options) {
-            // If this is the main state widget, pre-fill it with our parsedData
-            const isStateWidget = name === 'SceneWidget' || name === 'PaintWidget' || name === 'ComposerWidget' || name === 'CropWidget';
+            const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(name);
             const finalValue = (isStateWidget && parsedData) ? parsedData : value;
-
             const w = { type, name, value: finalValue || '', callback, options };
             this.widgets.push(w);
             return w;
         },
         addDOMWidget: function(name, type, element, options) {
-            const isStateWidget = name === 'SceneWidget' || name === 'PaintWidget' || name === 'ComposerWidget' || name === 'CropWidget';
+            const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(name);
             const finalValue = (isStateWidget && parsedData) ? parsedData : initialData;
-
             const w = { name, type, element, options, value: finalValue };
             this.widgets.push(w);
             return w;
@@ -200,11 +222,12 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
 
     if (ext.nodeCreated) await ext.nodeCreated(mockNode);
 
-    // After nodeCreated, check if any widget needs to be updated with parsedData
+    // Deep sync widgets with parsed data after creation
     mockNode.widgets.forEach(w => {
-        const isStateWidget = w.name === 'SceneWidget' || w.name === 'PaintWidget' || w.name === 'ComposerWidget' || w.name === 'CropWidget';
+        const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(w.name);
         if (isStateWidget && parsedData) {
             w.value = parsedData;
+            if (typeof w.callback === 'function') w.callback.call(mockNode, parsedData);
         }
     });
 
@@ -212,7 +235,7 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
     if (openButton && typeof openButton.callback === 'function') {
         openButton.callback.call(mockNode, mockNode);
     } else {
-        throw new Error(`Could not find trigger button for ${nodeType}`);
+        throw new Error(`Trigger button not found for ${nodeType}`);
     }
 }
 
@@ -240,20 +263,18 @@ async function loadPixaromaExtension(nodeType) {
         const base = `/extensions/${v}/js/${subFolder}/`;
         const paths = [ `${base}index.js`, `${base}index.mjs`, `/pixaroma/assets/${subFolder}/index.js` ];
         for (const p of paths) {
-            console.log(`Trying Pixaroma load: ${p}`);
+            console.log(`[Shim] Attempting: ${p}`);
             try {
                 const module = await import(p);
                 if (module[editorClassName]) {
                     window._pixaroma_classes[editorClassName] = module[editorClassName];
                     window[editorClassName] = module[editorClassName];
-                    console.log(`Successfully loaded ${editorClassName} from ${p}`);
+                    console.log(`[Shim] Success: ${editorClassName} from ${p}`);
                     return;
                 }
-            } catch (e) {
-                errors.push(`${p}: ${e.message}`);
-            }
+            } catch (e) { errors.push(`${p}: ${e.message}`); }
         }
     }
-    console.error("All Pixaroma load attempts failed:", errors);
-    throw new Error(`Failed to load Pixaroma module for ${nodeType}. Check console for details.`);
+    console.error("[Shim] All attempts failed:", errors);
+    throw new Error(`Module load failed for ${nodeType}. Check console.`);
 }

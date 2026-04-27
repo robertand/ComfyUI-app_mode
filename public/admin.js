@@ -167,14 +167,21 @@ function renderLiveUI() {
                         try { initialData = JSON.parse(initialData); } catch(e) {}
                     }
                     window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr) => {
+                        // Crucial: Update local parameters immediately
                         parameters[key] = jsonStr;
-                        console.log(`Pixaroma ${obj.data.nodeType} saved data updated`);
+                        console.log(`[Admin] Pixaroma ${obj.data.nodeType} save received. Syncing...`);
+
                         if (currentWorkflowId) {
-                            await fetch('/api/workflows/save-parameters', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: jsonStr } })
-                            });
+                            try {
+                                const res = await fetch('/api/workflows/save-parameters', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: jsonStr } })
+                                });
+                                const data = await res.json();
+                                if (data.success) console.log(`[Admin] Pixaroma data persisted and synced on server.`);
+                                else console.error(`[Admin] Sync failed:`, data.error);
+                            } catch (e) { console.error(`[Admin] Sync error:`, e); }
                         }
                     });
                 } else {
