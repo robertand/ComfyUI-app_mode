@@ -6,7 +6,7 @@ window._pixaroma_extensions = {};
 window._pixaroma_classes = {};
 window._pixaroma_active_node = null;
 window._pixaroma_active_node_id = null;
-window._pixaroma_node_data = new Map(); // Global session truth
+window._pixaroma_node_data = new Map(); // Source of truth for nodes
 
 // CSS Layout Fixes
 const style = document.createElement('style');
@@ -20,7 +20,6 @@ style.textContent = `
         --border-color: #334155;
     }
 
-    /* Target all possible Pixaroma editor class names */
     .pxf-overlay, .pxf-editor-overlay, .pixaroma-3d-editor, .pixaroma-paint-editor,
     .pixaroma-composer-editor, .pixaroma-crop-editor, .pixaroma-compare-editor,
     .pixaroma-3d-builder, .pixaroma-paint-studio {
@@ -55,15 +54,17 @@ function showToast() {
 // Robust Mock for ComfyUI environment
 window.app = window.app || {
     registerExtension: (ext) => {
-        console.log("[Shim] Registered:", ext.name);
+        console.log("[Shim] Extension Registered:", ext.name);
         window._pixaroma_extensions[ext.name] = ext;
     },
     ui: { settings: { getSettingValue: (id) => JSON.parse(localStorage.getItem('pixaroma_settings') || '{}')[id] || null } },
     api_base: window.location.origin,
     graph: {
         serialize: () => ({ nodes: window._pixaroma_active_node ? [window._pixaroma_active_node] : [] }),
-        getNodeById: (id) => (window._pixaroma_active_node && String(window._pixaroma_active_node.id) === String(id)) ? window._pixaroma_active_node : null
-    }
+        getNodeById: (id) => (window._pixaroma_active_node && String(window._pixaroma_active_node.id) === String(id)) ? window._pixaroma_active_node : null,
+        _nodes: [], _groups: []
+    },
+    canvas: { setDirty: () => {}, draw: () => {}, getNodeById: (id) => (window._pixaroma_active_node && String(window._pixaroma_active_node.id) === String(id)) ? window._pixaroma_active_node : null }
 };
 
 window.ComfyApp = window.ComfyApp || window.app;
@@ -78,9 +79,9 @@ let activeEditorCallback = null;
 
 export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) {
     const sid = String(nodeId);
-    console.log(`[Shim] Open Request for Node ${sid} (${nodeType})`);
+    console.log(`[Shim] Opening ${nodeType} (Node ${sid})`);
     activeEditorCallback = onSave;
-    window._pixaroma_active_node_id = sid; // Global tag for hijacked methods
+    window._pixaroma_active_node_id = sid;
 
     await loadPixaromaExtension(nodeType);
 
@@ -96,28 +97,24 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
         try { parsedData = JSON.parse(initialData); } catch(e) {}
     }
 
-    // Ensure session truth is set from initial load if not already there
     if (!window._pixaroma_node_data.has(sid)) window._pixaroma_node_data.set(sid, parsedData);
     const sessionData = window._pixaroma_node_data.get(sid);
 
     if (OriginalClass && !OriginalClass._hijacked) {
         const origOpen = OriginalClass.prototype.open;
         OriginalClass.prototype.open = function(data) {
-            // FIX: Always prioritize the global session truth for the active node ID
-            const targetId = window._pixaroma_active_node_id;
+            // FIX: Prioritize global session data. If this instance has a _nodeId, use it.
+            const targetId = this._nodeId || window._pixaroma_active_node_id;
             const latestData = window._pixaroma_node_data.get(targetId);
             const openData = (latestData && Object.keys(latestData).length > 0) ? latestData : (data || sessionData);
 
-            console.log(`[Shim] ${editorClassName}.open() - Applying Data for Node ${targetId}:`, openData);
-
-            // Re-apply nodeId to the instance for onSave context
-            this._nodeId = targetId;
+            console.log(`[Shim] ${editorClassName}.open() - Node ${targetId} Data:`, openData);
 
             let internalOnSave = null;
             Object.defineProperty(this, 'onSave', {
                 get: () => (jsonStr, dataURL) => {
                     const saveId = this._nodeId || window._pixaroma_active_node_id;
-                    console.log(`[Shim] Save Captured for Node ${saveId}`);
+                    console.log(`[Shim] Save for Node ${saveId}`);
                     try {
                         const saved = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
                         window._pixaroma_node_data.set(saveId, saved);
@@ -134,6 +131,8 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
                 configurable: true
             });
 
+            // ENSURE THE EDITOR DOESN'T CREATE A DEFAULT SCENE IF DATA IS PRESENT
+            // We do this by calling open with the actual data
             return origOpen.call(this, openData);
         };
         OriginalClass._hijacked = true;
@@ -182,10 +181,21 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
 
     const openButton = mockNode.widgets.find(w => w.type === 'button' && (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor')));
     if (openButton && typeof openButton.callback === 'function') {
+        const OriginalClass = window._pixaroma_classes[editorClassName];
+        if (OriginalClass) {
+            const oldProtoOpen = OriginalClass.prototype.open;
+            OriginalClass.prototype.open = function(d) {
+                this._nodeId = sid;
+                // CRITICAL: If opening without data but we have session data, force it.
+                const finalData = (d && Object.keys(d).length > 0) ? d : window._pixaroma_node_data.get(sid);
+                return oldProtoOpen.call(this, finalData);
+            };
+        }
+
         setTimeout(() => {
-            console.log(`[Shim] Triggering Callback for Node ${sid}`);
+            console.log(`[Shim] Triggering Open`);
             openButton.callback.call(mockNode, openButton, mockNode);
-        }, 500); // 500ms delay to ensure heavy UI extensions like 3D Builder are fully ready
+        }, 500);
     } else {
         throw new Error(`Trigger button not found for ${nodeType}`);
     }

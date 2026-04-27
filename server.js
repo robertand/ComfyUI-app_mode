@@ -184,6 +184,7 @@ function analyzeWorkflow(workflowJson) {
         Object.entries(workflowJson).forEach(([nodeId, node]) => {
             const nodeTitle = node._meta?.title || node.class_type || nodeId;
             const nodeType = node.class_type || 'Unknown';
+            console.log(`[Analyze] Processing Node ${nodeId}: ${nodeType} (${nodeTitle})`);
             const nodeInputs = [];
             
             if (['LoadImage', 'LoadVideo', 'VHS_LoadVideo'].includes(nodeType)) {
@@ -195,18 +196,18 @@ function analyzeWorkflow(workflowJson) {
             
             if (node.inputs) {
                 Object.entries(node.inputs).forEach(([inputName, inputValue]) => {
-                    const isPixaromaWidget = (nodeType.includes('Pixaroma') || nodeType.includes('PXF')) &&
-                        (inputName.toLowerCase().includes('widget') || inputName.toLowerCase().includes('scene') || inputName.toLowerCase().includes('paint') || inputName.toLowerCase().includes('compare'));
+                    const isPixaromaWidget = (nodeType.toLowerCase().includes('pixaroma') || nodeType.toLowerCase().includes('pxf')) &&
+                        (inputName.toLowerCase().includes('widget') || inputName.toLowerCase().includes('scene') || inputName.toLowerCase().includes('paint') || inputName.toLowerCase().includes('compare') || inputName.toLowerCase().includes('builder') || inputName.toLowerCase().includes('studio'));
 
                     // Filter out link objects unless it's a Pixaroma widget
                     if (!isPixaromaWidget && inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
 
                     // Filter out media files (handled separately)
                     if (!isPixaromaWidget && (inputName === 'image' || inputName === 'video' || inputName.toLowerCase().includes('file') || inputName === 'filename')) return;
-
-                    // Filter out trigger buttons (we'll generate our own)
-                    if (nodeType.includes('Pixaroma') && (inputName.toLowerCase().startsWith('open') || inputName.toLowerCase().includes('builder') || inputName.toLowerCase().includes('studio'))) return;
                     
+                    // Filter out trigger buttons (we'll generate our own)
+                    if ((nodeType.toLowerCase().includes('pixaroma') || nodeType.toLowerCase().includes('pxf')) && (inputName.toLowerCase().startsWith('open') || inputName.toLowerCase().includes('builder') || inputName.toLowerCase().includes('studio'))) return;
+
                     let valueType = 'text';
                     if (isPixaromaWidget) {
                         valueType = 'pixaroma_editor';
@@ -275,6 +276,16 @@ async function proxyToComfy(req, res) {
         if (response.status === 404 && (targetPath.includes('pixaroma') || targetPath.includes('Pixaroma'))) {
             const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
             const fallbacks = [];
+
+            // If it's a request to /pixaroma/... it might be directly in extensions
+            if (targetPath.startsWith('/pixaroma/')) {
+                const sub = targetPath.replace('/pixaroma/', '');
+                variants.forEach(v => {
+                    fallbacks.push(`/extensions/${v}/${sub}`);
+                    fallbacks.push(`/extensions/${v}/js/${sub}`);
+                });
+            }
+
             for (const v of variants) {
                 const ext = `/extensions/${v}/`;
                 if (targetPath.includes('/assets/')) {
