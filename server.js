@@ -196,23 +196,20 @@ function analyzeWorkflow(workflowJson) {
             
             if (node.inputs) {
                 Object.entries(node.inputs).forEach(([inputName, inputValue]) => {
-                    // EXTREMELY broad check for Pixaroma widgets
                     const nodeTypeLower = nodeType.toLowerCase();
                     const inputNameLower = inputName.toLowerCase();
 
                     const isPixaromaWidget = (nodeTypeLower.includes('pixaroma') || nodeTypeLower.includes('pxf')) &&
                         (inputNameLower.includes('widget') || inputNameLower.includes('scene') || inputNameLower.includes('paint') ||
-                         inputNameLower.includes('compare') || inputNameLower.includes('builder') || inputNameLower.includes('studio'));
+                         inputNameLower.includes('compare') || inputNameLower.includes('builder') || inputNameLower.includes('studio') ||
+                         inputNameLower.includes('composer') || inputNameLower.includes('canvas') || inputNameLower.includes('editor') ||
+                         inputNameLower.includes('project') || inputNameLower.includes('config') || inputNameLower.includes('data') ||
+                         inputNameLower === 'scene' || inputNameLower === 'paint');
 
-                    // Filter out link objects unless it's a Pixaroma widget
                     if (!isPixaromaWidget && inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
-
-                    // Filter out media files (handled separately)
                     if (!isPixaromaWidget && (inputName === 'image' || inputName === 'video' || inputName.toLowerCase().includes('file') || inputName === 'filename')) return;
+                    if ((nodeTypeLower.includes('pixaroma') || nodeTypeLower.includes('pxf')) && (inputNameLower.startsWith('open') || inputNameLower.includes('builder') || inputNameLower.includes('studio'))) return;
                     
-                    // Filter out trigger buttons (we'll generate our own)
-                    if ((nodeType.toLowerCase().includes('pixaroma') || nodeType.toLowerCase().includes('pxf')) && (inputName.toLowerCase().startsWith('open') || inputName.toLowerCase().includes('builder') || inputName.toLowerCase().includes('studio'))) return;
-
                     let valueType = 'text';
                     if (isPixaromaWidget) {
                         valueType = 'pixaroma_editor';
@@ -281,19 +278,20 @@ async function proxyToComfy(req, res) {
         if (response.status === 404 && (targetPath.toLowerCase().includes('pixaroma') || targetPath.toLowerCase().includes('pxf'))) {
             const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
             const fallbacks = [];
-
             const subFromPix = targetPath.includes('/pixaroma/') ? targetPath.split('/pixaroma/')[1] : targetPath.split('/').pop();
             const folderName = subFromPix.split('/')[0];
             const fileName = subFromPix.split('/').pop();
 
             variants.forEach(v => {
                 const base = `/extensions/${v}/`;
-                // Path permutations
+                const cleanSub = subFromPix.replace('assets/', '');
+                fallbacks.push(`${base}${cleanSub}`);
                 fallbacks.push(`${base}${subFromPix}`);
+                fallbacks.push(`${base}js/${cleanSub}`);
                 fallbacks.push(`${base}js/${subFromPix}`);
                 fallbacks.push(`${base}js/${folderName}/${fileName}`);
                 fallbacks.push(`${base}js/pixaroma_${folderName}.js`);
-                fallbacks.push(`${base}js/pixaroma_${fileName}`);
+
                 if (subFromPix.includes('assets/')) {
                     const assetSub = subFromPix.split('assets/')[1];
                     fallbacks.push(`${base}${assetSub}`);
@@ -305,18 +303,12 @@ async function proxyToComfy(req, res) {
             for (const fbPath of [...new Set(fallbacks)].filter(f => f && f !== targetPath)) {
                 try {
                     const fbRes = await fetch(`${targetInstance}${fbPath}`, fetchOptions);
-                    if (fbRes.ok) {
-                        console.log(`[Proxy] Fallback Success: ${fbPath}`);
-                        response = fbRes; break;
-                    }
+                    if (fbRes.ok) { console.log(`[Proxy] Fallback Success: ${fbPath}`); response = fbRes; break; }
                 } catch (e) {}
             }
         }
 
-        if (!response.ok) {
-            console.log(`[Proxy] Response: ${response.status} for ${targetPath}`);
-        }
-
+        if (!response.ok) console.log(`[Proxy] Response: ${response.status} for ${targetPath}`);
         response.headers.forEach((v, n) => { if (!['content-encoding', 'content-length', 'transfer-encoding', 'access-control-allow-origin', 'content-security-policy'].includes(n.toLowerCase())) res.setHeader(n, v); });
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('X-Frame-Options', 'ALLOWALL');
@@ -416,19 +408,11 @@ async function runWorkflowLogic(req, res, isPublic = false) {
             workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi)); analysis = currentWorkflowData.analysis;
         }
         const target = await getFreestInstance(); workflow = applyBypass(workflow, bypassedNodes);
-
-        // ALWAYS filter out trigger buttons from Pixaroma nodes in the outgoing prompt
-        Object.values(workflow).forEach(node => {
-            if (node.class_type?.startsWith('Pixaroma') && node.inputs) {
-                Object.keys(node.inputs).forEach(key => { if (key.startsWith('Open')) delete node.inputs[key]; });
-            }
-        });
-
+        Object.values(workflow).forEach(node => { if ((node.class_type?.toLowerCase().includes('pixaroma') || node.class_type?.toLowerCase().includes('pxf')) && node.inputs) { Object.keys(node.inputs).forEach(key => { if (key.startsWith('Open')) delete node.inputs[key]; }); } });
         for (const [k, fn] of Object.entries(mediaFiles || {})) {
             let finalFn = fn; if (mediaStore[fn]) finalFn = (await uploadFileToInstance(target, mediaStore[fn].path, mediaStore[fn].originalName, mediaStore[fn].mimetype)).name;
             analysis.inputs?.forEach(g => g.inputs?.forEach(i => { if (i.key === k && workflow[i.nodeId]) workflow[i.nodeId].inputs[i.inputName] = finalFn; }));
         }
-
         let baseParams = {};
         if (isPublic) baseParams = extractOriginalWorkflowValues(workflow);
         else if (currentWorkflowId) {
@@ -436,45 +420,27 @@ async function runWorkflowLogic(req, res, isPublic = false) {
             if (file) { const data = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8')); baseParams = extractOriginalWorkflowValues(data.analysis.workflowApi || data.workflow); }
             else baseParams = originalWorkflowValues;
         }
-
         const finalParams = { ...baseParams, ...parameters };
         const auto = parameters?.['_autoRandomSeed'] || {};
-
         for (const [pk, v] of Object.entries(finalParams)) {
             if (shouldGenerateRandomSeed(pk, v, auto)) finalParams[pk] = generateRandomSeed();
             analysis.advancedInputs.forEach(g => g.inputs?.forEach(p => {
                 if (p.key === pk && workflow[p.nodeId]) {
-                    if (p.nodeType?.startsWith('Pixaroma') && p.inputName?.startsWith('Open')) return;
+                    if ((p.nodeType?.toLowerCase().includes('pixaroma') || p.nodeType?.toLowerCase().includes('pxf')) && p.inputName?.startsWith('Open')) return;
                     let fv = finalParams[pk];
                     if (p.valueType === 'number') fv = parseFloat(fv);
                     else if (p.valueType === 'boolean') fv = (fv === 'true' || fv === true);
-                    else if (p.valueType === 'pixaroma_editor') {
-                        // CRITICAL: Force STRING for API submission.
-                        // Many custom nodes fail if they get an object when expecting a JSON string.
-                        if (typeof fv === 'object') fv = JSON.stringify(fv);
-                        else if (typeof fv === 'string' && (fv.startsWith('{') || fv.startsWith('['))) {
-                            // Already a JSON string, ensure it's not double-stringified
-                            try {
-                                const parsed = JSON.parse(fv);
-                                fv = JSON.stringify(parsed);
-                            } catch(e) {}
-                        }
-                    }
+                    else if (p.valueType === 'pixaroma_editor') { if (typeof fv === 'string' && (fv.startsWith('{') || fv.startsWith('['))) { try { fv = JSON.parse(fv); } catch(e) {} } }
                     workflow[p.nodeId].inputs[p.inputName] = fv;
-                    if (p.valueType === 'pixaroma_editor') {
-                        console.log(`[Run] Applied Pixaroma ${p.nodeId}.${p.inputName}:`, (typeof fv === 'string' && fv.length > 50) ? fv.substring(0, 50) + '...' : fv);
-                    }
+                    if (p.valueType === 'pixaroma_editor') console.log(`[Run] Applied Pixaroma ${p.nodeId}.${p.inputName}:`, typeof fv === 'object' ? 'JSON Object' : fv);
                 }
             }));
         }
-
-        const { workflow: vw } = validateWorkflowParameters(workflow);
+        const { workflow: vw, warnings } = validateWorkflowParameters(workflow);
         console.log('[Run] Submitting prompt...');
-
         const qRes = await fetch(`${target}/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: vw }) });
-        const qData = await qRes.json(); if (qData.error) throw new Error(qData.error.message || JSON.stringify(qData.error));
+        const qData = await qRes.json(); if (qData.error) { console.error('[Run] Error:', qData.error); throw new Error(qData.error.message || JSON.stringify(qData.error)); }
         console.log(`[Run] Accepted ID: ${qData.prompt_id}`);
-
         let result = null, attempts = 0;
         while (!result && attempts < 180) { await new Promise(r => setTimeout(r, 2000)); const h = await (await fetch(`${target}/history`)).json(); if (h[qData.prompt_id]) { result = h[qData.prompt_id]; break; } attempts++; }
         if (!result) throw new Error('Timeout');
@@ -487,7 +453,7 @@ async function runWorkflowLogic(req, res, isPublic = false) {
                 outputFiles.push({ filename: localFn, url: `/output/${localFn}`, type: item.type === 'video' || localFn.endsWith('.mp4') ? 'video' : 'image' });
             }
         }
-        res.json({ success: true, files: outputFiles });
+        res.json({ success: true, files: outputFiles, warnings: warnings.length > 0 ? warnings : undefined });
     } catch (e) { res.status(500).json({ error: e.message }); }
 }
 
@@ -497,7 +463,7 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
         if (!workflowId) return res.status(400).json({ error: 'ID missing' });
         const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
         if (!file) return res.status(404).json({ error: 'Not found' });
-        const filePath = path.join(savedDir = path.join('workflows', 'saved'), file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const filePath = path.join(path.join('workflows', 'saved'), file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         if (data.analysis?.workflowApi) {
             const workflow = data.analysis.workflowApi;
             Object.entries(parameters || {}).forEach(([key, value]) => {
