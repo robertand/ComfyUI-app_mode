@@ -52,15 +52,19 @@ function setupWorkflow(data) {
     // POPULATE SHIM WITH SAVED DATA IMMEDIATELY
     if (window._pixaroma_node_data) {
         Object.entries(originalValues).forEach(([key, val]) => {
-            // Key format node_ID_inputName
             const parts = key.split('_');
             if (parts[0] === 'node' && parts.length >= 3) {
                 const nodeId = parts[1];
-                let finalVal = val;
-                if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
-                    try { finalVal = JSON.parse(val); } catch(e) {}
+                const inputName = parts.slice(2).join('_');
+                // Support multiple Pixaroma widget naming conventions
+                if (inputName.endsWith('Widget') || inputName.toLowerCase().includes('scene') || inputName.toLowerCase().includes('paint')) {
+                    let finalVal = val;
+                    if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+                        try { finalVal = JSON.parse(val); } catch(e) {}
+                    }
+                    window._pixaroma_node_data.set(String(nodeId), finalVal);
+                    console.log(`[Admin] Pre-populated shim for Node ${nodeId}`);
                 }
-                window._pixaroma_node_data.set(String(nodeId), finalVal);
             }
         });
     }
@@ -187,6 +191,7 @@ function renderLiveUI() {
                     if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
                         try { initialData = JSON.parse(initialData); } catch(e) {}
                     }
+                    console.log(`[Admin] Opening editor for ${key}...`);
                     window.openPixaromaEditor(obj.data.nodeType, obj.data.nodeId, initialData, async (jsonStr, dataURL) => {
                         const finalValue = typeof jsonStr === 'object' ? JSON.stringify(jsonStr) : jsonStr;
                         parameters[key] = finalValue;

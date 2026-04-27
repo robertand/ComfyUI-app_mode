@@ -195,18 +195,41 @@ function analyzeWorkflow(workflowJson) {
             
             if (node.inputs) {
                 Object.entries(node.inputs).forEach(([inputName, inputValue]) => {
-                    const isPixaromaWidget = (nodeType === 'Pixaroma3D' && inputName === 'SceneWidget') || (nodeType === 'PixaromaPaint' && inputName === 'PaintWidget') || (nodeType === 'PixaromaImageComposition' && inputName === 'ComposerWidget') || (nodeType === 'PixaromaCrop' && inputName === 'CropWidget');
-                    if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
+                    const isPixaromaWidget = (nodeType.includes('Pixaroma') || nodeType.includes('PXF')) &&
+                        (inputName.toLowerCase().includes('widget') || inputName.toLowerCase().includes('scene') || inputName.toLowerCase().includes('paint') || inputName.toLowerCase().includes('compare'));
+
+                    // Filter out link objects unless it's a Pixaroma widget
+                    if (!isPixaromaWidget && inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
+
+                    // Filter out media files (handled separately)
                     if (!isPixaromaWidget && (inputName === 'image' || inputName === 'video' || inputName.toLowerCase().includes('file') || inputName === 'filename')) return;
-                    if (nodeType.startsWith('Pixaroma') && inputName.startsWith('Open')) return;
+
+                    // Filter out trigger buttons (we'll generate our own)
+                    if (nodeType.includes('Pixaroma') && (inputName.toLowerCase().startsWith('open') || inputName.toLowerCase().includes('builder') || inputName.toLowerCase().includes('studio'))) return;
                     
                     let valueType = 'text';
-                    if (isPixaromaWidget) valueType = 'pixaroma_editor';
+                    if (isPixaromaWidget) {
+                        valueType = 'pixaroma_editor';
+                        console.log(`[Analyze] Found Pixaroma Widget: ${nodeType}.${inputName} (Node ${nodeId})`);
+                    }
                     else if (typeof inputValue === 'number') valueType = 'number';
                     else if (typeof inputValue === 'boolean') valueType = 'boolean';
                     
-                    const pTitles = { seed: '🔢 Seed', steps: '📊 Steps', cfg: '⚙️ CFG Scale', SceneWidget: '3D Builder', PaintWidget: 'Paint Studio', ComposerWidget: 'Image Composer', CropWidget: 'Image Crop' };
-                    nodeInputs.push({ key: `node_${nodeId}_${inputName}`, title: pTitles[inputName] || inputName, originalName: inputName, valueType, nodeId, nodeTitle, nodeType, inputName, defaultValue: isPixaromaWidget ? (typeof inputValue === 'object' ? JSON.stringify(inputValue) : inputValue) : inputValue });
+                    const pTitles = {
+                        seed: '🔢 Seed', steps: '📊 Steps', cfg: '⚙️ CFG Scale',
+                        SceneWidget: '3D Builder', PaintWidget: 'Paint Studio',
+                        ComposerWidget: 'Image Composer', CropWidget: 'Image Crop',
+                        CompareWidget: 'Image Compare', Compare: 'Image Compare',
+                        CompareStudio: 'Image Compare'
+                    };
+
+                    nodeInputs.push({
+                        key: `node_${nodeId}_${inputName}`,
+                        title: pTitles[inputName] || inputName,
+                        originalName: inputName,
+                        valueType, nodeId, nodeTitle, nodeType, inputName,
+                        defaultValue: isPixaromaWidget ? (typeof inputValue === 'object' ? JSON.stringify(inputValue) : inputValue) : inputValue
+                    });
                 });
             }
             if (nodeInputs.length > 0) advancedInputs.push({ key: `node_${nodeId}`, title: `📦 ${nodeTitle}`, nodeId, nodeType, inputs: nodeInputs });

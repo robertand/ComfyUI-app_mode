@@ -5,9 +5,10 @@
 window._pixaroma_extensions = {};
 window._pixaroma_classes = {};
 window._pixaroma_active_node = null;
-window._pixaroma_node_data = new Map(); // Source of truth by nodeId
+window._pixaroma_active_node_id = null;
+window._pixaroma_node_data = new Map(); // Global session truth
 
-// Standard ComfyUI and Pixaroma CSS variables
+// CSS Layout Fixes
 const style = document.createElement('style');
 style.textContent = `
     :root {
@@ -19,28 +20,25 @@ style.textContent = `
         --border-color: #334155;
     }
 
+    /* Target all possible Pixaroma editor class names */
     .pxf-overlay, .pxf-editor-overlay, .pixaroma-3d-editor, .pixaroma-paint-editor,
-    .pixaroma-composer-editor, .pixaroma-crop-editor {
-        position: fixed !important; inset: 0 !important; top: 0 !important; left: 0 !important;
-        right: 0 !important; bottom: 0 !important; z-index: 999999 !important;
+    .pixaroma-composer-editor, .pixaroma-crop-editor, .pixaroma-compare-editor,
+    .pixaroma-3d-builder, .pixaroma-paint-studio {
+        position: fixed !important; inset: 0 !important; z-index: 999999 !important;
         background: #0f172a !important; display: flex !important; flex-direction: column !important;
         opacity: 1 !important; visibility: visible !important; pointer-events: auto !important;
         width: 100vw !important; height: 100vh !important;
     }
 
     .pxf-editor-layout, .pxf-body { height: 100% !important; width: 100% !important; flex: 1 !important; display: flex !important; }
-    .pxf-titlebar { display: flex !important; z-index: 1000001 !important; }
     .pxf-workspace { flex: 1 !important; position: relative !important; background: #000 !important; }
 
     #pixaroma-save-toast {
         position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%);
         background: #10b981; color: white; padding: 0.75rem 1.5rem; border-radius: 9999px;
-        font-weight: 600; z-index: 1000002; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        display: none; animation: toast-in 0.3s ease-out;
+        font-weight: 600; z-index: 1000002; display: none; animation: toast-in 0.3s ease-out;
     }
     @keyframes toast-in { from { bottom: 0; opacity: 0; } to { bottom: 2rem; opacity: 1; } }
-
-    @font-face { font-family: 'Pixaroma'; src: url('/pixaroma/assets/fonts/pixaroma.woff2') format('woff2'); }
 `;
 document.head.appendChild(style);
 
@@ -57,45 +55,32 @@ function showToast() {
 // Robust Mock for ComfyUI environment
 window.app = window.app || {
     registerExtension: (ext) => {
-        console.log("[Shim] Extension Registered:", ext.name);
+        console.log("[Shim] Registered:", ext.name);
         window._pixaroma_extensions[ext.name] = ext;
     },
     ui: { settings: { getSettingValue: (id) => JSON.parse(localStorage.getItem('pixaroma_settings') || '{}')[id] || null } },
     api_base: window.location.origin,
     graph: {
         serialize: () => ({ nodes: window._pixaroma_active_node ? [window._pixaroma_active_node] : [] }),
-        getNodeById: (id) => (window._pixaroma_active_node && (window._pixaroma_active_node.id == id || window._pixaroma_active_node.id === String(id))) ? window._pixaroma_active_node : null,
-        _nodes: [], _groups: []
-    },
-    canvas: { setDirty: () => {}, draw: () => {} }
+        getNodeById: (id) => (window._pixaroma_active_node && String(window._pixaroma_active_node.id) === String(id)) ? window._pixaroma_active_node : null
+    }
 };
 
 window.ComfyApp = window.ComfyApp || window.app;
-
-window.api = window.api || {
-    api_base: '',
-    fetchApi: async (route, options) => fetch(route.startsWith('/') ? route : `/${route}`, options)
-};
-
-window.LGraphCanvas = window.LGraphCanvas || function() {};
-window.LGraphCanvas.prototype = { setDirty: () => {}, draw: () => {} };
-
+window.api = window.api || { fetchApi: (r, o) => fetch(r.startsWith('/') ? r : `/${r}`, o) };
 window.LiteGraph = window.LiteGraph || {
     NODE_TITLE_HEIGHT: 30, registerNodeType: () => {},
     createNode: () => ({ widgets: [], addWidget: () => ({}) }),
-    LGraph: function() {
-        this._nodes = [];
-        this.add = (n) => { if (n) { n.graph = this; this._nodes.push(n); } };
-        this.getNodeById = (id) => this._nodes.find(n => n.id == id || n.id === String(id));
-    }
+    LGraph: function() { this._nodes = []; this.add = (n) => { n.graph = this; this._nodes.push(n); }; this.getNodeById = (id) => this._nodes.find(n => String(n.id) === String(id)); }
 };
 
 let activeEditorCallback = null;
 
 export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) {
     const sid = String(nodeId);
-    console.log(`[Shim] Open Request: ${nodeType} (Node ${sid})`);
+    console.log(`[Shim] Open Request for Node ${sid} (${nodeType})`);
     activeEditorCallback = onSave;
+    window._pixaroma_active_node_id = sid; // Global tag for hijacked methods
 
     await loadPixaromaExtension(nodeType);
 
@@ -108,37 +93,40 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
 
     let parsedData = initialData;
     if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
-        try { parsedData = JSON.parse(initialData); } catch(e) { console.error("[Shim] Parse Error", e); }
+        try { parsedData = JSON.parse(initialData); } catch(e) {}
     }
 
-    // Ensure we have data for this node in the session
-    if (!window._pixaroma_node_data.has(sid) || !window._pixaroma_node_data.get(sid)) {
-        window._pixaroma_node_data.set(sid, parsedData);
-    }
-
-    const finalTruthData = window._pixaroma_node_data.get(sid);
+    // Ensure session truth is set from initial load if not already there
+    if (!window._pixaroma_node_data.has(sid)) window._pixaroma_node_data.set(sid, parsedData);
+    const sessionData = window._pixaroma_node_data.get(sid);
 
     if (OriginalClass && !OriginalClass._hijacked) {
         const origOpen = OriginalClass.prototype.open;
         OriginalClass.prototype.open = function(data) {
-            // Priority: Session Map > Passed Data > Initial Data
-            const currentData = window._pixaroma_node_data.get(this._nodeId);
-            const openData = (currentData && Object.keys(currentData).length > 0) ? currentData : (data || finalTruthData);
+            // FIX: Always prioritize the global session truth for the active node ID
+            const targetId = window._pixaroma_active_node_id;
+            const latestData = window._pixaroma_node_data.get(targetId);
+            const openData = (latestData && Object.keys(latestData).length > 0) ? latestData : (data || sessionData);
 
-            console.log(`[Shim] ${editorClassName}.open() - Applying Data:`, typeof openData, openData);
+            console.log(`[Shim] ${editorClassName}.open() - Applying Data for Node ${targetId}:`, openData);
+
+            // Re-apply nodeId to the instance for onSave context
+            this._nodeId = targetId;
 
             let internalOnSave = null;
             Object.defineProperty(this, 'onSave', {
                 get: () => (jsonStr, dataURL) => {
-                    console.log(`[Shim] ${editorClassName} Save for Node ${this._nodeId}`);
+                    const saveId = this._nodeId || window._pixaroma_active_node_id;
+                    console.log(`[Shim] Save Captured for Node ${saveId}`);
                     try {
-                        const savedObj = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
-                        window._pixaroma_node_data.set(this._nodeId, savedObj);
-                    } catch(e) { window._pixaroma_node_data.set(this._nodeId, jsonStr); }
+                        const saved = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+                        window._pixaroma_node_data.set(saveId, saved);
+                    } catch(e) { window._pixaroma_node_data.set(saveId, jsonStr); }
 
                     showToast();
                     if (internalOnSave) internalOnSave.call(this, jsonStr, dataURL);
                     if (activeEditorCallback) activeEditorCallback(jsonStr, dataURL);
+
                     if (typeof this.unmount === 'function') this.unmount();
                     else if (typeof this.close === 'function') this.close();
                 },
@@ -159,26 +147,19 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
         properties: {},
         flags: {},
         size: [300, 300],
-        get widgets_values() {
-            const data = window._pixaroma_node_data.get(this.id);
-            return this.widgets.map(w => {
-                const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(w.name);
-                return (isStateWidget && data) ? data : w.value;
-            });
-        },
-        serialize: function() { return { widgets_values: this.widgets_values }; },
+        serialize: function() { return { widgets_values: this.widgets.map(w => w.value) }; },
         addWidget: function(type, name, value, callback, options) {
             const data = window._pixaroma_node_data.get(this.id);
-            const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(name);
-            const finalValue = (isStateWidget && data) ? data : value;
+            const isTarget = name.toLowerCase().includes('widget') || name.toLowerCase().includes('scene') || name.toLowerCase().includes('paint') || name.toLowerCase().includes('compare');
+            const finalValue = isTarget ? (data || value) : value;
             const w = { type, name, value: finalValue || '', callback, options };
             this.widgets.push(w);
             return w;
         },
         addDOMWidget: function(name, type, element, options) {
             const data = window._pixaroma_node_data.get(this.id);
-            const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(name);
-            const finalValue = (isStateWidget && data) ? data : initialData;
+            const isTarget = name.toLowerCase().includes('widget') || name.toLowerCase().includes('scene') || name.toLowerCase().includes('paint') || name.toLowerCase().includes('compare');
+            const finalValue = isTarget ? (data || initialData) : initialData;
             const w = { name, type, element, options, value: finalValue };
             this.widgets.push(w);
             return w;
@@ -188,64 +169,58 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
     };
 
     window._pixaroma_active_node = mockNode;
-    window.app.graph._nodes = [mockNode];
-
     if (ext.nodeCreated) await ext.nodeCreated(mockNode);
 
-    // Deep sync widgets with current truth
+    // Sync widgets again
     mockNode.widgets.forEach(w => {
-        const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(w.name);
         const data = window._pixaroma_node_data.get(sid);
-        if (isStateWidget && data) {
-            console.log(`[Shim] Widget ${w.name} value synced to:`, data);
+        if ((w.name.toLowerCase().includes('widget') || w.name.toLowerCase().includes('scene') || w.name.toLowerCase().includes('paint')) && data) {
             w.value = data;
-            if (typeof w.callback === 'function') w.callback.call(mockNode, data);
+            if (typeof w.callback === 'function') w.callback.call(mockNode, data, mockNode);
         }
     });
 
     const openButton = mockNode.widgets.find(w => w.type === 'button' && (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor')));
     if (openButton && typeof openButton.callback === 'function') {
-        const OriginalClass = window._pixaroma_classes[editorClassName];
-        if (OriginalClass) {
-            const oldProtoOpen = OriginalClass.prototype.open;
-            OriginalClass.prototype.open = function(d) {
-                this._nodeId = sid;
-                return oldProtoOpen.call(this, d);
-            };
-        }
-
         setTimeout(() => {
-            console.log(`[Shim] Triggering Open for ${sid}`);
-            openButton.callback.call(mockNode, mockNode);
-        }, 200);
+            console.log(`[Shim] Triggering Callback for Node ${sid}`);
+            openButton.callback.call(mockNode, openButton, mockNode);
+        }, 500); // 500ms delay to ensure heavy UI extensions like 3D Builder are fully ready
     } else {
         throw new Error(`Trigger button not found for ${nodeType}`);
     }
 }
 
 function getExtensionName(nodeType) {
-    const map = { 'Pixaroma3D': 'Pixaroma.3DEditor', 'PixaromaPaint': 'Pixaroma.PaintEditor', 'PixaromaImageComposition': 'Pixaroma.ComposerEditor', 'PixaromaCrop': 'Pixaroma.CropEditor' };
+    const map = {
+        Pixaroma3D: 'Pixaroma.3DEditor', PixaromaPaint: 'Pixaroma.PaintEditor',
+        PixaromaImageComposition: 'Pixaroma.ComposerEditor', PixaromaCrop: 'Pixaroma.CropEditor',
+        PixaromaImageCompare: 'Pixaroma.CompareEditor', Pixaroma3DBuilder: 'Pixaroma.3DBuilder'
+    };
     return map[nodeType] || '';
 }
 
 function getEditorClass(nodeType) {
-    const map = { 'Pixaroma3D': 'Pixaroma3DEditor', 'PixaromaPaint': 'PixaromaPaintEditor', 'PixaromaImageComposition': 'PixaromaComposerEditor', 'PixaromaCrop': 'PixaromaCropEditor' };
+    const map = {
+        Pixaroma3D: 'Pixaroma3DEditor', PixaromaPaint: 'PixaromaPaintEditor',
+        PixaromaImageComposition: 'PixaromaComposerEditor', PixaromaCrop: 'PixaromaCropEditor',
+        PixaromaImageCompare: 'PixaromaCompareEditor', Pixaroma3DBuilder: 'Pixaroma3DBuilder'
+    };
     return map[nodeType] || '';
 }
 
 async function loadPixaromaExtension(nodeType) {
     const extName = getExtensionName(nodeType);
     if (window._pixaroma_extensions[extName]) return;
-
     const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
     const editorClassName = getEditorClass(nodeType);
     const sub = nodeType.replace('Pixaroma', '').toLowerCase();
-    const subFolder = sub === 'imagecomposition' ? 'composer' : sub;
+    const folderMap = { '3d': '3d', 'paint': 'paint', 'imagecomposition': 'composer', 'crop': 'crop', 'imagecompare': 'compare', '3dbuilder': '3d' };
+    const subFolder = folderMap[sub] || sub;
 
-    const errors = [];
     for (const v of variants) {
         const base = `/extensions/${v}/js/${subFolder}/`;
-        const paths = [ `${base}index.js`, `${base}index.mjs`, `/pixaroma/assets/${subFolder}/index.js` ];
+        const paths = [`${base}index.js`, `${base}index.mjs`, `/pixaroma/assets/${subFolder}/index.js`, `/extensions/${v}/js/pixaroma_${subFolder}.js` ];
         for (const p of paths) {
             try {
                 const module = await import(p);
@@ -254,9 +229,8 @@ async function loadPixaromaExtension(nodeType) {
                     window[editorClassName] = module[editorClassName];
                     return;
                 }
-            } catch (e) { errors.push(`${p}: ${e.message}`); }
+            } catch (e) {}
         }
     }
-    console.error("[Shim] Module load failed:", errors);
     throw new Error(`Failed to load module for ${nodeType}`);
 }
