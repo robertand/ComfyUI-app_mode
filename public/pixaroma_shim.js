@@ -9,20 +9,42 @@ window._pixaroma_classes = {};
 const style = document.createElement('style');
 style.textContent = `
     /* Force Pixaroma overlays to be fixed and high z-index */
-    .pxf-editor-overlay, .pixaroma-3d-editor, .pixaroma-paint-editor,
+    .pxf-overlay, .pxf-editor-overlay, .pixaroma-3d-editor, .pixaroma-paint-editor,
     .pixaroma-composer-editor, .pixaroma-crop-editor {
         position: fixed !important;
         inset: 0 !important;
-        z-index: 9999 !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        z-index: 999999 !important; /* Extremely high */
         background: #0f172a !important;
         display: flex !important;
         flex-direction: column !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+        pointer-events: auto !important;
+        width: 100vw !important;
+        height: 100vh !important;
     }
 
     /* Ensure the editor layout takes full space */
-    .pxf-editor-layout {
-        height: 100vh !important;
-        width: 100vw !important;
+    .pxf-editor-layout, .pxf-body {
+        height: 100% !important;
+        width: 100% !important;
+        flex: 1 !important;
+        display: flex !important;
+    }
+
+    .pxf-titlebar {
+        display: flex !important;
+        z-index: 1000001 !important;
+    }
+
+    .pxf-workspace {
+        flex: 1 !important;
+        position: relative !important;
+        background: #000 !important;
     }
 
     /* Fix for potential missing fonts/icons */
@@ -33,8 +55,49 @@ style.textContent = `
 `;
 document.head.appendChild(style);
 
+// Robust Mock for ComfyUI environment
+window.app = window.app || {
+    registerExtension: (ext) => {
+        console.log("Shim: registered extension", ext.name);
+        window._pixaroma_extensions[ext.name] = ext;
+    },
+    ui: {
+        settings: {
+            getSettingValue: (id) => {
+                const s = JSON.parse(localStorage.getItem('pixaroma_settings') || '{}');
+                return s[id] || null;
+            }
+        }
+    },
+    graph: {
+        serialize: () => ({}),
+        getNodeById: (id) => null,
+        _nodes: []
+    },
+    canvas: {
+        setDirty: () => {}
+    }
+};
+
+window.LGraphCanvas = window.LGraphCanvas || {
+    prototype: {
+        setDirty: () => {}
+    }
+};
+
+window.LiteGraph = window.LiteGraph || {
+    NODE_TITLE_HEIGHT: 30,
+    registerNodeType: () => {}
+};
+
+// Global interceptor for editor opening
+let activeEditorCallback = null;
+
 export async function openPixaromaEditor(nodeType, initialData, onSave) {
     console.log(`Opening Pixaroma Editor for ${nodeType}`);
+
+    // Store callback globally for interception
+    activeEditorCallback = onSave;
 
     // 1. Ensure the editor extension is loaded
     await loadPixaromaExtension(nodeType);
@@ -46,12 +109,56 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
         throw new Error(`Extension ${extName} not found for node type ${nodeType}`);
     }
 
+    // Hijack prototype.open before we do anything
+    const editorClassName = getEditorClass(nodeType);
+    const OriginalClass = window._pixaroma_classes[editorClassName];
+
+    if (OriginalClass && !OriginalClass._hijacked) {
+        const origOpen = OriginalClass.prototype.open;
+        OriginalClass.prototype.open = function(data) {
+            console.log(`${editorClassName}.open() hijacked`);
+
+            // Ensure onSave is hijacked on this instance
+            let internalOnSave = null;
+            Object.defineProperty(this, 'onSave', {
+                get: () => {
+                    return (jsonStr, dataURL) => {
+                        console.log(`${editorClassName} triggered onSave`);
+                        if (internalOnSave) internalOnSave.call(this, jsonStr, dataURL);
+                        if (activeEditorCallback) activeEditorCallback(jsonStr, dataURL);
+                        if (typeof this.unmount === 'function') this.unmount();
+                        else if (typeof this.close === 'function') this.close();
+                    };
+                },
+                set: (val) => {
+                    internalOnSave = val;
+                },
+                configurable: true
+            });
+
+            const dataToOpen = initialData || data;
+            return origOpen.call(this, dataToOpen);
+        };
+        OriginalClass._hijacked = true;
+    }
+
     // 2. Mock a ComfyUI node
     const mockNode = {
         comfyClass: nodeType,
         widgets: [],
+        type: nodeType,
+        id: 1,
+        properties: {},
+        size: [300, 300],
+        serialize: function() { return { widgets_values: this.widgets.map(w => w.value) }; },
         addWidget: function(type, name, value, callback, options) {
-            const w = { type, name, value, callback, options };
+            const w = {
+                type,
+                name,
+                value: (name === 'SceneWidget' || name === 'PaintWidget' || name === 'ComposerWidget' || name === 'CropWidget') ? initialData : value,
+                callback,
+                options
+            };
             this.widgets.push(w);
             return w;
         },
@@ -60,7 +167,7 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
             this.widgets.push(w);
             return w;
         },
-        setDirtyCanvas: () => {},
+        setDirtyCanvas: () => { console.log("Canvas set dirty"); },
         onRemoved: () => {}
     };
 
@@ -70,68 +177,12 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
     }
 
     // 4. Find the "Open" button widget and trigger it
-    const openButton = mockNode.widgets.find(w => w.type === 'button' && w.name.startsWith('Open'));
+    const openButton = mockNode.widgets.find(w => w.type === 'button' && (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor')));
     if (openButton && typeof openButton.callback === 'function') {
-
-        const originalCallback = openButton.callback;
-        openButton.callback = function() {
-            const editorClassName = getEditorClass(nodeType);
-            const OriginalClass = window._pixaroma_classes[editorClassName];
-
-            if (OriginalClass) {
-                // Temporary wrapper to intercept constructor and onSave
-                const Wrapper = function(...args) {
-                    const instance = new OriginalClass(...args);
-
-                    // Use defineProperty to ensure we catch internal assignments to onSave
-                    let internalOnSave = null;
-                    Object.defineProperty(instance, 'onSave', {
-                        get: () => {
-                            return function(jsonStr, dataURL) {
-                                if (internalOnSave) internalOnSave.apply(instance, arguments);
-                                onSave(jsonStr, dataURL);
-                                // Automatically close after save? Usually yes for full-screen editors
-                                if (typeof instance.close === 'function') instance.close();
-                            };
-                        },
-                        set: (val) => {
-                            internalOnSave = val;
-                        },
-                        configurable: true
-                    });
-
-                    // Wrap open method to pass initial data
-                    const originalOpen = instance.open;
-                    instance.open = function(data) {
-                        const dataToOpen = initialData || data;
-                        console.log("Calling Pixaroma open() with data", dataToOpen);
-                        return originalOpen.call(instance, dataToOpen);
-                    };
-
-                    return instance;
-                };
-                Wrapper.prototype = OriginalClass.prototype;
-
-                // Inject into window for the duration of the callback
-                window[editorClassName] = Wrapper;
-            }
-
-            try {
-                originalCallback.apply(this, arguments);
-            } finally {
-                // Restore original class
-                if (OriginalClass) {
-                    // We don't restore immediately because the open() call might be async or delayed
-                    // but Pixaroma's open() usually happens synchronously in the callback.
-                    setTimeout(() => {
-                        window[editorClassName] = OriginalClass;
-                    }, 100);
-                }
-            }
-        };
-
-        openButton.callback();
+        console.log("Triggering Pixaroma button callback");
+        openButton.callback.call(mockNode, mockNode);
     } else {
+        console.error("Available widgets:", mockNode.widgets);
         throw new Error(`Could not find Open button for Pixaroma node ${nodeType}`);
     }
 }
@@ -172,11 +223,9 @@ async function loadPixaromaExtension(nodeType) {
         console.log(`Loading Pixaroma module: ${modulePath}`);
         try {
             const module = await import(modulePath);
-            // Capture classes from module exports
             const editorClassName = getEditorClass(nodeType);
             if (module[editorClassName]) {
                 window._pixaroma_classes[editorClassName] = module[editorClassName];
-                // Also put on window temporarily as some scripts might expect it there
                 window[editorClassName] = module[editorClassName];
             }
         } catch (e) {

@@ -495,6 +495,11 @@ function analyzeWorkflow(workflowJson) {
                         inputName.toLowerCase().includes('file') || inputName === 'filename')) {
                         continue;
                     }
+
+                    // Sărim peste butoanele de "Open" pentru Pixaroma (le gestionăm special)
+                    if (nodeType.startsWith('Pixaroma') && inputName.startsWith('Open')) {
+                        continue;
+                    }
                     
                     // Determinăm tipul valorii
                     let valueType = 'text';
@@ -660,15 +665,46 @@ async function proxyToComfy(req, res) {
         console.log(`Proxying to ComfyUI: ${url}`);
 
         let response = await fetch(url, fetchOptions);
+        console.log(`Response Status: ${response.status} for ${url}`);
 
         // Fallback for Pixaroma assets
-        if (response.status === 404 && targetPath.startsWith('/pixaroma/')) {
-            const fallbackPath = targetPath.replace('/pixaroma/', '/extensions/ComfyUI-Pixaroma/');
-            console.log(`404 on /pixaroma/, trying fallback: ${fallbackPath}`);
-            const fallbackUrl = `${targetInstance}${fallbackPath}`;
-            const fbResponse = await fetch(fallbackUrl, fetchOptions);
-            if (fbResponse.ok) {
-                response = fbResponse;
+        if (response.status === 404 && targetPath.includes('pixaroma')) {
+            const baseVariants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma'];
+            const fallbacks = [];
+
+            for (const variant of baseVariants) {
+                const extBase = `/extensions/${variant}/`;
+                fallbacks.push(
+                    targetPath.replace('/pixaroma/assets/', extBase + 'js/'),
+                    targetPath.replace('/pixaroma/js/', extBase + 'js/'),
+                    targetPath.replace('/pixaroma/', extBase + 'js/'),
+                    targetPath.replace('/pixaroma/', extBase),
+                    targetPath.replace('/pixaroma/assets/', extBase + 'assets/')
+                );
+
+                // Add specific mappings for .js files in root extensions folder
+                if (targetPath.endsWith('.js') || targetPath.endsWith('.mjs')) {
+                    const filename = targetPath.split('/').pop();
+                    fallbacks.push(extBase + filename);
+                }
+            }
+
+            // Deduplicate and filter
+            const uniqueFallbacks = [...new Set(fallbacks)].filter(f => f !== targetPath);
+
+            for (const fbPath of uniqueFallbacks) {
+                console.log(`Trying fallback: ${fbPath}`);
+                const fbUrl = `${targetInstance}${fbPath}`;
+                try {
+                    const fbResponse = await fetch(fbUrl, fetchOptions);
+                    if (fbResponse.ok) {
+                        console.log(`Fallback SUCCESS: ${fbUrl}`);
+                        response = fbResponse;
+                        break;
+                    }
+                } catch (e) {
+                    console.error(`Fallback failed for ${fbUrl}:`, e.message);
+                }
             }
         }
 
@@ -698,8 +734,8 @@ const publicApp = express();
 // Routes for Pixaroma assets and API
 adminApp.all('/pixaroma/*', proxyToComfy);
 publicApp.all('/pixaroma/*', proxyToComfy);
-adminApp.all('/extensions/ComfyUI-Pixaroma/*', proxyToComfy);
-publicApp.all('/extensions/ComfyUI-Pixaroma/*', proxyToComfy);
+adminApp.all('/extensions/*', proxyToComfy);
+publicApp.all('/extensions/*', proxyToComfy);
 
 // Route for ComfyUI view (previews)
 adminApp.all('/view', proxyToComfy);
@@ -727,6 +763,25 @@ export const app = {
 adminApp.get('/scripts/app.js', (req, res) => {
     res.setHeader('Content-Type', 'application/javascript');
     res.send(appShim);
+});
+
+const apiShim = `
+export const api = {
+    fetchApi: async (route, options) => {
+        const res = await fetch(route, options);
+        return res;
+    }
+};
+`;
+
+adminApp.get('/scripts/api.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.send(apiShim);
+});
+
+publicApp.get('/scripts/api.js', (req, res) => {
+    res.setHeader('Content-Type', 'application/javascript');
+    res.send(apiShim);
 });
 
 publicApp.get('/scripts/app.js', (req, res) => {
