@@ -170,7 +170,7 @@ function renderLiveUI() {
                     if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
                         try { initialData = JSON.parse(initialData); } catch(e) {}
                     }
-                    window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr, dataURL) => {
+                    window.openPixaromaEditor(obj.data.nodeType, obj.data.nodeId, initialData, async (jsonStr, dataURL) => {
                         const finalValue = typeof jsonStr === 'object' ? JSON.stringify(jsonStr) : jsonStr;
                         parameters[key] = finalValue;
                         if (dataURL) {

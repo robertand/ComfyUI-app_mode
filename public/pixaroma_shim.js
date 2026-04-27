@@ -5,7 +5,7 @@
 window._pixaroma_extensions = {};
 window._pixaroma_classes = {};
 window._pixaroma_active_node = null;
-window._pixaroma_current_data = null;
+window._pixaroma_node_data = new Map(); // Store state by node ID
 
 // Inject standard ComfyUI and Pixaroma CSS variables
 const style = document.createElement('style');
@@ -64,7 +64,7 @@ window.app = window.app || {
     api_base: window.location.origin,
     graph: {
         serialize: () => ({}),
-        getNodeById: (id) => (window._pixaroma_active_node && window._pixaroma_active_node.id === id) ? window._pixaroma_active_node : null,
+        getNodeById: (id) => (window._pixaroma_active_node && window._pixaroma_active_node.id == id) ? window._pixaroma_active_node : null,
         _nodes: [], _groups: []
     },
     canvas: { setDirty: () => {}, draw: () => {} }
@@ -86,14 +86,14 @@ window.LiteGraph = window.LiteGraph || {
     LGraph: function() {
         this._nodes = [];
         this.add = (n) => { if (n) { n.graph = this; this._nodes.push(n); } };
-        this.getNodeById = (id) => this._nodes.find(n => n.id === id);
+        this.getNodeById = (id) => this._nodes.find(n => n.id == id);
     }
 };
 
 let activeEditorCallback = null;
 
-export async function openPixaromaEditor(nodeType, initialData, onSave) {
-    console.log(`[Shim] Opening Editor: ${nodeType}`);
+export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) {
+    console.log(`[Shim] Opening Editor: ${nodeType} (Node ${nodeId})`);
     activeEditorCallback = onSave;
 
     await loadPixaromaExtension(nodeType);
@@ -110,27 +110,36 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
         try { parsedData = JSON.parse(initialData); } catch(e) { console.error("[Shim] JSON Parse Error", e); }
     }
 
-    window._pixaroma_current_data = parsedData;
+    // Store parsed data for this node if not already present in session
+    if (!window._pixaroma_node_data.has(nodeId)) {
+        window._pixaroma_node_data.set(nodeId, parsedData);
+    }
+
+    const finalTruthData = window._pixaroma_node_data.get(nodeId);
+    console.log(`[Shim] Final truth data for open:`, typeof finalTruthData, finalTruthData);
 
     if (OriginalClass && !OriginalClass._hijacked) {
         const origOpen = OriginalClass.prototype.open;
         OriginalClass.prototype.open = function(data) {
-            // FIX: Prioritize global state. If we just saved and reopen, window._pixaroma_current_data is the only source of truth.
-            const finalData = (window._pixaroma_current_data && Object.keys(window._pixaroma_current_data).length > 0)
-                ? window._pixaroma_current_data
-                : (data || parsedData);
+            // Re-fetch current data from global map in case multiple opens happen
+            // Prioritize what's currently in window._pixaroma_node_data[this._nodeId]
+            const currentData = window._pixaroma_node_data.get(this._nodeId);
+            const openData = (currentData && Object.keys(currentData).length > 0) ? currentData : (data || finalTruthData);
 
-            console.log(`[Shim] ${editorClassName}.open() called with data:`, finalData);
+            console.log(`[Shim] ${editorClassName}.open() called with:`, openData);
 
             let internalOnSave = null;
             Object.defineProperty(this, 'onSave', {
                 get: () => (jsonStr, dataURL) => {
-                    console.log(`[Shim] ${editorClassName} Save Captured`);
+                    console.log(`[Shim] ${editorClassName} Save Captured for Node ${this._nodeId}`);
 
-                    // Update session state immediately so reopen works even if server sync is slow
+                    // Capture latest data specifically for this node
                     try {
-                        window._pixaroma_current_data = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
-                    } catch(e) { window._pixaroma_current_data = jsonStr; }
+                        const savedData = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+                        window._pixaroma_node_data.set(this._nodeId, savedData);
+                    } catch(e) {
+                        window._pixaroma_node_data.set(this._nodeId, jsonStr);
+                    }
 
                     showToast();
                     if (internalOnSave) internalOnSave.call(this, jsonStr, dataURL);
@@ -142,7 +151,7 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
                 configurable: true
             });
 
-            return origOpen.call(this, finalData);
+            return origOpen.call(this, openData);
         };
         OriginalClass._hijacked = true;
     }
@@ -151,26 +160,29 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
         comfyClass: nodeType,
         widgets: [],
         type: nodeType,
-        id: 999,
+        id: nodeId,
         properties: {},
         size: [300, 300],
         get widgets_values() {
+            const data = window._pixaroma_node_data.get(this.id);
             return this.widgets.map(w => {
                 const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(w.name);
-                return (isStateWidget && window._pixaroma_current_data) ? window._pixaroma_current_data : w.value;
+                return (isStateWidget && data) ? data : w.value;
             });
         },
         serialize: function() { return { widgets_values: this.widgets_values }; },
         addWidget: function(type, name, value, callback, options) {
+            const data = window._pixaroma_node_data.get(this.id);
             const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(name);
-            const finalValue = (isStateWidget && window._pixaroma_current_data) ? window._pixaroma_current_data : value;
+            const finalValue = (isStateWidget && data) ? data : value;
             const w = { type, name, value: finalValue || '', callback, options };
             this.widgets.push(w);
             return w;
         },
         addDOMWidget: function(name, type, element, options) {
+            const data = window._pixaroma_node_data.get(this.id);
             const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(name);
-            const finalValue = (isStateWidget && window._pixaroma_current_data) ? window._pixaroma_current_data : initialData;
+            const finalValue = (isStateWidget && data) ? data : initialData;
             const w = { name, type, element, options, value: finalValue };
             this.widgets.push(w);
             return w;
@@ -184,21 +196,32 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
 
     if (ext.nodeCreated) await ext.nodeCreated(mockNode);
 
-    // Sync widgets again
+    // Deep sync widgets with current data after creation
     mockNode.widgets.forEach(w => {
         const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(w.name);
-        if (isStateWidget && window._pixaroma_current_data) {
-            w.value = window._pixaroma_current_data;
-            if (typeof w.callback === 'function') w.callback.call(mockNode, window._pixaroma_current_data);
+        const data = window._pixaroma_node_data.get(nodeId);
+        if (isStateWidget && data) {
+            console.log(`[Shim] Syncing widget ${w.name}`);
+            w.value = data;
+            if (typeof w.callback === 'function') w.callback.call(mockNode, data);
         }
     });
 
     const openButton = mockNode.widgets.find(w => w.type === 'button' && (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor')));
     if (openButton && typeof openButton.callback === 'function') {
-        // Ensure the editor opens with the latest data
+        const OriginalClass = window._pixaroma_classes[editorClassName];
+        if (OriginalClass) {
+            const oldProtoOpen = OriginalClass.prototype.open;
+            OriginalClass.prototype.open = function(d) {
+                this._nodeId = nodeId; // Set node ID on instance
+                return oldProtoOpen.call(this, d);
+            };
+        }
+
+        // Delay more to ensure constructor finishes if it was triggered by nodeCreated
         setTimeout(() => {
             openButton.callback.call(mockNode, mockNode);
-        }, 50);
+        }, 200);
     } else {
         throw new Error(`Trigger button not found for ${nodeType}`);
     }
