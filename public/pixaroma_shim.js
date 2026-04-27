@@ -93,7 +93,7 @@ window.LiteGraph = window.LiteGraph || {
 let activeEditorCallback = null;
 
 export async function openPixaromaEditor(nodeType, initialData, onSave) {
-    console.log(`[Shim] Opening Editor: ${nodeType} with initialData:`, initialData);
+    console.log(`[Shim] Opening Editor: ${nodeType}`);
     activeEditorCallback = onSave;
 
     await loadPixaromaExtension(nodeType);
@@ -115,14 +115,23 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
     if (OriginalClass && !OriginalClass._hijacked) {
         const origOpen = OriginalClass.prototype.open;
         OriginalClass.prototype.open = function(data) {
-            // Priority: window._pixaroma_current_data (latest) > data (passed by logic)
-            const finalData = (window._pixaroma_current_data) ? window._pixaroma_current_data : data;
-            console.log(`[Shim] ${editorClassName}.open() called with:`, finalData);
+            // FIX: Prioritize global state. If we just saved and reopen, window._pixaroma_current_data is the only source of truth.
+            const finalData = (window._pixaroma_current_data && Object.keys(window._pixaroma_current_data).length > 0)
+                ? window._pixaroma_current_data
+                : (data || parsedData);
+
+            console.log(`[Shim] ${editorClassName}.open() called with data:`, finalData);
 
             let internalOnSave = null;
             Object.defineProperty(this, 'onSave', {
                 get: () => (jsonStr, dataURL) => {
                     console.log(`[Shim] ${editorClassName} Save Captured`);
+
+                    // Update session state immediately so reopen works even if server sync is slow
+                    try {
+                        window._pixaroma_current_data = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+                    } catch(e) { window._pixaroma_current_data = jsonStr; }
+
                     showToast();
                     if (internalOnSave) internalOnSave.call(this, jsonStr, dataURL);
                     if (activeEditorCallback) activeEditorCallback(jsonStr, dataURL);
@@ -132,6 +141,7 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
                 set: (val) => { internalOnSave = val; },
                 configurable: true
             });
+
             return origOpen.call(this, finalData);
         };
         OriginalClass._hijacked = true;
@@ -174,11 +184,10 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
 
     if (ext.nodeCreated) await ext.nodeCreated(mockNode);
 
-    // Deep sync widgets with current data after creation
+    // Sync widgets again
     mockNode.widgets.forEach(w => {
         const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(w.name);
         if (isStateWidget && window._pixaroma_current_data) {
-            console.log(`[Shim] Syncing widget ${w.name}`);
             w.value = window._pixaroma_current_data;
             if (typeof w.callback === 'function') w.callback.call(mockNode, window._pixaroma_current_data);
         }
@@ -186,7 +195,10 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
 
     const openButton = mockNode.widgets.find(w => w.type === 'button' && (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor')));
     if (openButton && typeof openButton.callback === 'function') {
-        openButton.callback.call(mockNode, mockNode);
+        // Ensure the editor opens with the latest data
+        setTimeout(() => {
+            openButton.callback.call(mockNode, mockNode);
+        }, 50);
     } else {
         throw new Error(`Trigger button not found for ${nodeType}`);
     }

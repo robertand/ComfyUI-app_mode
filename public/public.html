@@ -187,6 +187,7 @@
     <script>
         let currentWorkflow = null;
         let currentWorkflowId = null;
+        window._pixaroma_session_previews = {};
         window.mediaFiles = {};
         let mediaFiles = window.mediaFiles;
         let parameters = {};
@@ -295,7 +296,11 @@
                     const div = document.createElement('div');
                     div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
 
+                    const preview = window._pixaroma_session_previews[key] || '';
                     div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div>
+                    <div id="preview-pixaroma-${key}" class="w-full aspect-video bg-slate-900 rounded-lg border border-slate-700 mb-4 overflow-hidden flex items-center justify-center ${preview ? '' : 'hidden'}">
+                        <img src="${preview}" class="w-full h-full object-contain">
+                    </div>
                     <button id="btn-editor-${key}" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-indigo-500/20 ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
                         <i data-lucide="layout" class="w-5 h-5"></i>
                         <span>Open ${label}</span>
@@ -305,38 +310,36 @@
                     const btn = div.querySelector(`#btn-editor-${key}`);
                     btn.onclick = () => {
                         if (window.openPixaromaEditor) {
-                            // FIX: Use originalValues from workflow if parameters[key] is not yet set
                             let initialData = parameters[key] !== undefined ? parameters[key] : (currentWorkflow.originalValues && currentWorkflow.originalValues[key] !== undefined ? currentWorkflow.originalValues[key] : obj.data.defaultValue);
-
                             if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
                                 try { initialData = JSON.parse(initialData); } catch(e) {}
                             }
-                            window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr) => {
-                                // Crucial: Update local parameters immediately
+                            window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr, dataURL) => {
                                 const finalValue = typeof jsonStr === 'object' ? JSON.stringify(jsonStr) : jsonStr;
                                 parameters[key] = finalValue;
-
-                                // SYNC locally for immediate reopen
-                                if (currentWorkflow.originalValues) {
-                                    if (typeof jsonStr === 'string' && (jsonStr.startsWith('{') || jsonStr.startsWith('['))) {
-                                        try { currentWorkflow.originalValues[key] = JSON.parse(jsonStr); } catch(e) { currentWorkflow.originalValues[key] = jsonStr; }
-                                    } else {
-                                        currentWorkflow.originalValues[key] = jsonStr;
+                                if (dataURL) {
+                                    window._pixaroma_session_previews[key] = dataURL;
+                                    const prevContainer = document.getElementById(`preview-pixaroma-${key}`);
+                                    if (prevContainer) {
+                                        prevContainer.classList.remove('hidden');
+                                        prevContainer.querySelector('img').src = dataURL;
                                     }
                                 }
 
-                                console.log(`[User] Pixaroma ${obj.data.nodeType} save received. Syncing...`);
+                                if (currentWorkflow.originalValues) {
+                                    if (typeof jsonStr === 'string' && (jsonStr.startsWith('{') || jsonStr.startsWith('['))) {
+                                        try { currentWorkflow.originalValues[key] = JSON.parse(jsonStr); } catch(e) { currentWorkflow.originalValues[key] = jsonStr; }
+                                    } else { currentWorkflow.originalValues[key] = jsonStr; }
+                                }
 
+                                console.log(`[User] Pixaroma ${obj.data.nodeType} saved.`);
                                 if (currentWorkflowId) {
                                     try {
-                                        const res = await fetch('/api/workflows/save-parameters', {
+                                        await fetch('/api/workflows/save-parameters', {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
                                             body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: finalValue } })
                                         });
-                                        const data = await res.json();
-                                        if (data.success) console.log(`[User] Pixaroma data persisted and synced on server.`);
-                                        else console.error(`[User] Sync failed:`, data.error);
                                     } catch (e) { console.error(`[User] Sync error:`, e); }
                                 }
                             });

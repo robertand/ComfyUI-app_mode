@@ -1,6 +1,7 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
 let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
+window._pixaroma_session_previews = {};
 window.mediaFiles = {};
 let mediaFiles = window.mediaFiles;
 let parameters = {};
@@ -151,7 +152,11 @@ function renderLiveUI() {
 
             const curValue = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
 
+            const preview = window._pixaroma_session_previews[key] || '';
             div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'params')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div>
+            <div id="preview-pixaroma-${key}" class="w-full aspect-video bg-slate-900 rounded-lg border border-slate-700 mb-4 overflow-hidden flex items-center justify-center ${preview ? '' : 'hidden'}">
+                <img src="${preview}" class="w-full h-full object-contain">
+            </div>
             <button id="btn-editor-${key}" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-indigo-500/20 ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
                 <i data-lucide="layout" class="w-5 h-5"></i>
                 <span>Open ${label}</span>
@@ -161,37 +166,34 @@ function renderLiveUI() {
             const btn = div.querySelector(`#btn-editor-${key}`);
             btn.onclick = () => {
                 if (window.openPixaromaEditor) {
-                    // FIX: Use originalValues if parameters[key] is not yet set in this session
                     let initialData = parameters[key] !== undefined ? parameters[key] : (originalValues[key] !== undefined ? originalValues[key] : obj.data.defaultValue);
-
-                    // If it's a string from server, parse it for the shim
                     if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
                         try { initialData = JSON.parse(initialData); } catch(e) {}
                     }
-                    window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr) => {
-                        // Crucial: Update local parameters immediately
+                    window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr, dataURL) => {
                         const finalValue = typeof jsonStr === 'object' ? JSON.stringify(jsonStr) : jsonStr;
                         parameters[key] = finalValue;
-
-                        // SYNC: Update originalValues locally as well to ensure next Open uses latest data
-                        if (typeof jsonStr === 'string' && (jsonStr.startsWith('{') || jsonStr.startsWith('['))) {
-                            try { originalValues[key] = JSON.parse(jsonStr); } catch(e) { originalValues[key] = jsonStr; }
-                        } else {
-                            originalValues[key] = jsonStr;
+                        if (dataURL) {
+                            window._pixaroma_session_previews[key] = dataURL;
+                            const prevContainer = document.getElementById(`preview-pixaroma-${key}`);
+                            if (prevContainer) {
+                                prevContainer.classList.remove('hidden');
+                                prevContainer.querySelector('img').src = dataURL;
+                            }
                         }
 
-                        console.log(`[Admin] Pixaroma ${obj.data.nodeType} save received. Syncing...`);
+                        if (typeof jsonStr === 'string' && (jsonStr.startsWith('{') || jsonStr.startsWith('['))) {
+                            try { originalValues[key] = JSON.parse(jsonStr); } catch(e) { originalValues[key] = jsonStr; }
+                        } else { originalValues[key] = jsonStr; }
 
+                        console.log(`[Admin] Pixaroma ${obj.data.nodeType} saved.`);
                         if (currentWorkflowId) {
                             try {
-                                const res = await fetch('/api/workflows/save-parameters', {
+                                await fetch('/api/workflows/save-parameters', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: finalValue } })
                                 });
-                                const data = await res.json();
-                                if (data.success) console.log(`[Admin] Pixaroma data persisted and synced on server.`);
-                                else console.error(`[Admin] Sync failed:`, data.error);
                             } catch (e) { console.error(`[Admin] Sync error:`, e); }
                         }
                     });
