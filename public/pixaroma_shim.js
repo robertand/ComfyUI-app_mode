@@ -5,6 +5,34 @@
 window._pixaroma_extensions = {};
 window._pixaroma_classes = {};
 
+// Inject Pixaroma CSS to ensure it's full-screen and visible
+const style = document.createElement('style');
+style.textContent = `
+    /* Force Pixaroma overlays to be fixed and high z-index */
+    .pxf-editor-overlay, .pixaroma-3d-editor, .pixaroma-paint-editor,
+    .pixaroma-composer-editor, .pixaroma-crop-editor {
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 9999 !important;
+        background: #0f172a !important;
+        display: flex !important;
+        flex-direction: column !important;
+    }
+
+    /* Ensure the editor layout takes full space */
+    .pxf-editor-layout {
+        height: 100vh !important;
+        width: 100vw !important;
+    }
+
+    /* Fix for potential missing fonts/icons */
+    @font-face {
+        font-family: 'Pixaroma';
+        src: url('/pixaroma/assets/fonts/pixaroma.woff2') format('woff2');
+    }
+`;
+document.head.appendChild(style);
+
 export async function openPixaromaEditor(nodeType, initialData, onSave) {
     console.log(`Opening Pixaroma Editor for ${nodeType}`);
 
@@ -62,6 +90,8 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
                             return function(jsonStr, dataURL) {
                                 if (internalOnSave) internalOnSave.apply(instance, arguments);
                                 onSave(jsonStr, dataURL);
+                                // Automatically close after save? Usually yes for full-screen editors
+                                if (typeof instance.close === 'function') instance.close();
                             };
                         },
                         set: (val) => {
@@ -74,6 +104,7 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
                     const originalOpen = instance.open;
                     instance.open = function(data) {
                         const dataToOpen = initialData || data;
+                        console.log("Calling Pixaroma open() with data", dataToOpen);
                         return originalOpen.call(instance, dataToOpen);
                     };
 
@@ -89,7 +120,13 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
                 originalCallback.apply(this, arguments);
             } finally {
                 // Restore original class
-                if (OriginalClass) window[editorClassName] = OriginalClass;
+                if (OriginalClass) {
+                    // We don't restore immediately because the open() call might be async or delayed
+                    // but Pixaroma's open() usually happens synchronously in the callback.
+                    setTimeout(() => {
+                        window[editorClassName] = OriginalClass;
+                    }, 100);
+                }
             }
         };
 

@@ -635,7 +635,7 @@ adminApp.use('/output', express.static('output', {
 async function proxyToComfy(req, res) {
     try {
         const targetInstance = await getFreestInstance();
-        const url = `${targetInstance}${req.originalUrl}`;
+        let targetPath = req.originalUrl;
 
         const fetchOptions = {
             method: req.method,
@@ -646,25 +646,41 @@ async function proxyToComfy(req, res) {
         delete fetchOptions.headers.host;
 
         if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
-            fetchOptions.body = JSON.stringify(req.body);
-            fetchOptions.headers['Content-Type'] = 'application/json';
+            if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
+                fetchOptions.body = JSON.stringify(req.body);
+            } else {
+                // Handle other types if necessary, for now we assume JSON or no body
+                // For multipart/form-data, we might need a more complex proxy,
+                // but usually Pixaroma uses JSON for most things except file uploads which go to /upload/image
+                fetchOptions.body = JSON.stringify(req.body);
+            }
         }
 
-        const response = await fetch(url, fetchOptions);
+        let url = `${targetInstance}${targetPath}`;
+        console.log(`Proxying to ComfyUI: ${url}`);
+
+        let response = await fetch(url, fetchOptions);
+
+        // Fallback for Pixaroma assets
+        if (response.status === 404 && targetPath.startsWith('/pixaroma/')) {
+            const fallbackPath = targetPath.replace('/pixaroma/', '/extensions/ComfyUI-Pixaroma/');
+            console.log(`404 on /pixaroma/, trying fallback: ${fallbackPath}`);
+            const fallbackUrl = `${targetInstance}${fallbackPath}`;
+            const fbResponse = await fetch(fallbackUrl, fetchOptions);
+            if (fbResponse.ok) {
+                response = fbResponse;
+            }
+        }
 
         // Forward headers
         response.headers.forEach((value, name) => {
+            // Skip some headers that might cause issues
+            if (['content-encoding', 'content-length', 'transfer-encoding'].includes(name.toLowerCase())) return;
             res.setHeader(name, value);
         });
 
         res.status(response.status);
-        let buffer;
-        if (response.buffer) {
-            buffer = await response.buffer();
-        } else {
-            const arrayBuffer = await response.arrayBuffer();
-            buffer = Buffer.from(arrayBuffer);
-        }
+        const buffer = await response.buffer();
         res.send(buffer);
     } catch (error) {
         console.error('Proxy error:', error);
@@ -682,6 +698,8 @@ const publicApp = express();
 // Routes for Pixaroma assets and API
 adminApp.all('/pixaroma/*', proxyToComfy);
 publicApp.all('/pixaroma/*', proxyToComfy);
+adminApp.all('/extensions/ComfyUI-Pixaroma/*', proxyToComfy);
+publicApp.all('/extensions/ComfyUI-Pixaroma/*', proxyToComfy);
 
 // Route for ComfyUI view (previews)
 adminApp.all('/view', proxyToComfy);
