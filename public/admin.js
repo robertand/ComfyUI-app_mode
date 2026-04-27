@@ -1,6 +1,7 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
 let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
+window._pixaroma_session_previews = {};
 window.mediaFiles = {};
 let mediaFiles = window.mediaFiles;
 let parameters = {};
@@ -47,6 +48,27 @@ function setupWorkflow(data) {
     currentWorkflow = data.analysis;
     uiConfig = data.uiConfig;
     originalValues = data.originalValues || {};
+
+    // POPULATE SHIM WITH SAVED DATA IMMEDIATELY
+    if (window._pixaroma_node_data) {
+        Object.entries(originalValues).forEach(([key, val]) => {
+            const parts = key.split('_');
+            if (parts[0] === 'node' && parts.length >= 3) {
+                const nodeId = parts[1];
+                const inputName = parts.slice(2).join('_');
+                // Support multiple Pixaroma widget naming conventions
+                if (inputName.endsWith('Widget') || inputName.toLowerCase().includes('scene') || inputName.toLowerCase().includes('paint')) {
+                    let finalVal = val;
+                    if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+                        try { finalVal = JSON.parse(val); } catch(e) {}
+                    }
+                    window._pixaroma_node_data.set(String(nodeId), finalVal);
+                    console.log(`[Admin] Pre-populated shim for Node ${nodeId}`);
+                }
+            }
+        });
+    }
+
     window.mediaFiles = {}; mediaFiles = window.mediaFiles; parameters = {}; bypassedNodes = {};
     currentPresets = data.metadata?.presets || [];
 
@@ -138,6 +160,74 @@ function renderLiveUI() {
                 window.renderQwen3DCard(container, obj.data.nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes, (id) => toggleBypass(id, 'params'));
                 return;
             }
+        }
+
+        // Pixaroma Editor Handling
+        if (obj.type === 'param' && obj.data.valueType === 'pixaroma_editor') {
+            const isVisible = uiConfig.visibleParams[key] !== false;
+            if (!isVisible) return;
+            const isBypassed = bypassedNodes[obj.data.nodeId];
+            const label = uiConfig.inputNames?.[key] || obj.data.title;
+            const div = document.createElement('div');
+            div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
+
+            const curValue = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
+
+            const preview = window._pixaroma_session_previews[key] || '';
+            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-xs font-semibold text-slate-500 uppercase tracking-widest">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'params')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div>
+            <div id="preview-pixaroma-${key}" class="w-full aspect-video bg-slate-900 rounded-lg border border-slate-700 mb-4 overflow-hidden flex items-center justify-center ${preview ? '' : 'hidden'}">
+                <img src="${preview}" class="w-full h-full object-contain">
+            </div>
+            <button id="btn-editor-${key}" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-indigo-500/20 ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
+                <i data-lucide="layout" class="w-5 h-5"></i>
+                <span>Open ${label}</span>
+            </button>`;
+
+            container.appendChild(div);
+            const btn = div.querySelector(`#btn-editor-${key}`);
+            btn.onclick = async () => {
+                if (window.openPixaromaEditor) {
+                    let initialData = parameters[key] !== undefined ? parameters[key] : (originalValues[key] !== undefined ? originalValues[key] : obj.data.defaultValue);
+                    if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
+                        try { initialData = JSON.parse(initialData); } catch(e) {}
+                    }
+                    console.log(`[Admin] Opening editor for ${key}...`);
+                    window.openPixaromaEditor(obj.data.nodeType, obj.data.nodeId, initialData, async (jsonStr, dataURL) => {
+                        const finalValue = typeof jsonStr === 'object' ? JSON.stringify(jsonStr) : jsonStr;
+                        parameters[key] = finalValue;
+                        if (dataURL) {
+                            window._pixaroma_session_previews[key] = dataURL;
+                            const prevContainer = document.getElementById(`preview-pixaroma-${key}`);
+                            if (prevContainer) {
+                                prevContainer.classList.remove('hidden');
+                                prevContainer.querySelector('img').src = dataURL;
+                            }
+                        }
+
+                        if (typeof jsonStr === 'string' && (jsonStr.startsWith('{') || jsonStr.startsWith('['))) {
+                            try { originalValues[key] = JSON.parse(jsonStr); } catch(e) { originalValues[key] = jsonStr; }
+                        } else { originalValues[key] = jsonStr; }
+
+                        console.log(`[Admin] Pixaroma ${obj.data.nodeType} saved.`);
+                        if (currentWorkflowId) {
+                            try {
+                                await fetch('/api/workflows/save-parameters', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: finalValue } })
+                                });
+                            } catch (e) { console.error(`[Admin] Sync error:`, e); }
+                        }
+                    }).catch(e => {
+                        console.error(`[Admin] Editor error:`, e);
+                        alert(`Editor Error: ${e.message}`);
+                    });
+                } else {
+                    alert('Pixaroma Bridge not loaded');
+                }
+            };
+            initIcons();
+            return;
         }
 
         const isVisible = (obj.type === 'media' ? uiConfig.visibleInputs[key] : uiConfig.visibleParams[key]) !== false;

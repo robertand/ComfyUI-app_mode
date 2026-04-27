@@ -267,12 +267,19 @@
 
     <button id="settings-btn" class="fixed bottom-6 left-6 w-12 h-12 bg-slate-800 hover:bg-slate-700 text-white rounded-full shadow-2xl flex items-center justify-center z-50 border border-slate-700"><i data-lucide="settings" class="w-6 h-6"></i></button>
 
+    <!-- Pixaroma Host Container -->
+    <div id="pixaroma-host" class="fixed inset-0 z-[9998] pointer-events-none"></div>
+
     <div id="media-modal" class="hidden fixed inset-0 z-[200] modal-bg flex items-center justify-center p-4">
         <button id="close-modal" class="absolute top-6 right-6 p-3 bg-black/50 text-white rounded-full"><i data-lucide="x" class="w-8 h-8"></i></button>
         <div id="modal-content" class="max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center"></div>
     </div>
 
     <script src="/translations.js?v=1.0.6"></script>
+    <script type="module">
+        import { openPixaromaEditor } from '/pixaroma_shim.js';
+        window.openPixaromaEditor = openPixaromaEditor;
+    </script>
     <script src="/qwen3d.js?v=1.0.6"></script>
     <script src="/admin.js?v=1.0.6"></script>
     <script>
