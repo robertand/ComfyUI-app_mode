@@ -5,9 +5,18 @@
 window._pixaroma_extensions = {};
 window._pixaroma_classes = {};
 
-// Inject Pixaroma CSS to ensure it's full-screen and visible
+// Inject standard ComfyUI and Pixaroma CSS variables
 const style = document.createElement('style');
 style.textContent = `
+    :root {
+        --comfy-menu-bg: #1e1e1e;
+        --comfy-input-bg: #2a2a2a;
+        --comfy-text-color: #eee;
+        --bg-color: #0f172a;
+        --fg-color: #e0e0e0;
+        --border-color: #334155;
+    }
+
     /* Force Pixaroma overlays to be fixed and high z-index */
     .pxf-overlay, .pxf-editor-overlay, .pixaroma-3d-editor, .pixaroma-paint-editor,
     .pixaroma-composer-editor, .pixaroma-crop-editor {
@@ -17,7 +26,7 @@ style.textContent = `
         left: 0 !important;
         right: 0 !important;
         bottom: 0 !important;
-        z-index: 999999 !important; /* Extremely high */
+        z-index: 999999 !important;
         background: #0f172a !important;
         display: flex !important;
         flex-direction: column !important;
@@ -28,7 +37,6 @@ style.textContent = `
         height: 100vh !important;
     }
 
-    /* Ensure the editor layout takes full space */
     .pxf-editor-layout, .pxf-body {
         height: 100% !important;
         width: 100% !important;
@@ -47,7 +55,6 @@ style.textContent = `
         background: #000 !important;
     }
 
-    /* Fix for potential missing fonts/icons */
     @font-face {
         font-family: 'Pixaroma';
         src: url('/pixaroma/assets/fonts/pixaroma.woff2') format('woff2');
@@ -69,56 +76,62 @@ window.app = window.app || {
             }
         }
     },
+    api_base: window.location.origin,
     graph: {
         serialize: () => ({}),
         getNodeById: (id) => null,
-        _nodes: []
+        _nodes: [],
+        _groups: []
     },
     canvas: {
-        setDirty: () => {}
+        setDirty: () => {},
+        draw: () => {}
     }
 };
 
-window.LGraphCanvas = window.LGraphCanvas || {
-    prototype: {
-        setDirty: () => {}
+window.ComfyApp = window.ComfyApp || window.app;
+
+window.api = window.api || {
+    api_base: '',
+    fetchApi: async (route, options) => {
+        const url = route.startsWith('/') ? route : `/${route}`;
+        return await fetch(url, options);
     }
+};
+
+window.LGraphCanvas = window.LGraphCanvas || function() {};
+window.LGraphCanvas.prototype = window.LGraphCanvas.prototype || {
+    setDirty: () => {},
+    draw: () => {}
 };
 
 window.LiteGraph = window.LiteGraph || {
     NODE_TITLE_HEIGHT: 30,
-    registerNodeType: () => {}
+    registerNodeType: () => {},
+    createNode: () => ({ widgets: [], addWidget: () => ({}) }),
+    LGraph: function() { this._nodes = []; this.add = () => {}; }
 };
 
-// Global interceptor for editor opening
 let activeEditorCallback = null;
 
 export async function openPixaromaEditor(nodeType, initialData, onSave) {
     console.log(`Opening Pixaroma Editor for ${nodeType}`);
-
-    // Store callback globally for interception
     activeEditorCallback = onSave;
 
-    // 1. Ensure the editor extension is loaded
     await loadPixaromaExtension(nodeType);
 
     const extName = getExtensionName(nodeType);
     const ext = window._pixaroma_extensions[extName];
 
-    if (!ext) {
-        throw new Error(`Extension ${extName} not found for node type ${nodeType}`);
-    }
+    if (!ext) throw new Error(`Extension ${extName} not found`);
 
-    // Hijack prototype.open before we do anything
     const editorClassName = getEditorClass(nodeType);
     const OriginalClass = window._pixaroma_classes[editorClassName];
 
     if (OriginalClass && !OriginalClass._hijacked) {
         const origOpen = OriginalClass.prototype.open;
         OriginalClass.prototype.open = function(data) {
-            console.log(`${editorClassName}.open() hijacked`);
-
-            // Ensure onSave is hijacked on this instance
+            console.log(`${editorClassName}.open() called`);
             let internalOnSave = null;
             Object.defineProperty(this, 'onSave', {
                 get: () => {
@@ -130,35 +143,24 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
                         else if (typeof this.close === 'function') this.close();
                     };
                 },
-                set: (val) => {
-                    internalOnSave = val;
-                },
+                set: (val) => { internalOnSave = val; },
                 configurable: true
             });
-
-            const dataToOpen = initialData || data;
-            return origOpen.call(this, dataToOpen);
+            return origOpen.call(this, initialData || data);
         };
         OriginalClass._hijacked = true;
     }
 
-    // 2. Mock a ComfyUI node
     const mockNode = {
         comfyClass: nodeType,
         widgets: [],
         type: nodeType,
-        id: 1,
+        id: Date.now(),
         properties: {},
         size: [300, 300],
         serialize: function() { return { widgets_values: this.widgets.map(w => w.value) }; },
         addWidget: function(type, name, value, callback, options) {
-            const w = {
-                type,
-                name,
-                value: (name === 'SceneWidget' || name === 'PaintWidget' || name === 'ComposerWidget' || name === 'CropWidget') ? initialData : value,
-                callback,
-                options
-            };
+            const w = { type, name, value: value || '', callback, options };
             this.widgets.push(w);
             return w;
         },
@@ -167,70 +169,58 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
             this.widgets.push(w);
             return w;
         },
-        setDirtyCanvas: () => { console.log("Canvas set dirty"); },
+        setDirtyCanvas: () => {},
         onRemoved: () => {}
     };
 
-    // 3. Initialize the node through the extension
-    if (ext.nodeCreated) {
-        await ext.nodeCreated(mockNode);
-    }
+    if (ext.nodeCreated) await ext.nodeCreated(mockNode);
 
-    // 4. Find the "Open" button widget and trigger it
     const openButton = mockNode.widgets.find(w => w.type === 'button' && (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor')));
     if (openButton && typeof openButton.callback === 'function') {
-        console.log("Triggering Pixaroma button callback");
         openButton.callback.call(mockNode, mockNode);
     } else {
-        console.error("Available widgets:", mockNode.widgets);
-        throw new Error(`Could not find Open button for Pixaroma node ${nodeType}`);
+        throw new Error(`Could not find trigger button for ${nodeType}`);
     }
 }
 
 function getExtensionName(nodeType) {
-    switch(nodeType) {
-        case 'Pixaroma3D': return 'Pixaroma.3DEditor';
-        case 'PixaromaPaint': return 'Pixaroma.PaintEditor';
-        case 'PixaromaImageComposition': return 'Pixaroma.ComposerEditor';
-        case 'PixaromaCrop': return 'Pixaroma.CropEditor';
-        default: return '';
-    }
+    const map = { 'Pixaroma3D': 'Pixaroma.3DEditor', 'PixaromaPaint': 'Pixaroma.PaintEditor', 'PixaromaImageComposition': 'Pixaroma.ComposerEditor', 'PixaromaCrop': 'Pixaroma.CropEditor' };
+    return map[nodeType] || '';
 }
 
 function getEditorClass(nodeType) {
-    switch(nodeType) {
-        case 'Pixaroma3D': return 'Pixaroma3DEditor';
-        case 'PixaromaPaint': return 'PixaromaPaintEditor';
-        case 'PixaromaImageComposition': return 'PixaromaComposerEditor';
-        case 'PixaromaCrop': return 'PixaromaCropEditor';
-        default: return '';
-    }
+    const map = { 'Pixaroma3D': 'Pixaroma3DEditor', 'PixaromaPaint': 'PixaromaPaintEditor', 'PixaromaImageComposition': 'PixaromaComposerEditor', 'PixaromaCrop': 'PixaromaCropEditor' };
+    return map[nodeType] || '';
 }
 
 async function loadPixaromaExtension(nodeType) {
     const extName = getExtensionName(nodeType);
     if (window._pixaroma_extensions[extName]) return;
 
-    let modulePath = '';
-    switch(nodeType) {
-        case 'Pixaroma3D': modulePath = '/pixaroma/assets/3d/index.js'; break;
-        case 'PixaromaPaint': modulePath = '/pixaroma/assets/paint/index.js'; break;
-        case 'PixaromaImageComposition': modulePath = '/pixaroma/assets/composer/index.js'; break;
-        case 'PixaromaCrop': modulePath = '/pixaroma/assets/crop/index.js'; break;
-    }
+    const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
+    const editorClassName = getEditorClass(nodeType);
+    const sub = nodeType.replace('Pixaroma', '').toLowerCase();
+    const subFolder = sub === 'imagecomposition' ? 'composer' : sub;
 
-    if (modulePath) {
-        console.log(`Loading Pixaroma module: ${modulePath}`);
-        try {
-            const module = await import(modulePath);
-            const editorClassName = getEditorClass(nodeType);
-            if (module[editorClassName]) {
-                window._pixaroma_classes[editorClassName] = module[editorClassName];
-                window[editorClassName] = module[editorClassName];
+    const errors = [];
+    for (const v of variants) {
+        const base = `/extensions/${v}/js/${subFolder}/`;
+        const paths = [ `${base}index.js`, `${base}index.mjs`, `/pixaroma/assets/${subFolder}/index.js` ];
+        for (const p of paths) {
+            console.log(`Trying Pixaroma load: ${p}`);
+            try {
+                const module = await import(p);
+                if (module[editorClassName]) {
+                    window._pixaroma_classes[editorClassName] = module[editorClassName];
+                    window[editorClassName] = module[editorClassName];
+                    console.log(`Successfully loaded ${editorClassName} from ${p}`);
+                    return;
+                }
+            } catch (e) {
+                errors.push(`${p}: ${e.message}`);
             }
-        } catch (e) {
-            console.error(`Failed to load Pixaroma module ${modulePath}:`, e);
-            throw e;
         }
     }
+    console.error("All Pixaroma load attempts failed:", errors);
+    throw new Error(`Failed to load Pixaroma module for ${nodeType}. Check console for details.`);
 }

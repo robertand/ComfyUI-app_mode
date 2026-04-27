@@ -5,10 +5,9 @@ const path = require('path');
 const fs = require('fs');
 const WebSocket = require('ws');
 const FormData = require('form-data');
-const { spawn } = require('child_process');
 const net = require('net');
 
-// ============ CONFIGURARE ============
+// ============ CONFIGURATION ============
 const CONFIG_FILE = path.join('workflows', 'config.json');
 let CONFIG = {
     ADMIN_PORT: parseInt(process.env.ADMIN_PORT) || 3001,
@@ -16,1736 +15,441 @@ let CONFIG = {
     COMFYUI_URLS: process.env.COMFYUI_URLS ? process.env.COMFYUI_URLS.split(',') : [process.env.COMFYUI_URL || 'http://127.0.0.1:8188']
 };
 
-// Încărcăm configurația salvată dacă există
 if (fs.existsSync(CONFIG_FILE)) {
     try {
         const savedConfig = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
-
-        // Migrare robustă de la COMFYUI_URL (string) la COMFYUI_URLS (array)
         if (savedConfig.COMFYUI_URL) {
             if (!savedConfig.COMFYUI_URLS || !Array.isArray(savedConfig.COMFYUI_URLS) || savedConfig.COMFYUI_URLS.length === 0) {
                 savedConfig.COMFYUI_URLS = [savedConfig.COMFYUI_URL];
             } else if (!savedConfig.COMFYUI_URLS.includes(savedConfig.COMFYUI_URL)) {
-                // If both exist but the old one isn't in the new list, add it to the front
                 savedConfig.COMFYUI_URLS.unshift(savedConfig.COMFYUI_URL);
             }
         }
-
-        // Asigurăm formatul corect pentru COMFYUI_URLS
         if (savedConfig.COMFYUI_URLS && typeof savedConfig.COMFYUI_URLS === 'string') {
             savedConfig.COMFYUI_URLS = savedConfig.COMFYUI_URLS.split(',').map(s => s.trim());
         }
-
         CONFIG = { ...CONFIG, ...savedConfig };
     } catch (e) {
         console.error('Error loading config.json:', e.message);
     }
 }
 
-// Curățăm cheia veche dacă a rămas
 if (CONFIG.COMFYUI_URL) delete CONFIG.COMFYUI_URL;
 
 let ADMIN_PORT = CONFIG.ADMIN_PORT;
 let PUBLIC_PORT = CONFIG.PUBLIC_PORT;
 let COMFYUI_URLS = CONFIG.COMFYUI_URLS;
 
-// Fallback de siguranță
 if (!Array.isArray(COMFYUI_URLS) || COMFYUI_URLS.length === 0) {
     COMFYUI_URLS = ['http://127.0.0.1:8188'];
 }
 
-// Funcție pentru a găsi un port liber
+// ============ UTILS ============
+
 async function findFreePort(startPort) {
     return new Promise((resolve) => {
         const server = net.createServer();
-        server.on('error', () => {
-            resolve(findFreePort(startPort + 1));
-        });
+        server.on('error', () => resolve(findFreePort(startPort + 1)));
         server.listen(startPort, '0.0.0.0', () => {
             const { port } = server.address();
-            server.close(() => {
-                resolve(port);
-            });
+            server.close(() => resolve(port));
         });
     });
 }
 
-// Configurare upload
-const upload = multer({ 
-    dest: 'uploads/', 
-    limits: { fileSize: 1024 * 1024 * 1024 }
-});
+const upload = multer({ dest: 'uploads/', limits: { fileSize: 1024 * 1024 * 1024 } });
 
-// Asigură existența directoarelor
-if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
-if (!fs.existsSync('output')) fs.mkdirSync('output');
-if (!fs.existsSync('workflows')) fs.mkdirSync('workflows');
-if (!fs.existsSync('workflows/saved')) fs.mkdirSync('workflows/saved');
+['uploads', 'output', 'workflows', 'workflows/saved'].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
-// Store pentru workflow-ul curent
 let currentWorkflowData = null;
-let currentWorkflowId = null; // ID-ul workflow-ului salvat curent
+let currentWorkflowId = null;
 let uiConfig = null;
-let originalWorkflowValues = {}; // Stochează valorile originale din workflow
-
+let originalWorkflowValues = {};
+const mediaStore = {};
 
 async function getFreestInstance() {
     const instances = COMFYUI_URLS;
     if (instances.length === 1) return instances[0];
-
     const stats = await Promise.all(instances.map(async (url) => {
         try {
             const res = await fetch(`${url}/queue`, { timeout: 2000 });
             if (!res.ok) return { url, load: Infinity };
             const data = await res.json();
-            // Load = running + pending
-            const load = (data.queue_running ? data.queue_running.length : 0) +
-                         (data.queue_pending ? data.queue_pending.length : 0);
+            const load = (data.queue_running?.length || 0) + (data.queue_pending?.length || 0);
             return { url, load };
-        } catch (e) {
-            return { url, load: Infinity };
-        }
+        } catch (e) { return { url, load: Infinity }; }
     }));
-
     const sorted = stats.sort((a, b) => a.load - b.load);
-    if (sorted[0].load === Infinity) {
-        throw new Error('Nicio instanță ComfyUI nu este disponibilă');
-    }
+    if (sorted[0].load === Infinity) throw new Error('No ComfyUI instance available');
     return sorted[0].url;
 }
 
 async function uploadFileToInstance(instanceUrl, filePath, originalName, mimetype) {
     const formData = new FormData();
-    formData.append('image', fs.createReadStream(filePath), {
-        filename: originalName,
-        contentType: mimetype
-    });
-    
-    const res = await fetch(`${instanceUrl}/upload/image`, {
-        method: 'POST',
-        body: formData,
-        headers: formData.getHeaders()
-    });
-    
+    formData.append('image', fs.createReadStream(filePath), { filename: originalName, contentType: mimetype });
+    const res = await fetch(`${instanceUrl}/upload/image`, { method: 'POST', body: formData, headers: formData.getHeaders() });
     if (!res.ok) throw new Error(`Upload failed to ${instanceUrl}: ${res.status}`);
     return await res.json();
 }
 
-function generateId() {
-    return Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
-}
-
-function generateRandomSeed() {
-    return Math.floor(Math.random() * 1000000000000);
-}
+const generateId = () => Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
+const generateRandomSeed = () => Math.floor(Math.random() * 1000000000000);
 
 function shouldGenerateRandomSeed(paramKey, paramValue, autoRandomFlags) {
-    if (autoRandomFlags && autoRandomFlags[paramKey] === true) return true;
-    if (autoRandomFlags && autoRandomFlags['_global'] === true) return true;
-    if (paramValue === 'random' || paramValue === '' || paramValue === null) return true;
-    return false;
+    if (autoRandomFlags?.[paramKey] === true || autoRandomFlags?.['_global'] === true) return true;
+    return paramValue === 'random' || paramValue === '' || paramValue === null;
 }
-
-// ============ EXTRAGE TOATE VALORILE ORIGINALE DIN WORKFLOW ============
 
 function extractOriginalWorkflowValues(workflowApi) {
     const values = {};
     if (!workflowApi) return values;
-    
     for (const [nodeId, node] of Object.entries(workflowApi)) {
         if (node.inputs) {
             for (const [inputName, inputValue] of Object.entries(node.inputs)) {
-                // Ignoră link-uri către alte noduri
-                if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) {
-                    continue;
-                }
-                
-                const key = `node_${nodeId}_${inputName}`;
-                values[key] = inputValue;
+                if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) continue;
+                values[`node_${nodeId}_${inputName}`] = inputValue;
             }
         }
     }
-    
     return values;
 }
 
-// ============ LOGICĂ BYPASS ============
-
 function applyBypass(workflow, bypassedNodes) {
     if (!bypassedNodes) return workflow;
-
-    const nodesToBypass = Object.entries(bypassedNodes)
-        .filter(([_, isBypassed]) => isBypassed)
-        .map(([nodeId, _]) => nodeId);
-
-    for (const nodeId of nodesToBypass) {
-        if (!workflow[nodeId]) continue;
-
+    Object.entries(bypassedNodes).forEach(([nodeId, isBypassed]) => {
+        if (!isBypassed || !workflow[nodeId]) return;
         const node = workflow[nodeId];
-        const type = node.class_type || "";
-
-        // Noduri de output - le ștergem pur și simplu
-        if (type.includes('Save') || type.includes('Preview') || type.includes('Combine')) {
-            console.log(`🗑️ Deleting output node ${nodeId} (${type})`);
-            delete workflow[nodeId];
-            continue;
+        if (node.class_type?.includes('Save') || node.class_type?.includes('Preview') || node.class_type?.includes('Combine')) {
+            delete workflow[nodeId]; return;
         }
-
-        // Noduri intermediare - încercăm să facem "bridge" (pod)
-        // Căutăm prima intrare care este un link (un array)
-        let sourceLink = null;
-        if (node.inputs) {
-            for (const inputVal of Object.values(node.inputs)) {
-                if (Array.isArray(inputVal)) {
-                    sourceLink = inputVal;
-                    break;
+        let sourceLink = node.inputs ? Object.values(node.inputs).find(v => Array.isArray(v)) : null;
+        Object.values(workflow).forEach(other => {
+            if (!other.inputs) return;
+            Object.entries(other.inputs).forEach(([k, v]) => {
+                if (Array.isArray(v) && String(v[0]) === String(nodeId)) {
+                    if (sourceLink) other.inputs[k] = sourceLink; else delete other.inputs[k];
                 }
-            }
-        }
-
-        if (sourceLink) {
-            console.log(`🌉 Bridging node ${nodeId} (${type}) -> Source: Node ${sourceLink[0]}, Output ${sourceLink[1]}`);
-        } else {
-            console.log(`⚠️ Node ${nodeId} (${type}) has no source to bridge. Removing downstream links.`);
-        }
-
-        // Re-rutăm toate nodurile care depind de acest nod
-        for (const otherNodeId in workflow) {
-            const otherNode = workflow[otherNodeId];
-            if (!otherNode.inputs) continue;
-
-            for (const [inputName, inputVal] of Object.entries(otherNode.inputs)) {
-                if (Array.isArray(inputVal) && String(inputVal[0]) === String(nodeId)) {
-                    if (sourceLink) {
-                        otherNode.inputs[inputName] = sourceLink;
-                        console.log(`   - Updated node ${otherNodeId} (${otherNode.class_type}) input "${inputName}" to point to source node ${sourceLink[0]}`);
-                    } else {
-                        delete otherNode.inputs[inputName];
-                        console.log(`   - Removed link from node ${otherNodeId} (${otherNode.class_type}) input "${inputName}"`);
-                    }
-                }
-            }
-        }
-
-        console.log(`🔇 Bypassed node ${nodeId} (${type})`);
+            });
+        });
         delete workflow[nodeId];
-    }
-
+    });
     return workflow;
 }
 
-// ============ VALIDARE PARAMETRI WORKFLOW ============
-
-function validateWorkflowParameters(workflow, parameters) {
+function validateWorkflowParameters(workflow) {
     const warnings = [];
-    const MAX_FRAMES = 300;
-    const MAX_WIDTH = 2048;
-    const MAX_HEIGHT = 2048;
-    const MIN_WIDTH = 64;
-    const MIN_HEIGHT = 64;
-    const MAX_BATCH_SIZE = 4;
-    const MAX_STEPS = 100;
-    const MIN_STEPS = 1;
-    const MAX_CFG = 30;
-    const MIN_CFG = 0.1;
-    
-    for (const [nodeId, node] of Object.entries(workflow)) {
-        if (!node.inputs) continue;
+    Object.entries(workflow).forEach(([nodeId, node]) => {
+        if (!node.inputs) return;
+        const isVideoNode = node.class_type && (node.class_type.includes('LTX') || node.class_type.includes('Video') || node.class_type.includes('VHS_VideoCombine') || node.class_type === 'SaveVideo' || node.class_type.includes('Sampler'));
+        
+        const check = (key, def, min, max, isInt = false) => {
+            if (node.inputs[key] === undefined || Array.isArray(node.inputs[key])) return;
+            let val = isInt ? parseInt(node.inputs[key]) : parseFloat(node.inputs[key]);
+            if (isNaN(val) || (min !== undefined && val < min) || (max !== undefined && val > max)) {
+                node.inputs[key] = def;
+                warnings.push(`[${node.class_type}] ${key} invalid: ${val} -> ${def}`);
+            }
+        };
 
-        // Skip linked inputs (represented as arrays or special string formats like "170:167,0")
-        const activeInputs = {};
-        for (const [key, value] of Object.entries(node.inputs)) {
-            const isLink = Array.isArray(value) || (typeof value === 'string' && value.includes(':') && value.includes(','));
-            if (!isLink) {
-                activeInputs[key] = value;
-            }
-        }
-        
-        // Detectează noduri video/generare
-        const isVideoNode = node.class_type && (
-            node.class_type.includes('LTX') ||
-            node.class_type.includes('Video') ||
-            node.class_type === 'VHS_VideoCombine' ||
-            node.class_type === 'SaveVideo' ||
-            node.class_type === 'SamplerCustom' ||
-            node.class_type === 'KSampler' ||
-            node.class_type === 'KSamplerAdvanced'
-        );
-        
         if (isVideoNode) {
-            // Validează length/num_frames
-            if (activeInputs.length !== undefined) {
-                let length = parseFloat(activeInputs.length);
-                if (isNaN(length) || length <= 0 || length > MAX_FRAMES) {
-                    const oldValue = activeInputs.length;
-                    node.inputs.length = 25;
-                    warnings.push(`[${node.class_type}] Length invalid: ${oldValue} → setat la 25`);
-                    console.warn(`⚠️ Length invalid în nodul ${nodeId}: ${oldValue} → setat la 25`);
-                }
-            }
-            
-            if (activeInputs.num_frames !== undefined) {
-                let numFrames = parseFloat(activeInputs.num_frames);
-                if (isNaN(numFrames) || numFrames <= 0 || numFrames > MAX_FRAMES) {
-                    const oldValue = activeInputs.num_frames;
-                    node.inputs.num_frames = 25;
-                    warnings.push(`[${node.class_type}] Num_frames invalid: ${oldValue} → setat la 25`);
-                    console.warn(`⚠️ Num_frames invalid în nodul ${nodeId}: ${oldValue} → setat la 25`);
-                }
-            }
-            
-            // Validează frame_rate - CRITIC: nu poate fi 0
-            if (activeInputs.frame_rate !== undefined) {
-                let frameRate = parseFloat(activeInputs.frame_rate);
-                if (isNaN(frameRate) || frameRate <= 0) {
-                    const oldValue = activeInputs.frame_rate;
-                    node.inputs.frame_rate = 24; // Valoare implicită sigură
-                    warnings.push(`[${node.class_type}] Frame_rate invalid: ${oldValue} → setat la 24`);
-                    console.warn(`⚠️ Frame_rate invalid în nodul ${nodeId}: ${oldValue} → setat la 24`);
-                }
-            }
-            
-            // Validează width
-            if (activeInputs.width !== undefined) {
-                let width = parseInt(activeInputs.width);
-                if (isNaN(width) || width < MIN_WIDTH || width > MAX_WIDTH) {
-                    const oldValue = activeInputs.width;
-                    node.inputs.width = 768;
-                    warnings.push(`[${node.class_type}] Width invalid: ${oldValue} → setat la 768`);
-                    console.warn(`⚠️ Width invalid în nodul ${nodeId}: ${oldValue} → setat la 768`);
-                }
-            }
-            
-            // Validează height
-            if (activeInputs.height !== undefined) {
-                let height = parseInt(activeInputs.height);
-                if (isNaN(height) || height < MIN_HEIGHT || height > MAX_HEIGHT) {
-                    const oldValue = activeInputs.height;
-                    node.inputs.height = 512;
-                    warnings.push(`[${node.class_type}] Height invalid: ${oldValue} → setat la 512`);
-                    console.warn(`⚠️ Height invalid în nodul ${nodeId}: ${oldValue} → setat la 512`);
-                }
-            }
+            check('length', 25, 1, 300); check('num_frames', 25, 1, 300);
+            check('frame_rate', 24, 0.1, 120); check('width', 768, 64, 2048, true); check('height', 512, 64, 2048, true);
         }
-        
-        // Validează batch_size
-        if (activeInputs.batch_size !== undefined) {
-            let batchSize = parseInt(activeInputs.batch_size);
-            if (isNaN(batchSize) || batchSize < 1 || batchSize > MAX_BATCH_SIZE) {
-                const oldValue = activeInputs.batch_size;
-                node.inputs.batch_size = 1;
-                warnings.push(`[${node.class_type}] Batch size invalid: ${oldValue} → setat la 1`);
-                console.warn(`⚠️ Batch size invalid în nodul ${nodeId}: ${oldValue} → setat la 1`);
-            }
+        check('batch_size', 1, 1, 16, true); check('steps', 20, 1, 100, true);
+        check('cfg', 7.0, 0, 100); check('denoise', 1.0, 0, 1.0);
+        if (node.inputs.seed !== undefined && !Array.isArray(node.inputs.seed)) {
+            if (isNaN(parseInt(node.inputs.seed)) || node.inputs.seed < 0) node.inputs.seed = generateRandomSeed();
         }
-        
-        // Validează steps
-        if (activeInputs.steps !== undefined) {
-            let steps = parseInt(activeInputs.steps);
-            if (isNaN(steps) || steps < MIN_STEPS || steps > MAX_STEPS) {
-                const oldValue = activeInputs.steps;
-                node.inputs.steps = 20;
-                warnings.push(`[${node.class_type}] Steps invalid: ${oldValue} → setat la 20`);
-                console.warn(`⚠️ Steps invalid în nodul ${nodeId}: ${oldValue} → setat la 20`);
-            }
-        }
-        
-        // Validează cfg
-        if (activeInputs.cfg !== undefined) {
-            let cfg = parseFloat(activeInputs.cfg);
-            if (isNaN(cfg) || cfg < MIN_CFG || cfg > MAX_CFG) {
-                const oldValue = activeInputs.cfg;
-                node.inputs.cfg = 7.0;
-                warnings.push(`[${node.class_type}] CFG invalid: ${oldValue} → setat la 7.0`);
-                console.warn(`⚠️ CFG invalid în nodul ${nodeId}: ${oldValue} → setat la 7.0`);
-            }
-        }
-        
-        // Validează denoise
-        if (activeInputs.denoise !== undefined) {
-            let denoise = parseFloat(activeInputs.denoise);
-            if (isNaN(denoise) || denoise < 0 || denoise > 1) {
-                const oldValue = activeInputs.denoise;
-                node.inputs.denoise = 1.0;
-                warnings.push(`[${node.class_type}] Denoise invalid: ${oldValue} → setat la 1.0`);
-                console.warn(`⚠️ Denoise invalid în nodul ${nodeId}: ${oldValue} → setat la 1.0`);
-            }
-        }
-        
-        // Validează seed
-        if (activeInputs.seed !== undefined) {
-            let seed = parseInt(activeInputs.seed);
-            if (isNaN(seed) || seed < 0) {
-                const oldValue = activeInputs.seed;
-                seed = generateRandomSeed();
-                node.inputs.seed = seed;
-                warnings.push(`[${node.class_type}] Seed invalid: ${oldValue} → generat nou: ${seed}`);
-                console.warn(`⚠️ Seed invalid în nodul ${nodeId}: ${oldValue} → generat ${seed}`);
-            }
-        }
-    }
-    
+    });
     return { workflow, warnings };
 }
 
-// ============ ANALIZĂ WORKFLOW - EXTRAȘI TOATE NODURILE ============
-
 function analyzeWorkflow(workflowJson) {
-    let workflowApi = null;
-    let inputs = [];      // Inputuri media (imagini/video)
-    let advancedInputs = []; // Toți parametrii din toate nodurile
-    let title = 'Workflow';
-    let hasVideoInput = false;
-    let hasVideoOutput = false;
+    let workflowApi = null, inputs = [], advancedInputs = [], title = 'Workflow', hasVideoInput = false, hasVideoOutput = false;
     
-    // Detectăm formatul ViewComfy
-    if (workflowJson.workflows && workflowJson.workflows[0] && workflowJson.workflows[0].workflowApiJSON) {
-        console.log('📦 Format detectat: ViewComfy');
+    if (workflowJson.workflows?.[0]?.workflowApiJSON) {
         const viewComfy = workflowJson.workflows[0].viewComfyJSON;
         workflowApi = workflowJson.workflows[0].workflowApiJSON;
         title = viewComfy?.title || 'Workflow';
-        
         if (viewComfy?.inputs) {
             inputs = viewComfy.inputs;
-            hasVideoInput = inputs.some(group => 
-                group.inputs?.some(input => input.valueType === 'video')
-            );
+            hasVideoInput = inputs.some(g => g.inputs?.some(i => i.valueType === 'video'));
         }
-        
-        if (viewComfy?.advancedInputs) {
-            advancedInputs = viewComfy.advancedInputs;
-        }
-        
-        // Dacă există viewComfy, prioritizăm acea configurație
-        return {
-            title: title,
-            workflowApi: workflowApi,
-            inputs: inputs,
-            advancedInputs: advancedInputs,
-            hasVideoInput: hasVideoInput,
-            hasVideoOutput: hasVideoOutput
-        };
+        if (viewComfy?.advancedInputs) advancedInputs = viewComfy.advancedInputs;
+        return { title, workflowApi, inputs, advancedInputs, hasVideoInput, hasVideoOutput };
     }
     
-    // Format standard - analizăm TOATE nodurile și TOȚI parametrii
     if (typeof workflowJson === 'object' && !workflowJson.workflows) {
-        console.log('📦 Format detectat: Workflow API Standard');
         workflowApi = workflowJson;
-        title = 'Workflow';
-        
-        // Parcurgem fiecare nod din workflow
-        for (const [nodeId, node] of Object.entries(workflowJson)) {
+        Object.entries(workflowJson).forEach(([nodeId, node]) => {
             const nodeTitle = node._meta?.title || node.class_type || nodeId;
             const nodeType = node.class_type || 'Unknown';
-            
-            // Colectăm toate inputurile nodului
             const nodeInputs = [];
             
-            // Pentru nodurile de tip LoadImage / LoadVideo - le tratăm special ca inputuri media
-            if (nodeType === 'LoadImage' || nodeType === 'LoadVideo' || nodeType === 'VHS_LoadVideo') {
-                const isVideo = (nodeType === 'LoadVideo' || nodeType === 'VHS_LoadVideo');
+            if (['LoadImage', 'LoadVideo', 'VHS_LoadVideo'].includes(nodeType)) {
+                const isVideo = nodeType.includes('Video');
                 if (isVideo) hasVideoInput = true;
-                
-                // Găsim inputul pentru fișier
-                let fileInputName = null;
-                if (node.inputs) {
-                    for (const [inputName, value] of Object.entries(node.inputs)) {
-                        if (inputName.toLowerCase().includes('video') || 
-                            inputName.toLowerCase().includes('image') ||
-                            inputName === 'video' || inputName === 'image') {
-                            fileInputName = inputName;
-                            break;
-                        }
-                    }
-                }
-                
-                inputs.push({
-                    key: `media_${nodeId}`,
-                    title: nodeTitle,
-                    groupTitle: 'Media Input',
-                    inputs: [{
-                        key: `node_${nodeId}_file`,
-                        title: nodeTitle,
-                        nodeTitle: nodeTitle, // Duplicate for clarity
-                        valueType: isVideo ? 'video' : 'image',
-                        nodeId: nodeId,
-                        inputName: fileInputName || (isVideo ? 'video' : 'image'),
-                        nodeType: nodeType
-                    }]
-                });
+                let fileInputName = node.inputs ? Object.keys(node.inputs).find(k => k.toLowerCase().includes('video') || k.toLowerCase().includes('image')) : (isVideo ? 'video' : 'image');
+                inputs.push({ key: `media_${nodeId}`, title: nodeTitle, groupTitle: 'Media Input', inputs: [{ key: `node_${nodeId}_file`, title: nodeTitle, nodeTitle, valueType: isVideo ? 'video' : 'image', nodeId, inputName: fileInputName, nodeType }] });
             }
             
-            // Pentru toate nodurile, extragem TOȚI parametrii (inclusiv frame_rate, etc.)
             if (node.inputs) {
-                for (const [inputName, inputValue] of Object.entries(node.inputs)) {
-                    // Detect Pixaroma Editor Widgets
-                    const isPixaromaWidget =
-                        (nodeType === 'Pixaroma3D' && inputName === 'SceneWidget') ||
-                        (nodeType === 'PixaromaPaint' && inputName === 'PaintWidget') ||
-                        (nodeType === 'PixaromaImageComposition' && inputName === 'ComposerWidget') ||
-                        (nodeType === 'PixaromaCrop' && inputName === 'CropWidget');
-
-                    // Sărim peste inputurile care sunt linkuri către alte noduri
-                    if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) {
-                        continue;
-                    }
+                Object.entries(node.inputs).forEach(([inputName, inputValue]) => {
+                    const isPixaromaWidget = (nodeType === 'Pixaroma3D' && inputName === 'SceneWidget') || (nodeType === 'PixaromaPaint' && inputName === 'PaintWidget') || (nodeType === 'PixaromaImageComposition' && inputName === 'ComposerWidget') || (nodeType === 'PixaromaCrop' && inputName === 'CropWidget');
+                    if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
+                    if (!isPixaromaWidget && (inputName === 'image' || inputName === 'video' || inputName.toLowerCase().includes('file') || inputName === 'filename')) return;
+                    if (nodeType.startsWith('Pixaroma') && inputName.startsWith('Open')) return;
                     
-                    // Sărim peste inputurile care sunt fișiere (le tratăm separat)
-                    if (!isPixaromaWidget && (inputName === 'image' || inputName === 'video' ||
-                        inputName.toLowerCase().includes('file') || inputName === 'filename')) {
-                        continue;
-                    }
-
-                    // Sărim peste butoanele de "Open" pentru Pixaroma (le gestionăm special)
-                    if (nodeType.startsWith('Pixaroma') && inputName.startsWith('Open')) {
-                        continue;
-                    }
-                    
-                    // Determinăm tipul valorii
                     let valueType = 'text';
-                    let defaultValue = inputValue;
+                    if (isPixaromaWidget) valueType = 'pixaroma_editor';
+                    else if (typeof inputValue === 'number') valueType = 'number';
+                    else if (typeof inputValue === 'boolean') valueType = 'boolean';
                     
-                    if (isPixaromaWidget) {
-                        valueType = 'pixaroma_editor';
-                        defaultValue = typeof inputValue === 'object' ? JSON.stringify(inputValue) : inputValue;
-                    } else if (typeof inputValue === 'number') {
-                        valueType = 'number';
-                        defaultValue = inputValue;
-                    } else if (typeof inputValue === 'boolean') {
-                        valueType = 'boolean';
-                        defaultValue = inputValue;
-                    } else if (typeof inputValue === 'string') {
-                        valueType = 'text';
-                        defaultValue = inputValue;
-                    }
-                    
-                    // Determinăm un titlu frumos pentru parametru
-                    let paramTitle = inputName;
-                    if (inputName === 'seed') paramTitle = '🔢 Seed';
-                    else if (inputName === 'steps') paramTitle = '📊 Steps';
-                    else if (inputName === 'cfg') paramTitle = '⚙️ CFG Scale';
-                    else if (inputName === 'sampler_name') paramTitle = '🎛️ Sampler';
-                    else if (inputName === 'scheduler') paramTitle = '📅 Scheduler';
-                    else if (inputName === 'denoise') paramTitle = '🌀 Denoise';
-                    else if (inputName === 'text') paramTitle = '📝 Text';
-                    else if (inputName === 'prompt') paramTitle = '💬 Prompt';
-                    else if (inputName === 'positive') paramTitle = '➕ Positive Prompt';
-                    else if (inputName === 'negative') paramTitle = '➖ Negative Prompt';
-                    else if (inputName === 'width') paramTitle = '📐 Width';
-                    else if (inputName === 'height') paramTitle = '📏 Height';
-                    else if (inputName === 'batch_size') paramTitle = '📚 Batch Size';
-                    else if (inputName === 'strength') paramTitle = '💪 Strength';
-                    else if (inputName === 'noise_seed') paramTitle = '🎲 Noise Seed';
-                    else if (inputName === 'length') paramTitle = '🎬 Length (frames)';
-                    else if (inputName === 'num_frames') paramTitle = '🎬 Num Frames';
-                    else if (inputName === 'frame_rate') paramTitle = '📽️ Frame Rate (FPS)';
-                    else if (inputName === 'SceneWidget') paramTitle = '3D Builder';
-                    else if (inputName === 'PaintWidget') paramTitle = 'Paint Studio';
-                    else if (inputName === 'ComposerWidget') paramTitle = 'Image Composer';
-                    else if (inputName === 'CropWidget') paramTitle = 'Image Crop';
-                    
-                    nodeInputs.push({
-                        key: `node_${nodeId}_${inputName}`,
-                        title: paramTitle,
-                        originalName: inputName,
-                        valueType: valueType,
-                        nodeId: nodeId,
-                        nodeTitle: nodeTitle,
-                        nodeType: nodeType,
-                        inputName: inputName,
-                        defaultValue: defaultValue
-                    });
-                }
-            }
-            
-            // Dacă nodul are parametri, adăugăm grupul
-            if (nodeInputs.length > 0) {
-                advancedInputs.push({
-                    key: `node_${nodeId}`,
-                    title: `📦 ${nodeTitle} (${nodeType})`,
-                    nodeId: nodeId,
-                    nodeType: nodeType,
-                    inputs: nodeInputs
+                    const pTitles = { seed: '🔢 Seed', steps: '📊 Steps', cfg: '⚙️ CFG Scale', SceneWidget: '3D Builder', PaintWidget: 'Paint Studio', ComposerWidget: 'Image Composer', CropWidget: 'Image Crop' };
+                    nodeInputs.push({ key: `node_${nodeId}_${inputName}`, title: pTitles[inputName] || inputName, originalName: inputName, valueType, nodeId, nodeTitle, nodeType, inputName, defaultValue: isPixaromaWidget ? (typeof inputValue === 'object' ? JSON.stringify(inputValue) : inputValue) : inputValue });
                 });
-                console.log(`✅ Nod detectat: ${nodeTitle} (${nodeType}) cu ${nodeInputs.length} parametri`);
-                for (const input of nodeInputs) {
-                    console.log(`   - ${input.originalName}: ${input.defaultValue} (${input.valueType})`);
-                }
             }
-            
-            // Detectăm output video
-            if (nodeType === 'SaveVideo' || nodeType === 'VHS_VideoCombine' || nodeType === 'VideoCombine') {
-                hasVideoOutput = true;
-            }
-        }
-        
-        console.log(`📊 Analiză completă: ${inputs.length} inputuri media, ${advancedInputs.length} grupuri de parametri`);
+            if (nodeInputs.length > 0) advancedInputs.push({ key: `node_${nodeId}`, title: `📦 ${nodeTitle}`, nodeId, nodeType, inputs: nodeInputs });
+            if (['SaveVideo', 'VHS_VideoCombine', 'VideoCombine'].includes(nodeType)) hasVideoOutput = true;
+        });
     }
-    
-    if (!workflowApi) {
-        throw new Error('Workflow-ul nu conține un format valid');
-    }
-    
-    return {
-        title: title,
-        workflowApi: workflowApi,
-        inputs: inputs,
-        advancedInputs: advancedInputs,
-        hasVideoInput: hasVideoInput,
-        hasVideoOutput: hasVideoOutput
-    };
+    if (!workflowApi) throw new Error('Workflow format invalid');
+    return { title, workflowApi, inputs, advancedInputs, hasVideoInput, hasVideoOutput };
 }
 
-// ============ CREARE SERVERE ============
+// ============ APPS & PROXY ============
 
-// Server Admin (port 3001)
 const adminApp = express();
-adminApp.use(express.json({ limit: '100mb' }));
+const publicApp = express();
+const apps = [adminApp, publicApp];
 
-// Middleware control cache pentru a asigura actualizarea rapidă a UI
-adminApp.use((req, res, next) => {
-    // Aggressive cache-busting for all assets and APIs
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('Surrogate-Control', 'no-store');
-    next();
-});
-
-adminApp.use(express.static('public', {
-    setHeaders: (res, path) => {
+apps.forEach(app => {
+    app.use(express.json({ limit: '100mb' }));
+    app.use((req, res, next) => {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
-    }
-}));
-adminApp.use('/output', express.static('output', {
-    setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.mp4')) {
-            res.setHeader('Content-Type', 'video/mp4');
-        } else if (filePath.endsWith('.webm')) {
-            res.setHeader('Content-Type', 'video/webm');
-        } else if (filePath.endsWith('.mov')) {
-            res.setHeader('Content-Type', 'video/quicktime');
-        } else if (filePath.endsWith('.png')) {
-            res.setHeader('Content-Type', 'image/png');
-        } else if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) {
-            res.setHeader('Content-Type', 'image/jpeg');
-        }
-    }
-}));
-
-// ============ PROXY PIXAROMA & COMFYUI ============
+        next();
+    });
+});
 
 async function proxyToComfy(req, res) {
     try {
         const targetInstance = await getFreestInstance();
-        let targetPath = req.originalUrl;
-
-        const fetchOptions = {
-            method: req.method,
-            headers: { ...req.headers }
-        };
-
-        // Remove host header to avoid issues with target
+        const targetPath = req.originalUrl;
+        const fetchOptions = { method: req.method, headers: { ...req.headers }, redirect: 'manual' };
+        const parsedTarget = new URL(targetInstance);
         delete fetchOptions.headers.host;
+        fetchOptions.headers['origin'] = parsedTarget.origin;
+        fetchOptions.headers['referer'] = parsedTarget.origin + '/';
 
         if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
-            if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
-                fetchOptions.body = JSON.stringify(req.body);
-            } else {
-                // Handle other types if necessary, for now we assume JSON or no body
-                // For multipart/form-data, we might need a more complex proxy,
-                // but usually Pixaroma uses JSON for most things except file uploads which go to /upload/image
-                fetchOptions.body = JSON.stringify(req.body);
-            }
+            fetchOptions.body = (req.headers['content-type']?.includes('application/json') && req.body && Object.keys(req.body).length > 0) ? JSON.stringify(req.body) : req;
         }
 
-        let url = `${targetInstance}${targetPath}`;
-        console.log(`Proxying to ComfyUI: ${url}`);
+        let response = await fetch(`${targetInstance}${targetPath}`, fetchOptions);
 
-        let response = await fetch(url, fetchOptions);
-        console.log(`Response Status: ${response.status} for ${url}`);
-
-        // Fallback for Pixaroma assets
-        if (response.status === 404 && targetPath.includes('pixaroma')) {
-            const baseVariants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma'];
+        if (response.status === 404 && (targetPath.includes('pixaroma') || targetPath.includes('Pixaroma'))) {
+            const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
             const fallbacks = [];
-
-            for (const variant of baseVariants) {
-                const extBase = `/extensions/${variant}/`;
-                fallbacks.push(
-                    targetPath.replace('/pixaroma/assets/', extBase + 'js/'),
-                    targetPath.replace('/pixaroma/js/', extBase + 'js/'),
-                    targetPath.replace('/pixaroma/', extBase + 'js/'),
-                    targetPath.replace('/pixaroma/', extBase),
-                    targetPath.replace('/pixaroma/assets/', extBase + 'assets/')
-                );
-
-                // Add specific mappings for .js files in root extensions folder
+            for (const v of variants) {
+                const ext = `/extensions/${v}/`;
+                if (targetPath.includes('/assets/')) {
+                    const sub = targetPath.split('/assets/')[1];
+                    fallbacks.push(ext + sub, ext + 'js/' + sub, ext + 'assets/' + sub);
+                }
+                fallbacks.push(targetPath.replace('/pixaroma/assets/', ext), targetPath.replace('/pixaroma/assets/', ext + 'js/'), targetPath.replace('/pixaroma/js/', ext), targetPath.replace('/pixaroma/', ext), targetPath.replace('/pixaroma/', ext + 'js/'));
                 if (targetPath.endsWith('.js') || targetPath.endsWith('.mjs')) {
-                    const filename = targetPath.split('/').pop();
-                    fallbacks.push(extBase + filename);
+                    const parts = targetPath.split('/'), fn = parts.pop(), fld = parts.pop();
+                    if (fld !== 'assets' && fld !== 'pixaroma') fallbacks.push(ext + fld + '/' + fn, ext + 'js/' + fld + '/' + fn);
                 }
             }
-
-            // Deduplicate and filter
-            const uniqueFallbacks = [...new Set(fallbacks)].filter(f => f !== targetPath);
-
-            for (const fbPath of uniqueFallbacks) {
-                console.log(`Trying fallback: ${fbPath}`);
-                const fbUrl = `${targetInstance}${fbPath}`;
-                try {
-                    const fbResponse = await fetch(fbUrl, fetchOptions);
-                    if (fbResponse.ok) {
-                        console.log(`Fallback SUCCESS: ${fbUrl}`);
-                        response = fbResponse;
-                        break;
-                    }
-                } catch (e) {
-                    console.error(`Fallback failed for ${fbUrl}:`, e.message);
-                }
+            for (const fbPath of [...new Set(fallbacks)].filter(f => f !== targetPath)) {
+                try { const fbRes = await fetch(`${targetInstance}${fbPath}`, fetchOptions); if (fbRes.ok) { response = fbRes; break; } } catch (e) {}
             }
         }
 
-        // Forward headers
-        response.headers.forEach((value, name) => {
-            // Skip some headers that might cause issues
-            if (['content-encoding', 'content-length', 'transfer-encoding'].includes(name.toLowerCase())) return;
-            res.setHeader(name, value);
-        });
-
+        response.headers.forEach((v, n) => { if (!['content-encoding', 'content-length', 'transfer-encoding', 'access-control-allow-origin', 'content-security-policy'].includes(n.toLowerCase())) res.setHeader(n, v); });
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('X-Frame-Options', 'ALLOWALL');
+        res.setHeader('Content-Security-Policy', "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;");
         res.status(response.status);
-        const buffer = await response.buffer();
-        res.send(buffer);
-    } catch (error) {
-        console.error('Proxy error:', error);
-        res.status(500).json({ error: 'Proxy error' });
-    }
+        response.body.pipe(res);
+    } catch (error) { if (!res.headersSent) res.status(502).json({ error: 'Bad Gateway' }); }
 }
 
+const appShim = `export const app = { registerExtension: (ext) => { if (!window._pixaroma_extensions) window._pixaroma_extensions = {}; window._pixaroma_extensions[ext.name] = ext; }, ui: { settings: { getSettingValue: (id) => JSON.parse(localStorage.getItem('pixaroma_settings') || '{}')[id] || null } } };`;
+const apiShim = `export const api = { api_base: '', fetchApi: async (route, options) => fetch(route.startsWith('/') ? route : '/' + route, options) };`;
 
-// Server Public (port 3002)
-const publicApp = express();
-
-// ============ PROXY ROUTES (CONTINUED) ============
-// These must be after both apps are initialized
-
-// Routes for Pixaroma assets and API
-adminApp.all('/pixaroma/*', proxyToComfy);
-publicApp.all('/pixaroma/*', proxyToComfy);
-adminApp.all('/extensions/*', proxyToComfy);
-publicApp.all('/extensions/*', proxyToComfy);
-
-// Route for ComfyUI view (previews)
-adminApp.all('/view', proxyToComfy);
-publicApp.all('/view', proxyToComfy);
-
-// Shim for ComfyUI scripts that Pixaroma imports
-const appShim = `
-export const app = {
-    registerExtension: (ext) => {
-        console.log("Shim: registered extension", ext.name);
-        if (!window._pixaroma_extensions) window._pixaroma_extensions = {};
-        window._pixaroma_extensions[ext.name] = ext;
-    },
-    ui: {
-        settings: {
-            getSettingValue: (id) => {
-                const s = JSON.parse(localStorage.getItem('pixaroma_settings') || '{}');
-                return s[id] || null;
-            }
-        }
-    }
-};
-`;
-
-adminApp.get('/scripts/app.js', (req, res) => {
-    res.setHeader('Content-Type', 'application/javascript');
-    res.send(appShim);
+apps.forEach(app => {
+    ['/scripts/app.js', '*/scripts/app.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(appShim); }));
+    ['/scripts/api.js', '*/scripts/api.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(apiShim); }));
+    app.all('/pixaroma/*', proxyToComfy); app.all('/extensions/*', proxyToComfy);
+    ['/view', '/prompt', '/history', '/embeddings', '/object_info', '/system_stats', '/queue', '/upload/image', '/ws'].forEach(r => app.all(r, proxyToComfy));
 });
 
-const apiShim = `
-export const api = {
-    fetchApi: async (route, options) => {
-        const res = await fetch(route, options);
-        return res;
-    }
-};
-`;
+// ============ ROUTES ============
 
-adminApp.get('/scripts/api.js', (req, res) => {
-    res.setHeader('Content-Type', 'application/javascript');
-    res.send(apiShim);
-});
+adminApp.use(express.static('public')); adminApp.use('/output', express.static('output'));
+publicApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'public.html')));
+publicApp.use(express.static('public')); publicApp.use('/output', express.static('output'));
 
-publicApp.get('/scripts/api.js', (req, res) => {
-    res.setHeader('Content-Type', 'application/javascript');
-    res.send(apiShim);
-});
-
-publicApp.get('/scripts/app.js', (req, res) => {
-    res.setHeader('Content-Type', 'application/javascript');
-    res.send(appShim);
-});
-publicApp.use(express.json({ limit: '100mb' }));
-
-// Middleware control cache public
-publicApp.use((req, res, next) => {
-    // Aggressive cache-busting for all assets and APIs
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-    res.setHeader('Surrogate-Control', 'no-store');
-    next();
-});
-
-// Serve public.html for root on public port
-publicApp.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'public.html'));
-});
-
-publicApp.use(express.static('public', {
-    setHeaders: (res, path) => {
-        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
-    }
-}));
-publicApp.use('/output', express.static('output', {
-    setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.mp4')) {
-            res.setHeader('Content-Type', 'video/mp4');
-        } else if (filePath.endsWith('.webm')) {
-            res.setHeader('Content-Type', 'video/webm');
-        } else if (filePath.endsWith('.mov')) {
-            res.setHeader('Content-Type', 'video/quicktime');
-        } else if (filePath.endsWith('.png')) {
-            res.setHeader('Content-Type', 'image/png');
-        } else if (filePath.endsWith('.jpg') || filePath.endsWith('.jpeg')) {
-            res.setHeader('Content-Type', 'image/jpeg');
-        }
-    }
-}));
-
-// ============ RUTE ADMIN ============
-
-// Lista workflow-urilor salvate
-adminApp.get('/api/workflows/list', (req, res) => {
-    try {
-        const savedDir = path.join('workflows', 'saved');
-        if (!fs.existsSync(savedDir)) {
-            fs.mkdirSync(savedDir, { recursive: true });
-            return res.json({ success: true, workflows: [] });
-        }
-        
-        const files = fs.readdirSync(savedDir);
-        const workflows = files
-            .filter(f => f.endsWith('.json'))
-            .map(f => {
-                try {
-                    const filePath = path.join(savedDir, f);
-                    const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                    return {
-                        id: f.replace('.json', ''),
-                        name: content.metadata?.name || f.replace('.json', ''),
-                        description: content.metadata?.description || '',
-                        createdAt: content.metadata?.createdAt || fs.statSync(filePath).mtime
-                    };
-                } catch (e) { 
-                    console.error('Error reading file:', f, e.message);
-                    return null; 
-                }
-            })
-            .filter(w => w !== null)
-            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-        
-        res.json({ success: true, workflows });
-    } catch (error) {
-        console.error('List workflows error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Helper pentru a reconcilia și completa uiConfig
 function reconcileUIConfig(analysis, existingConfig) {
-    const config = {
-        visibleInputs: (existingConfig && existingConfig.visibleInputs) || {},
-        visibleParams: (existingConfig && existingConfig.visibleParams) || {},
-        inputOrder: (existingConfig && existingConfig.inputOrder) || [],
-        inputNames: (existingConfig && existingConfig.inputNames) || {}
-    };
-
+    const config = { visibleInputs: existingConfig?.visibleInputs || {}, visibleParams: existingConfig?.visibleParams || {}, inputOrder: existingConfig?.inputOrder || [], inputNames: existingConfig?.inputNames || {} };
     const allKeys = [];
-    if (analysis.inputs) {
-        analysis.inputs.forEach(g => g.inputs.forEach(i => {
-            allKeys.push(i.key);
-            if (config.visibleInputs[i.key] === undefined) config.visibleInputs[i.key] = true;
-        }));
-    }
-    if (analysis.advancedInputs) {
-        analysis.advancedInputs.forEach(g => g.inputs.forEach(p => {
-            allKeys.push(p.key);
-            if (config.visibleParams[p.key] === undefined) config.visibleParams[p.key] = true;
-        }));
-    }
-
-    // Păstrează ordinea existentă, elimină cheile invalide, adaugă cheile noi la final
-    const filteredOrder = config.inputOrder.filter(k => allKeys.includes(k));
-    const newKeys = allKeys.filter(k => !filteredOrder.includes(k));
-    config.inputOrder = [...filteredOrder, ...newKeys];
-
+    analysis.inputs?.forEach(g => g.inputs.forEach(i => { allKeys.push(i.key); if (config.visibleInputs[i.key] === undefined) config.visibleInputs[i.key] = true; }));
+    analysis.advancedInputs?.forEach(g => g.inputs.forEach(p => { allKeys.push(p.key); if (config.visibleParams[p.key] === undefined) config.visibleParams[p.key] = true; }));
+    config.inputOrder = [...config.inputOrder.filter(k => allKeys.includes(k)), ...allKeys.filter(k => !config.inputOrder.includes(k))];
     return config;
 }
 
-// Încarcă workflow salvat
+adminApp.get('/api/workflows/list', (req, res) => {
+    const savedDir = path.join('workflows', 'saved'); if (!fs.existsSync(savedDir)) return res.json({ workflows: [] });
+    const workflows = fs.readdirSync(savedDir).filter(f => f.endsWith('.json')).map(f => { try { const c = JSON.parse(fs.readFileSync(path.join(savedDir, f), 'utf8')); return { id: f.replace('.json', ''), name: c.metadata?.name || f.replace('.json', ''), description: c.metadata?.description || '', createdAt: c.metadata?.createdAt || fs.statSync(path.join(savedDir, f)).mtime }; } catch(e){ return null; } }).filter(w => w).sort((a,b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json({ success: true, workflows });
+});
+
 adminApp.post('/api/workflows/load/:id', (req, res) => {
-    try {
-        const { id } = req.params;
-        const savedDir = path.join('workflows', 'saved');
-        const files = fs.readdirSync(savedDir);
-        const file = files.find(f => f.includes(id));
-        if (!file) return res.status(404).json({ error: 'Workflow negăsit' });
-        
-        const filePath = path.join(savedDir, file);
-        const savedData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        
-        currentWorkflowData = {
-            raw: savedData.workflow,
-            analysis: savedData.analysis,
-            workflowApi: savedData.analysis.workflowApi || savedData.workflow
-        };
-        currentWorkflowId = id;
-
-        // Reconciliare config
-        uiConfig = reconcileUIConfig(savedData.analysis, savedData.uiConfig);
-        
-        // EXTRAGE TOATE VALORILE ORIGINALE DIN WORKFLOW
-        originalWorkflowValues = extractOriginalWorkflowValues(currentWorkflowData.workflowApi);
-        
-        res.json({ 
-            success: true, 
-            analysis: savedData.analysis, 
-            metadata: savedData.metadata,
-            uiConfig: uiConfig,
-            originalValues: originalWorkflowValues
-        });
-    } catch (error) {
-        console.error('Load workflow error:', error);
-        res.status(500).json({ error: error.message });
-    }
+    const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(req.params.id)); if (!file) return res.status(404).json({ error: 'Not found' });
+    const data = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8'));
+    currentWorkflowData = { raw: data.workflow, analysis: data.analysis, workflowApi: data.analysis.workflowApi || data.workflow };
+    currentWorkflowId = req.params.id; uiConfig = reconcileUIConfig(data.analysis, data.uiConfig); originalWorkflowValues = extractOriginalWorkflowValues(currentWorkflowData.workflowApi);
+    res.json({ success: true, analysis: data.analysis, metadata: data.metadata, uiConfig, originalValues: originalWorkflowValues });
 });
 
-// Salvează workflow curent
 adminApp.post('/api/workflows/save', (req, res) => {
-    try {
-        const { name, description, presets } = req.body;
-        if (!currentWorkflowData) return res.status(400).json({ error: 'Nu există workflow încărcat' });
-        
-        const id = generateId();
-        const filename = `${name.replace(/[^a-z0-9]/gi, '_')}_${id}.json`;
-        const filePath = path.join('workflows', 'saved', filename);
-        
-        const savedData = {
-            metadata: { 
-                id, 
-                name, 
-                description: description || '', 
-                createdAt: new Date().toISOString(),
-                presets: presets || [] 
-            },
-            workflow: currentWorkflowData.raw,
-            analysis: currentWorkflowData.analysis,
-            uiConfig: uiConfig
-        };
-        
-        fs.writeFileSync(filePath, JSON.stringify(savedData, null, 2));
-        currentWorkflowId = id; // Setăm ID-ul curent după salvare
-        res.json({ success: true, filename, id, name });
-    } catch (error) {
-        console.error('Save workflow error:', error);
-        res.status(500).json({ error: error.message });
-    }
+    if (!currentWorkflowData) return res.status(400).json({ error: 'No workflow' });
+    const id = generateId(), name = req.body.name, filePath = path.join('workflows', 'saved', `${name.replace(/[^a-z0-9]/gi, '_')}_${id}.json`);
+    fs.writeFileSync(filePath, JSON.stringify({ metadata: { id, name, description: req.body.description || '', createdAt: new Date().toISOString(), presets: req.body.presets || [] }, workflow: currentWorkflowData.raw, analysis: currentWorkflowData.analysis, uiConfig }, null, 2));
+    currentWorkflowId = id; res.json({ success: true, id, name });
 });
 
-// Șterge workflow
 adminApp.delete('/api/workflows/delete/:id', (req, res) => {
-    try {
-        const { id } = req.params;
-        const savedDir = path.join('workflows', 'saved');
-        
-        if (!fs.existsSync(savedDir)) {
-            return res.status(404).json({ error: 'Directorul workflows nu există' });
-        }
-        
-        const files = fs.readdirSync(savedDir);
-        const file = files.find(f => f.includes(id));
-        
-        if (!file) {
-            return res.status(404).json({ error: 'Workflow negăsit' });
-        }
-        
-        fs.unlinkSync(path.join(savedDir, file));
-        res.json({ success: true });
-    } catch (error) {
-        console.error('Delete workflow error:', error);
-        res.status(500).json({ error: error.message });
-    }
+    const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(req.params.id)); if (file) fs.unlinkSync(path.join('workflows', 'saved', file));
+    res.json({ success: true });
 });
 
-// Încarcă workflow nou
-adminApp.post('/api/workflow/upload', upload.single('workflow'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: 'Nu a fost încărcat niciun fișier' });
-        
-        const workflowContent = fs.readFileSync(req.file.path, 'utf8');
-        const workflowJson = JSON.parse(workflowContent);
-        const analysis = analyzeWorkflow(workflowJson);
-        
-        currentWorkflowData = {
-            raw: workflowJson,
-            analysis: analysis,
-            workflowApi: analysis.workflowApi
-        };
-        
-        // EXTRAGE TOATE VALORILE ORIGINALE DIN WORKFLOW
-        originalWorkflowValues = extractOriginalWorkflowValues(currentWorkflowData.workflowApi);
-        console.log(`📦 Extrase ${Object.keys(originalWorkflowValues).length} valori originale din workflow nou`);
-        
-        // Inițializează uiConfig cu toți parametrii vizibili
-        uiConfig = {
-            visibleInputs: {},
-            visibleParams: {},
-            inputOrder: [],
-            inputNames: {}
-        };
-        
-        // Inițializează toți parametrii ca vizibili și adaugă-i în ordinea unică
-        if (analysis.inputs) {
-            for (const group of analysis.inputs) {
-                for (const input of group.inputs) {
-                    uiConfig.visibleInputs[input.key] = true;
-                    if (!uiConfig.inputOrder.includes(input.key)) {
-                        uiConfig.inputOrder.push(input.key);
-                    }
-                }
-            }
-        }
-
-        if (analysis.advancedInputs) {
-            for (const group of analysis.advancedInputs) {
-                for (const param of group.inputs) {
-                    uiConfig.visibleParams[param.key] = true;
-                    if (!uiConfig.inputOrder.includes(param.key)) {
-                        uiConfig.inputOrder.push(param.key);
-                    }
-                }
-            }
-        }
-        
-        fs.unlinkSync(req.file.path);
-        res.json({ success: true, analysis, originalValues: originalWorkflowValues, uiConfig: uiConfig });
-    } catch (error) {
-        console.error('Workflow upload error:', error);
-        res.status(500).json({ error: error.message });
-    }
+adminApp.post('/api/workflow/upload', upload.single('workflow'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file' });
+    const json = JSON.parse(fs.readFileSync(req.file.path, 'utf8')), analysis = analyzeWorkflow(json);
+    currentWorkflowData = { raw: json, analysis, workflowApi: analysis.workflowApi }; originalWorkflowValues = extractOriginalWorkflowValues(currentWorkflowData.workflowApi);
+    uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
+    analysis.inputs?.forEach(g => g.inputs.forEach(i => { uiConfig.visibleInputs[i.key] = true; uiConfig.inputOrder.push(i.key); }));
+    analysis.advancedInputs?.forEach(g => g.inputs.forEach(p => { uiConfig.visibleParams[p.key] = true; uiConfig.inputOrder.push(p.key); }));
+    fs.unlinkSync(req.file.path); res.json({ success: true, analysis, originalValues: originalWorkflowValues, uiConfig });
 });
 
-// Salvează configurația interfeței
 adminApp.post('/api/config/save', (req, res) => {
-    try {
-        const { config } = req.body;
-        uiConfig = config;
-
-        // Dacă avem un workflow încărcat, salvăm configurația direct în fișierul lui
-        if (currentWorkflowId) {
-            const savedDir = path.join('workflows', 'saved');
-            const files = fs.readdirSync(savedDir);
-            const file = files.find(f => f.includes(currentWorkflowId));
-
-            if (file) {
-                const filePath = path.join(savedDir, file);
-                const savedData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                savedData.uiConfig = config;
-                fs.writeFileSync(filePath, JSON.stringify(savedData, null, 2));
-                console.log(`💾 UI Config salvat pentru workflow: ${currentWorkflowId}`);
-            }
-        }
-
-        // De asemenea, salvăm în locația globală pentru compatibilitate
-        fs.writeFileSync(path.join('workflows', 'ui_config.json'), JSON.stringify(config, null, 2));
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
+    uiConfig = req.body.config;
+    if (currentWorkflowId) {
+        const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(currentWorkflowId));
+        if (file) { const d = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8')); d.uiConfig = uiConfig; fs.writeFileSync(path.join('workflows', 'saved', file), JSON.stringify(d, null, 2)); }
     }
+    fs.writeFileSync(path.join('workflows', 'ui_config.json'), JSON.stringify(uiConfig, null, 2)); res.json({ success: true });
 });
 
-// Încarcă configurația
-adminApp.get('/api/config/load', (req, res) => {
+adminApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file' });
+    const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn); fs.renameSync(req.file.path, p);
+    mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
+    res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+});
+
+async function runWorkflowLogic(req, res, isPublic = false) {
     try {
-        const configPath = path.join('workflows', 'ui_config.json');
-        if (fs.existsSync(configPath)) {
-            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-            uiConfig = config;
-            res.json({ success: true, config });
+        const { mediaFiles, parameters, bypassedNodes, workflowId } = req.body;
+        let workflow, analysis;
+        if (isPublic) {
+            const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId)); if (!file) throw new Error('Not found');
+            const d = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8'));
+            workflow = JSON.parse(JSON.stringify(d.analysis.workflowApi || d.workflow)); analysis = d.analysis;
         } else {
-            res.json({ success: true, config: { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} } });
+            if (!currentWorkflowData) throw new Error('No workflow');
+            workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi)); analysis = currentWorkflowData.analysis;
         }
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Media store to keep track of uploaded files local paths
-const mediaStore = {};
-
-// Upload media
-adminApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: 'Nu a fost încărcat niciun fișier' });
-        
-        const inputKey = req.params.inputKey;
-        const isVideo = req.file.mimetype.startsWith('video/');
-        
-        // Save to output directory so it can be previewed by the frontend
-        const localFilename = `${generateId()}${path.extname(req.file.originalname)}`;
-        const localPath = path.join('output', localFilename);
-        fs.renameSync(req.file.path, localPath);
-        
-        mediaStore[localFilename] = {
-            path: localPath,
-            originalName: req.file.originalname,
-            mimetype: req.file.mimetype
-        };
-        
-        res.json({ 
-            success: true, 
-            filename: localFilename,
-            inputKey: inputKey,
-            type: isVideo ? 'video' : 'image'
-        });
-    } catch (error) {
-        console.error('Media upload error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Rulează workflow
-adminApp.post('/api/workflow/run', async (req, res) => {
-    try {
-        const { mediaFiles, parameters, bypassedNodes } = req.body;
-        if (!currentWorkflowData || !currentWorkflowData.workflowApi) {
-            return res.status(400).json({ error: 'Nu există workflow încărcat' });
+        const target = await getFreestInstance(); workflow = applyBypass(workflow, bypassedNodes);
+        for (const [k, fn] of Object.entries(mediaFiles || {})) {
+            let finalFn = fn; if (mediaStore[fn]) finalFn = (await uploadFileToInstance(target, mediaStore[fn].path, mediaStore[fn].originalName, mediaStore[fn].mimetype)).name;
+            analysis.inputs?.forEach(g => g.inputs?.forEach(i => { if (i.key === k && workflow[i.nodeId]) workflow[i.nodeId].inputs[i.inputName] = finalFn; }));
         }
-
-        // Selectăm instanța cea mai liberă
-        const targetInstance = await getFreestInstance();
-        console.log(`🎯 Executing on instance: ${targetInstance}`);
-        
-        let workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi));
-
-        // Aplicăm bypass-ul pentru noduri (graph surgery)
-        workflow = applyBypass(workflow, bypassedNodes);
-        
-        // Înlocuim fișierele media și le uploadăm la instanța țintă dacă e necesar
-        for (const [inputKey, filename] of Object.entries(mediaFiles || {})) {
-            let finalFilename = filename;
-            if (mediaStore[filename]) {
-                const uploadResult = await uploadFileToInstance(targetInstance, mediaStore[filename].path, mediaStore[filename].originalName, mediaStore[filename].mimetype);
-                finalFilename = uploadResult.name;
-            }
-
-            for (const inputGroup of currentWorkflowData.analysis.inputs) {
-                for (const input of inputGroup.inputs || []) {
-                    if (input.key === inputKey && input.nodeId && workflow[input.nodeId]) {
-                        if (bypassedNodes && bypassedNodes[input.nodeId]) continue;
-                        workflow[input.nodeId].inputs[input.inputName] = finalFilename;
-                    }
+        const finalParams = { ...(isPublic ? extractOriginalWorkflowValues(workflow) : originalWorkflowValues), ...parameters };
+        const auto = parameters?.['_autoRandomSeed'] || {};
+        for (const [pk, v] of Object.entries(finalParams)) {
+            if (shouldGenerateRandomSeed(pk, v, auto)) finalParams[pk] = generateRandomSeed();
+            analysis.advancedInputs?.forEach(g => g.inputs?.forEach(p => {
+                if (p.key === pk && workflow[p.nodeId]) {
+                    let fv = finalParams[pk];
+                    if (p.valueType === 'number') fv = parseFloat(fv); else if (p.valueType === 'boolean') fv = (fv === 'true' || fv === true);
+                    else if (p.valueType === 'pixaroma_editor' && typeof fv === 'string') { try { fv = JSON.parse(fv); } catch(e){} }
+                    workflow[p.nodeId].inputs[p.inputName] = fv;
                 }
-            }
+            }));
         }
-        
-        // IMPORTANT: PĂSTRĂM VALORILE ORIGINALE PENTRU PARAMETRII ASCUNȘI
-        const finalParameters = { ...originalWorkflowValues };
-        
-        // Actualizăm doar parametrii care au fost modificați explicit de utilizator (cei vizibili)
-        for (const [paramKey, value] of Object.entries(parameters || {})) {
-            if (paramKey !== '_autoRandomSeed') {
-                finalParameters[paramKey] = value;
-            }
-        }
-        
-        const autoRandomFlags = parameters['_autoRandomSeed'] || {};
-        
-        for (const [paramKey, value] of Object.entries(finalParameters)) {
-            if (shouldGenerateRandomSeed(paramKey, value, autoRandomFlags)) {
-                finalParameters[paramKey] = generateRandomSeed();
-                console.log(`Generated random seed for ${paramKey}: ${finalParameters[paramKey]}`);
-            }
-        }
-        
-        for (const [paramKey, value] of Object.entries(finalParameters)) {
-            for (const paramGroup of currentWorkflowData.analysis.advancedInputs) {
-                for (const param of paramGroup.inputs || []) {
-                    if (param.key === paramKey && param.nodeId && workflow[param.nodeId]) {
-                        if (bypassedNodes && bypassedNodes[param.nodeId]) continue;
-                        let finalValue = value;
-                        if (param.valueType === 'number' || param.valueType === 'float') {
-                            finalValue = parseFloat(value);
-                            if (isNaN(finalValue)) finalValue = 0;
-                        }
-                        else if (param.valueType === 'boolean') finalValue = value === 'true' || value === true;
-                        else if (param.valueType === 'pixaroma_editor') {
-                            try {
-                                finalValue = typeof value === 'string' ? JSON.parse(value) : value;
-                            } catch (e) {
-                                console.error('Error parsing Pixaroma data:', e);
-                            }
-                        }
-                        workflow[param.nodeId].inputs[param.inputName] = finalValue;
-                        console.log(`✅ Aplicat ${param.key} = (Type: ${param.valueType}) la nodul ${param.nodeId}.${param.inputName}`);
-                    }
-                }
-            }
-        }
-        
-        // VALIDARE PARAMETRI
-        const { workflow: validatedWorkflow, warnings } = validateWorkflowParameters(workflow, finalParameters);
-        
-        // Trimitem workflow-ul la instanța selectată
-        const queueRes = await fetch(`${targetInstance}/prompt`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: validatedWorkflow })
-        });
-        
-        const responseText = await queueRes.text();
-        let queueData;
-        try {
-            queueData = JSON.parse(responseText);
-        } catch (e) {
-            throw new Error(`ComfyUI error: ${responseText.substring(0, 200)}`);
-        }
-        
-        if (queueData.error) {
-            throw new Error(queueData.error.message || JSON.stringify(queueData.error));
-        }
-        
-        const promptId = queueData.prompt_id;
-        let result = null;
-        let attempts = 0;
-        
-        while (!result && attempts < 380) {
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            const historyRes = await fetch(`${targetInstance}/history`);
-            const history = await historyRes.json();
-            if (history[promptId]) {
-                result = history[promptId];
-                break;
-            }
-            attempts++;
-        }
-        
-        if (!result) throw new Error('Timeout așteptând rezultatul');
-        
-        if (result.status && result.status.messages) {
-            const errors = result.status.messages.filter(m => m[0] === 'execution_error');
-            if (errors.length > 0) {
-                const errorDetail = errors[0][1];
-                throw new Error(`ComfyUI Execution Error: ${errorDetail.exception_type} - ${errorDetail.exception_message}`);
-            }
-        }
-
+        const { workflow: vw, warnings } = validateWorkflowParameters(workflow);
+        const qRes = await fetch(`${target}/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: vw }) });
+        const qData = await qRes.json(); if (qData.error) throw new Error(qData.error.message || JSON.stringify(qData.error));
+        let result = null, attempts = 0;
+        while (!result && attempts < 180) { await new Promise(r => setTimeout(r, 2000)); const h = await (await fetch(`${target}/history`)).json(); if (h[qData.prompt_id]) { result = h[qData.prompt_id]; break; } attempts++; }
+        if (!result) throw new Error('Timeout');
         const outputFiles = [];
         for (const [nodeId, output] of Object.entries(result.outputs || {})) {
-            if (output.images && Array.isArray(output.images)) {
-                for (const img of output.images) {
-                    const fileUrl = `${targetInstance}/view?filename=${encodeURIComponent(img.filename)}&type=${img.type}&subfolder=${img.subfolder || ''}`;
-                    const fileRes = await fetch(fileUrl);
-                    const fileBuffer = await fileRes.buffer();
-                    const ext = path.extname(img.filename) || '.png';
-                    const localFilename = `${generateId()}${ext}`;
-                    fs.writeFileSync(path.join('output', localFilename), fileBuffer);
-                    outputFiles.push({ 
-                        filename: localFilename, 
-                        url: `/output/${localFilename}`, 
-                        type: img.type === 'video' || ext === '.mp4' ? 'video' : 'image' 
-                    });
-                }
-            }
-            if (output.videos && Array.isArray(output.videos)) {
-                for (const video of output.videos) {
-                    const fileUrl = `${targetInstance}/view?filename=${encodeURIComponent(video.filename)}&type=${video.type}&subfolder=${video.subfolder || ''}`;
-                    const fileRes = await fetch(fileUrl);
-                    const fileBuffer = await fileRes.buffer();
-                    const ext = path.extname(video.filename) || '.mp4';
-                    const localFilename = `${generateId()}${ext}`;
-                    fs.writeFileSync(path.join('output', localFilename), fileBuffer);
-                    outputFiles.push({ 
-                        filename: localFilename, 
-                        url: `/output/${localFilename}`, 
-                        type: 'video' 
-                    });
-                }
+            for (const item of [...(output.images || []), ...(output.videos || [])]) {
+                const fileRes = await fetch(`${target}/view?filename=${encodeURIComponent(item.filename)}&type=${item.type}&subfolder=${item.subfolder || ''}`);
+                const localFn = `${generateId()}${path.extname(item.filename) || (item.type === 'video' ? '.mp4' : '.png')}`;
+                fs.writeFileSync(path.join('output', localFn), await fileRes.buffer());
+                outputFiles.push({ filename: localFn, url: `/output/${localFn}`, type: item.type === 'video' || localFn.endsWith('.mp4') ? 'video' : 'image' });
             }
         }
-        
         res.json({ success: true, files: outputFiles, warnings: warnings.length > 0 ? warnings : undefined });
-    } catch (error) {
-        console.error('Workflow run error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Port config endpoint
-adminApp.get('/api/config', (req, res) => {
-    res.json({
-        adminPort: ADMIN_PORT,
-        publicPort: PUBLIC_PORT,
-        comfyuiUrls: COMFYUI_URLS
-    });
-});
-
-// API pentru setări server
-adminApp.post('/api/settings', (req, res) => {
-    try {
-        const { comfyuiUrls } = req.body;
-        if (comfyuiUrls && Array.isArray(comfyuiUrls) && comfyuiUrls.length > 0) {
-            COMFYUI_URLS = comfyuiUrls;
-            CONFIG.COMFYUI_URLS = COMFYUI_URLS;
-            fs.writeFileSync(CONFIG_FILE, JSON.stringify(CONFIG, null, 2));
-            console.log(`🔧 URL-uri ComfyUI actualizate: ${COMFYUI_URLS.join(', ')}`);
-            res.json({ success: true, comfyuiUrls: COMFYUI_URLS });
-        } else {
-            res.status(400).json({ error: 'URL-uri invalide' });
-        }
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// API pentru ștergere fișier din output
-adminApp.delete('/api/outputs/:filename', (req, res) => {
-    try {
-        const { filename } = req.params;
-        const filePath = path.join('output', filename);
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-            res.json({ success: true });
-        } else {
-            res.status(404).json({ error: 'Fișier negăsit' });
-        }
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// API pentru browser de fișiere (Output)
-adminApp.get('/api/outputs', (req, res) => {
-    try {
-        const outputDir = 'output';
-        if (!fs.existsSync(outputDir)) return res.json({ files: [] });
-
-        const files = fs.readdirSync(outputDir)
-            .filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase()))
-            .map(f => {
-                const stat = fs.statSync(path.join(outputDir, f));
-                return {
-                    name: f,
-                    url: `/output/${f}`,
-                    type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image',
-                    mtime: stat.mtime
-                };
-            })
-            .sort((a, b) => b.mtime - a.mtime);
-
-        res.json({ files });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Health check admin
-adminApp.get('/api/health', async (req, res) => {
-    try {
-        const results = await Promise.all(COMFYUI_URLS.map(async (url) => {
-            try {
-                const response = await fetch(`${url}/system_stats`, { timeout: 2000 });
-                return { url, status: response.ok ? 'connected' : 'disconnected' };
-            } catch (e) {
-                return { url, status: 'disconnected' };
-            }
-        }));
-
-        const connectedCount = results.filter(r => r.status === 'connected').length;
-        res.json({
-            status: connectedCount > 0 ? 'ok' : 'error',
-            comfyui: connectedCount > 0 ? 'connected' : 'disconnected',
-            instances: results
-        });
-    } catch (error) {
-        res.json({ status: 'error', comfyui: 'disconnected' });
-    }
-});
-
-// ============ RUTE PUBLIC ============
-
-// Lista workflow-uri pentru public
-publicApp.get('/api/workflows/list', (req, res) => {
-    try {
-        const savedDir = path.join('workflows', 'saved');
-        if (!fs.existsSync(savedDir)) {
-            fs.mkdirSync(savedDir, { recursive: true });
-            return res.json({ success: true, workflows: [] });
-        }
-        
-        const files = fs.readdirSync(savedDir);
-        const workflows = files
-            .filter(f => f.endsWith('.json'))
-            .map(f => {
-                try {
-                    const filePath = path.join(savedDir, f);
-                    const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-                    return {
-                        id: f.replace('.json', ''),
-                        name: content.metadata?.name || f.replace('.json', ''),
-                        description: content.metadata?.description || ''
-                    };
-                } catch (e) { return null; }
-            })
-            .filter(w => w !== null);
-        
-        res.json({ success: true, workflows });
-    } catch (error) {
-        console.error('Public list workflows error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Încarcă workflow pentru public
-publicApp.post('/api/workflows/load/:id', (req, res) => {
-    try {
-        const { id } = req.params;
-        const savedDir = path.join('workflows', 'saved');
-        const files = fs.readdirSync(savedDir);
-        const file = files.find(f => f.includes(id));
-        if (!file) return res.status(404).json({ error: 'Workflow negăsit' });
-        
-        const filePath = path.join(savedDir, file);
-        const savedData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        
-        const publicAnalysis = {
-            title: savedData.analysis.title,
-            inputs: savedData.analysis.inputs,
-            advancedInputs: savedData.analysis.advancedInputs,
-            hasVideoInput: savedData.analysis.hasVideoInput,
-            hasVideoOutput: savedData.analysis.hasVideoOutput
-        };
-        
-        // Reconciliare config pentru public (folosim funcția comună)
-        const publicUIConfig = reconcileUIConfig(savedData.analysis, savedData.uiConfig);
-        
-        const originalValues = extractOriginalWorkflowValues(savedData.analysis.workflowApi);
-        
-        res.json({ 
-            success: true, 
-            analysis: publicAnalysis, 
-            presets: savedData.metadata?.presets || [],
-            uiConfig: publicUIConfig,
-            originalValues: originalValues
-        });
-    } catch (error) {
-        console.error('Public load workflow error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Upload media pentru public
-publicApp.post('/api/upload/media/:inputKey', upload.single('media'), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: 'Nu a fost încărcat niciun fișier' });
-        
-        const inputKey = req.params.inputKey;
-        const isVideo = req.file.mimetype.startsWith('video/');
-        
-        // Save to output directory
-        const localFilename = `${generateId()}${path.extname(req.file.originalname)}`;
-        const localPath = path.join('output', localFilename);
-        fs.renameSync(req.file.path, localPath);
-        
-        mediaStore[localFilename] = {
-            path: localPath,
-            originalName: req.file.originalname,
-            mimetype: req.file.mimetype
-        };
-        
-        res.json({ 
-            success: true, 
-            filename: localFilename,
-            inputKey: inputKey,
-            type: isVideo ? 'video' : 'image'
-        });
-    } catch (error) {
-        console.error('Public media upload error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Rulează workflow pentru public
-publicApp.post('/api/workflow/run', async (req, res) => {
-    try {
-        const { mediaFiles, parameters, workflowId, bypassedNodes } = req.body;
-        
-        const savedDir = path.join('workflows', 'saved');
-        const files = fs.readdirSync(savedDir);
-        const file = files.find(f => f.includes(workflowId));
-        if (!file) return res.status(404).json({ error: 'Workflow negăsit' });
-
-        // Selectăm instanța cea mai liberă
-        const targetInstance = await getFreestInstance();
-        console.log(`🎯 [Public] Executing on instance: ${targetInstance}`);
-        
-        const filePath = path.join(savedDir, file);
-        const savedData = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        let workflow = JSON.parse(JSON.stringify(savedData.analysis.workflowApi || savedData.workflow));
-
-        // Aplicăm bypass-ul pentru noduri (graph surgery)
-        workflow = applyBypass(workflow, bypassedNodes);
-        const analysis = savedData.analysis;
-        
-        // Extrage valorile originale
-        const originalValues = extractOriginalWorkflowValues(workflow);
-        
-        for (const [inputKey, filename] of Object.entries(mediaFiles || {})) {
-            let finalFilename = filename;
-            if (mediaStore[filename]) {
-                const uploadResult = await uploadFileToInstance(targetInstance, mediaStore[filename].path, mediaStore[filename].originalName, mediaStore[filename].mimetype);
-                finalFilename = uploadResult.name;
-            }
-
-            for (const inputGroup of analysis.inputs) {
-                for (const input of inputGroup.inputs || []) {
-                    if (input.key === inputKey && input.nodeId && workflow[input.nodeId]) {
-                        if (bypassedNodes && bypassedNodes[input.nodeId]) continue;
-                        workflow[input.nodeId].inputs[input.inputName] = finalFilename;
-                    }
-                }
-            }
-        }
-        
-        // PĂSTRĂM VALORILE ORIGINALE PENTRU PARAMETRII ASCUNȘI
-        const finalParameters = { ...originalValues };
-        
-        // Actualizăm doar parametrii vizibili modificați
-        for (const [paramKey, value] of Object.entries(parameters || {})) {
-            if (paramKey !== '_autoRandomSeed') {
-                finalParameters[paramKey] = value;
-            }
-        }
-        
-        const autoRandomFlags = parameters['_autoRandomSeed'] || {};
-        
-        for (const [paramKey, value] of Object.entries(finalParameters)) {
-            if (shouldGenerateRandomSeed(paramKey, value, autoRandomFlags)) {
-                finalParameters[paramKey] = generateRandomSeed();
-                console.log(`Generated random seed for ${paramKey}: ${finalParameters[paramKey]}`);
-            }
-        }
-        
-        for (const [paramKey, value] of Object.entries(finalParameters)) {
-            for (const paramGroup of analysis.advancedInputs) {
-                for (const param of paramGroup.inputs || []) {
-                    if (param.key === paramKey && param.nodeId && workflow[param.nodeId]) {
-                        if (bypassedNodes && bypassedNodes[param.nodeId]) continue;
-                        let finalValue = value;
-                        if (param.valueType === 'number' || param.valueType === 'float') {
-                            finalValue = parseFloat(value);
-                            if (isNaN(finalValue)) finalValue = 0;
-                        }
-                        else if (param.valueType === 'boolean') finalValue = value === 'true' || value === true;
-                        else if (param.valueType === 'pixaroma_editor') {
-                            try {
-                                finalValue = typeof value === 'string' ? JSON.parse(value) : value;
-                            } catch (e) {
-                                console.error('Error parsing Pixaroma data:', e);
-                            }
-                        }
-                        workflow[param.nodeId].inputs[param.inputName] = finalValue;
-                    }
-                }
-            }
-        }
-        
-        // VALIDARE PARAMETRI
-        const { workflow: validatedWorkflow, warnings } = validateWorkflowParameters(workflow, finalParameters);
-        
-        const queueRes = await fetch(`${targetInstance}/prompt`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: validatedWorkflow })
-        });
-        
-        const responseText = await queueRes.text();
-        let queueData;
-        try {
-            queueData = JSON.parse(responseText);
-        } catch (e) {
-            throw new Error(`ComfyUI error: ${responseText.substring(0, 200)}`);
-        }
-        
-        if (queueData.error) throw new Error(queueData.error.message || JSON.stringify(queueData.error));
-        
-        const promptId = queueData.prompt_id;
-        let result = null;
-        let attempts = 0;
-        
-        while (!result && attempts < 180) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            const historyRes = await fetch(`${targetInstance}/history`);
-            const history = await historyRes.json();
-            if (history[promptId]) {
-                result = history[promptId];
-                break;
-            }
-            attempts++;
-        }
-        
-        if (!result) throw new Error('Timeout așteptând rezultatul');
-        
-        if (result.status && result.status.messages) {
-            const errors = result.status.messages.filter(m => m[0] === 'execution_error');
-            if (errors.length > 0) {
-                const errorDetail = errors[0][1];
-                throw new Error(`ComfyUI Execution Error: ${errorDetail.exception_type} - ${errorDetail.exception_message}`);
-            }
-        }
-
-        const outputFiles = [];
-        for (const [nodeId, output] of Object.entries(result.outputs || {})) {
-            if (output.images && Array.isArray(output.images)) {
-                for (const img of output.images) {
-                    const fileUrl = `${targetInstance}/view?filename=${encodeURIComponent(img.filename)}&type=${img.type}&subfolder=${img.subfolder || ''}`;
-                    const fileRes = await fetch(fileUrl);
-                    const fileBuffer = await fileRes.buffer();
-                    const ext = path.extname(img.filename) || '.png';
-                    const localFilename = `${generateId()}${ext}`;
-                    fs.writeFileSync(path.join('output', localFilename), fileBuffer);
-                    outputFiles.push({ 
-                        filename: localFilename, 
-                        url: `/output/${localFilename}`, 
-                        type: img.type === 'video' || ext === '.mp4' ? 'video' : 'image' 
-                    });
-                }
-            }
-            if (output.videos && Array.isArray(output.videos)) {
-                for (const video of output.videos) {
-                    const fileUrl = `${targetInstance}/view?filename=${encodeURIComponent(video.filename)}&type=${video.type}&subfolder=${video.subfolder || ''}`;
-                    const fileRes = await fetch(fileUrl);
-                    const fileBuffer = await fileRes.buffer();
-                    const ext = path.extname(video.filename) || '.mp4';
-                    const localFilename = `${generateId()}${ext}`;
-                    fs.writeFileSync(path.join('output', localFilename), fileBuffer);
-                    outputFiles.push({ 
-                        filename: localFilename, 
-                        url: `/output/${localFilename}`, 
-                        type: 'video' 
-                    });
-                }
-            }
-        }
-        
-        res.json({ success: true, files: outputFiles, warnings: warnings.length > 0 ? warnings : undefined });
-    } catch (error) {
-        console.error('Public workflow run error:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Port config endpoint
-publicApp.get('/api/config', (req, res) => {
-    res.json({
-        adminPort: ADMIN_PORT,
-        publicPort: PUBLIC_PORT,
-        comfyuiUrls: COMFYUI_URLS
-    });
-});
-
-// API pentru browser de fișiere (Public are acces doar la vizualizare)
-publicApp.get('/api/outputs', (req, res) => {
-    try {
-        const outputDir = 'output';
-        if (!fs.existsSync(outputDir)) return res.json({ files: [] });
-
-        const files = fs.readdirSync(outputDir)
-            .filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase()))
-            .map(f => {
-                const stat = fs.statSync(path.join(outputDir, f));
-                return {
-                    name: f,
-                    url: `/output/${f}`,
-                    type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image',
-                    mtime: stat.mtime
-                };
-            })
-            .sort((a, b) => b.mtime - a.mtime);
-
-        res.json({ files });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Health check public
-publicApp.get('/api/health', async (req, res) => {
-    try {
-        const results = await Promise.all(COMFYUI_URLS.map(async (url) => {
-            try {
-                const response = await fetch(`${url}/system_stats`, { timeout: 2000 });
-                return { url, status: response.ok ? 'connected' : 'disconnected' };
-            } catch (e) {
-                return { url, status: 'disconnected' };
-            }
-        }));
-
-        const connectedCount = results.filter(r => r.status === 'connected').length;
-        res.json({
-            status: connectedCount > 0 ? 'ok' : 'error',
-            comfyui: connectedCount > 0 ? 'connected' : 'disconnected',
-            instances: results
-        });
-    } catch (error) {
-        res.json({ status: 'error', comfyui: 'disconnected' });
-    }
-});
-
-// ============ PORNIRE SERVER ============
-
-async function startServers() {
-    ADMIN_PORT = await findFreePort(ADMIN_PORT);
-    // Asigurăm că PUBLIC_PORT nu este același cu ADMIN_PORT
-    if (PUBLIC_PORT <= ADMIN_PORT) PUBLIC_PORT = ADMIN_PORT + 1;
-    PUBLIC_PORT = await findFreePort(PUBLIC_PORT);
-
-    adminApp.listen(ADMIN_PORT, '0.0.0.0', () => {
-        console.log(`
-        🔧 ADMIN INTERFACE
-        📡 http://localhost:${ADMIN_PORT}
-        `);
-    });
-
-    publicApp.listen(PUBLIC_PORT, '0.0.0.0', () => {
-        console.log(`
-        🌐 PUBLIC INTERFACE
-        📡 http://localhost:${PUBLIC_PORT}
-        `);
-    });
-
-    console.log(`
-    🚀 ComfyUI Remote Interface
-    🔗 ComfyUI Nodes: ${COMFYUI_URLS.join(', ')}
-    📁 Workflows: workflows/saved/
-    `);
+    } catch (e) { res.status(500).json({ error: e.message }); }
 }
 
-startServers();
+adminApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res));
+publicApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res, true));
 
+adminApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
+adminApp.post('/api/settings', (req, res) => { COMFYUI_URLS = req.body.comfyuiUrls; CONFIG.COMFYUI_URLS = COMFYUI_URLS; fs.writeFileSync(CONFIG_FILE, JSON.stringify(CONFIG, null, 2)); res.json({ success: true }); });
+adminApp.delete('/api/outputs/:filename', (req, res) => { const p = path.join('output', req.params.filename); if (fs.existsSync(p)) fs.unlinkSync(p); res.json({ success: true }); });
+adminApp.get('/api/outputs', (req, res) => res.json({ files: fs.readdirSync('output').filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase())).map(f => ({ name: f, url: `/output/${f}`, type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image', mtime: fs.statSync(path.join('output', f)).mtime })).sort((a,b) => b.mtime - a.mtime) }));
+adminApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
+
+publicApp.get('/api/workflows/list', (req, res) => {
+    const savedDir = path.join('workflows', 'saved'); if (!fs.existsSync(savedDir)) return res.json({ workflows: [] });
+    res.json({ success: true, workflows: fs.readdirSync(savedDir).filter(f => f.endsWith('.json')).map(f => { try { const c = JSON.parse(fs.readFileSync(path.join(savedDir, f), 'utf8')); return { id: f.replace('.json', ''), name: c.metadata?.name || f.replace('.json', ''), description: c.metadata?.description || '' }; } catch(e){ return null; } }).filter(w => w) });
+});
+publicApp.post('/api/workflows/load/:id', (req, res) => {
+    const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(req.params.id)); if (!file) return res.status(404).json({ error: 'Not found' });
+    const d = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8'));
+    res.json({ success: true, analysis: d.analysis, presets: d.metadata?.presets || [], uiConfig: reconcileUIConfig(d.analysis, d.uiConfig), originalValues: extractOriginalWorkflowValues(d.analysis.workflowApi) });
+});
+publicApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
+    const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn); fs.renameSync(req.file.path, p);
+    mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
+    res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+});
+publicApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
+publicApp.get('/api/outputs', (req, res) => res.json({ files: fs.readdirSync('output').filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase())).map(f => ({ name: f, url: `/output/${f}`, type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image', mtime: fs.statSync(path.join('output', f)).mtime })).sort((a,b) => b.mtime - a.mtime) }));
+publicApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
+
+// ============ START ============
+
+async function startServers() {
+    ADMIN_PORT = await findFreePort(ADMIN_PORT); PUBLIC_PORT = await findFreePort(Math.max(PUBLIC_PORT, ADMIN_PORT + 1));
+    const adminServer = adminApp.listen(ADMIN_PORT, '0.0.0.0', () => console.log(`🔧 ADMIN http://localhost:${ADMIN_PORT}`));
+    const publicServer = publicApp.listen(PUBLIC_PORT, '0.0.0.0', () => console.log(`🌐 PUBLIC http://localhost:${PUBLIC_PORT}`));
+    const setupWsProxy = (server) => {
+        const wss = new WebSocket.Server({ noServer: true });
+        server.on('upgrade', async (req, socket, head) => {
+            if (req.url === '/ws') {
+                const remoteWs = new WebSocket((await getFreestInstance()).replace(/^http/, 'ws') + '/ws');
+                wss.handleUpgrade(req, socket, head, (ws) => {
+                    remoteWs.on('open', () => { ws.on('message', m => remoteWs.send(m)); remoteWs.on('message', m => ws.send(m)); });
+                    remoteWs.on('close', () => ws.close()); ws.on('close', () => remoteWs.close());
+                    remoteWs.on('error', () => ws.close()); ws.on('error', () => remoteWs.close());
+                });
+            }
+        });
+    };
+    setupWsProxy(adminServer); setupWsProxy(publicServer);
+}
+startServers();
