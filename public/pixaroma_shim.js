@@ -76,38 +76,44 @@ window.LiteGraph = window.LiteGraph || {
 let activeEditorCallback = null;
 
 function applyDataToEditor(instance, data) {
-    if (!instance || !data) return;
+    if (!instance || !data || Object.keys(data).length === 0) return;
     try {
-        console.log("[Shim] Applying data to instance...");
-
-        // Anti-cube / Anti-default logic
+        // Anti-cube / Anti-default logic - only clear if it looks like a default cube and we are replacing it
         if (instance.scene && instance.scene.traverse) {
-            console.log("[Shim] Clearing default scene objects before load...");
             const toRemove = [];
+            let meshCount = 0;
+            instance.scene.traverse(obj => { if (obj.type === 'Mesh') meshCount++; });
+
             instance.scene.traverse(obj => {
-                // More precise anti-cube: target objects that look like the default Pixaroma cube
                 const isMesh = obj.type === 'Mesh';
                 const isDefaultName = obj.name.toLowerCase() === 'cube' || obj.name === 'Mesh' || !obj.name;
-                if (isMesh && isDefaultName && obj.geometry && obj.geometry.type === 'BoxGeometry') {
-                    toRemove.push(obj);
+                if (isMesh && isDefaultName && obj.geometry && (obj.geometry.type === 'BoxGeometry' || obj.geometry.type === 'BoxBufferGeometry')) {
+                    // Only nuke it if it's one of very few objects (likely default) or if we haven't successfully loaded our data yet
+                    if (meshCount < 3 || !instance._data_applied_successfully) {
+                        toRemove.push(obj);
+                    }
                 }
             });
-            toRemove.forEach(obj => {
-                if (obj.parent) obj.parent.remove(obj);
-                if (obj.geometry) obj.geometry.dispose();
-                if (obj.material) {
-                    if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
-                    else obj.material.dispose();
-                }
-            });
+            if (toRemove.length > 0) {
+                console.log(`[Shim] Clearing ${toRemove.length} potential default objects...`);
+                toRemove.forEach(obj => {
+                    if (obj.parent) obj.parent.remove(obj);
+                    if (obj.geometry) obj.geometry.dispose();
+                    if (obj.material) {
+                        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                        else obj.material.dispose();
+                    }
+                });
+            }
         }
 
-        if (typeof instance.setProjectData === 'function') instance.setProjectData(data);
-        else if (typeof instance.loadData === 'function') instance.loadData(data);
-        else if (typeof instance.loadProject === 'function') instance.loadProject(data);
-        else if (instance.project && typeof instance.project.load === 'function') instance.project.load(data);
-        else if (instance.scene && typeof instance.scene.load === 'function') instance.scene.load(data);
-        else if (instance.load && typeof instance.load === 'function') instance.load(data);
+        console.log("[Shim] Applying session data to editor instance...");
+        if (typeof instance.setProjectData === 'function') { instance.setProjectData(data); instance._data_applied_successfully = true; }
+        else if (typeof instance.loadData === 'function') { instance.loadData(data); instance._data_applied_successfully = true; }
+        else if (typeof instance.loadProject === 'function') { instance.loadProject(data); instance._data_applied_successfully = true; }
+        else if (instance.project && typeof instance.project.load === 'function') { instance.project.load(data); instance._data_applied_successfully = true; }
+        else if (instance.scene && typeof instance.scene.load === 'function') { instance.scene.load(data); instance._data_applied_successfully = true; }
+        else if (instance.load && typeof instance.load === 'function') { instance.load(data); instance._data_applied_successfully = true; }
 
     } catch(e) { console.error("[Shim] Error applying data:", e); }
 }
@@ -142,42 +148,40 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
             const latestData = window._pixaroma_node_data.get(targetId);
             const openData = (latestData && Object.keys(latestData).length > 0) ? latestData : (data || sessionData);
 
-            console.log(`[Shim] ${editorClassName}.open() called with data:`, openData);
+            console.log(`[Shim] ${editorClassName}.open() called for Node ${targetId}`);
             this._nodeId = targetId;
 
-            // Try applying data immediately
             applyDataToEditor(this, openData);
 
-            let internalOnSave = null;
-            Object.defineProperty(this, 'onSave', {
-                get: () => (jsonStr, dataURL) => {
-                    const saveId = this._nodeId || window._pixaroma_active_node_id;
-                    console.log(`[Shim] Save Captured for Node ${saveId}`);
-                    try {
-                        const saved = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
-                        window._pixaroma_node_data.set(saveId, saved);
-                    } catch(e) { window._pixaroma_node_data.set(saveId, jsonStr); }
+            if (!this._hijacked_save) {
+                let internalOnSave = null;
+                Object.defineProperty(this, 'onSave', {
+                    get: () => (jsonStr, dataURL) => {
+                        const saveId = this._nodeId || window._pixaroma_active_node_id;
+                        console.log(`[Shim] Save Captured for Node ${saveId}`);
+                        try {
+                            const saved = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+                            window._pixaroma_node_data.set(saveId, saved);
+                        } catch(e) { window._pixaroma_node_data.set(saveId, jsonStr); }
 
-                    showToast();
-                    if (internalOnSave) internalOnSave.call(this, jsonStr, dataURL);
-                    if (activeEditorCallback) activeEditorCallback(jsonStr, dataURL);
-
-                    if (typeof this.unmount === 'function') this.unmount();
-                    else if (typeof this.close === 'function') this.close();
-                },
-                set: (val) => { internalOnSave = val; },
-                configurable: true
-            });
-
-                const res = origOpen.call(this, openData);
-                // Multi-stage application to fight async resets
-                [50, 200, 500, 1000].forEach(ms => {
-                    setTimeout(() => applyDataToEditor(this, openData), ms);
+                        showToast();
+                        if (internalOnSave) internalOnSave.call(this, jsonStr, dataURL);
+                        if (activeEditorCallback) activeEditorCallback(jsonStr, dataURL);
+                        if (typeof this.unmount === 'function') this.unmount();
+                        else if (typeof this.close === 'function') this.close();
+                    },
+                    set: (val) => { internalOnSave = val; },
+                    configurable: true
                 });
-                return res;
-            };
-            OriginalClass._hijacked = true;
-        }
+                this._hijacked_save = true;
+            }
+
+            const res = origOpen.call(this, openData);
+            [100, 300, 700, 1500].forEach(ms => setTimeout(() => applyDataToEditor(this, openData), ms));
+            return res;
+        };
+        OriginalClass._hijacked = true;
+    }
 
     const mockNode = {
         comfyClass: nodeType,
@@ -221,7 +225,10 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
         }
     });
 
-    const openButton = mockNode.widgets.find(w => w.type === 'button' && (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor')));
+    const openButton = mockNode.widgets.find(w => w.type === 'button' &&
+        (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor') ||
+         w.name.toLowerCase().includes('builder') || w.name.toLowerCase().includes('studio') ||
+         w.name.toLowerCase().includes('composer') || w.name.toLowerCase().includes('compare')));
     if (openButton && typeof openButton.callback === 'function') {
         const OriginalClass = window._pixaroma_classes[editorClassName];
         if (OriginalClass) {
@@ -259,9 +266,10 @@ function getEditorClass(nodeType) {
         Pixaroma3D: 'Pixaroma3DEditor', PixaromaPaint: 'PixaromaPaintEditor',
         PixaromaImageComposition: 'PixaromaComposerEditor', PixaromaCrop: 'PixaromaCropEditor',
         PixaromaImageCompare: 'PixaromaCompareEditor', Pixaroma3DBuilder: 'Pixaroma3DBuilder',
-        PixaromaPaintStudio: 'PixaromaPaintStudio', PixaromaImageComposer: 'PixaromaComposerEditor'
+        PixaromaPaintStudio: 'PixaromaPaintStudio', PixaromaImageComposer: 'PixaromaComposerEditor',
+        Pixaroma3DScene: 'Pixaroma3DEditor', PixaromaCanvas: 'PixaromaPaintEditor'
     };
-    return map[nodeType] || '';
+    return map[nodeType] || (nodeType.replace('Pixaroma', '') + 'Editor');
 }
 
 async function loadPixaromaExtension(nodeType) {
@@ -284,19 +292,18 @@ async function loadPixaromaExtension(nodeType) {
         ];
         for (const p of paths) {
             try {
-                console.log(`[Shim] Trying to import module from: ${p}`);
                 const module = await import(p);
-                // Look for class variants
                 let exportedClass = module[editorClassName] || module['PaintEditor'] || module['ComposerEditor'] || module['CompareEditor'] || module['PixaromaPaintStudio'] || module['Pixaroma3DBuilder'] || module['PaintStudio'] || module['ComposerStudio'];
 
                 if (!exportedClass) {
                     for (const key of Object.keys(module)) {
                         if (key.endsWith('Editor') || key.endsWith('Studio') || key.endsWith('Builder')) {
-                            exportedClass = module[key];
-                            break;
+                            exportedClass = module[key]; break;
                         }
                     }
                 }
+
+                if (!exportedClass && window[editorClassName]) exportedClass = window[editorClassName];
 
                 if (exportedClass) {
                     window._pixaroma_classes[editorClassName] = exportedClass;
@@ -304,7 +311,7 @@ async function loadPixaromaExtension(nodeType) {
                     console.log(`[Shim] Loaded ${editorClassName} from ${p}`);
                     return;
                 }
-            } catch (e) {}
+            } catch (e) { console.warn(`[Shim] Failed import ${p}:`, e.message); }
         }
     }
     throw new Error(`Failed to load module for ${nodeType}`);

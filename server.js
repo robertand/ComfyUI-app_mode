@@ -278,25 +278,25 @@ async function proxyToComfy(req, res) {
         if (response.status === 404 && (targetPath.toLowerCase().includes('pixaroma') || targetPath.toLowerCase().includes('pxf'))) {
             const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
             const fallbacks = [];
-            const subFromPix = targetPath.includes('/pixaroma/') ? targetPath.split('/pixaroma/')[1] : targetPath.split('/').pop();
-            const folderName = subFromPix.split('/')[0];
-            const fileName = subFromPix.split('/').pop();
+
+            let rel = "";
+            if (targetPath.includes('/pixaroma/')) rel = targetPath.split('/pixaroma/')[1];
+            else if (targetPath.includes('/extensions/')) {
+                for (const v of variants) { if (targetPath.includes(`/${v}/`)) { rel = targetPath.split(`/${v}/`)[1]; break; } }
+                if (!rel) rel = targetPath.split('/').slice(3).join('/');
+            }
+            if (!rel) rel = targetPath.split('/').pop();
+
+            const cleanRel = rel.replace(/^assets\//, '').replace(/^js\//, '');
+            const parts = rel.split('/');
+            const folder = parts.length > 1 ? parts[0] : '';
+            const file = parts[parts.length - 1];
 
             variants.forEach(v => {
                 const base = `/extensions/${v}/`;
-                const cleanSub = subFromPix.replace('assets/', '');
-                fallbacks.push(`${base}${cleanSub}`);
-                fallbacks.push(`${base}${subFromPix}`);
-                fallbacks.push(`${base}js/${cleanSub}`);
-                fallbacks.push(`${base}js/${subFromPix}`);
-                fallbacks.push(`${base}js/${folderName}/${fileName}`);
-                fallbacks.push(`${base}js/pixaroma_${folderName}.js`);
-
-                if (subFromPix.includes('assets/')) {
-                    const assetSub = subFromPix.split('assets/')[1];
-                    fallbacks.push(`${base}${assetSub}`);
-                    fallbacks.push(`${base}js/${assetSub}`);
-                }
+                [rel, cleanRel, `js/${rel}`, `js/${cleanRel}`, `${folder}/${file}`, `js/${folder}/${file}`].forEach(p => {
+                    if (p) fallbacks.push(`${base}${p}`);
+                });
             });
 
             console.log(`[Proxy] 404 for ${targetPath}. Trying ${fallbacks.length} fallbacks...`);
