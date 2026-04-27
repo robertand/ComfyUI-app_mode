@@ -368,38 +368,68 @@ async function runWorkflowLogic(req, res, isPublic = false) {
             workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi)); analysis = currentWorkflowData.analysis;
         }
         const target = await getFreestInstance(); workflow = applyBypass(workflow, bypassedNodes);
+
+        // ALWAYS filter out trigger buttons from Pixaroma nodes in the outgoing prompt
+        Object.values(workflow).forEach(node => {
+            if (node.class_type?.startsWith('Pixaroma') && node.inputs) {
+                Object.keys(node.inputs).forEach(key => { if (key.startsWith('Open')) delete node.inputs[key]; });
+            }
+        });
+
         for (const [k, fn] of Object.entries(mediaFiles || {})) {
             let finalFn = fn; if (mediaStore[fn]) finalFn = (await uploadFileToInstance(target, mediaStore[fn].path, mediaStore[fn].originalName, mediaStore[fn].mimetype)).name;
             analysis.inputs?.forEach(g => g.inputs?.forEach(i => { if (i.key === k && workflow[i.nodeId]) workflow[i.nodeId].inputs[i.inputName] = finalFn; }));
         }
 
-        // SYNC: Ensure we use the latest memory if this is the active admin session
-        const baseParams = (!isPublic && currentWorkflowId) ? originalWorkflowValues : extractOriginalWorkflowValues(workflow);
-        const finalParams = { ...baseParams, ...parameters };
+        let baseParams = {};
+        if (isPublic) baseParams = extractOriginalWorkflowValues(workflow);
+        else if (currentWorkflowId) {
+            const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(currentWorkflowId));
+            if (file) { const data = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8')); baseParams = extractOriginalWorkflowValues(data.analysis.workflowApi || data.workflow); }
+            else baseParams = originalWorkflowValues;
+        }
 
+        const finalParams = { ...baseParams, ...parameters };
         const auto = parameters?.['_autoRandomSeed'] || {};
+
         for (const [pk, v] of Object.entries(finalParams)) {
             if (shouldGenerateRandomSeed(pk, v, auto)) finalParams[pk] = generateRandomSeed();
             analysis.advancedInputs.forEach(g => g.inputs?.forEach(p => {
                 if (p.key === pk && workflow[p.nodeId]) {
+                    if (p.nodeType?.startsWith('Pixaroma') && p.inputName?.startsWith('Open')) return;
                     let fv = finalParams[pk];
-                    if (p.valueType === 'number') fv = parseFloat(fv); else if (p.valueType === 'boolean') fv = (fv === 'true' || fv === true);
-                    else if (p.valueType === 'pixaroma_editor' && typeof fv === 'string') { try { fv = JSON.parse(fv); } catch(e){} }
+                    if (p.valueType === 'number') fv = parseFloat(fv);
+                    else if (p.valueType === 'boolean') fv = (fv === 'true' || fv === true);
+                    else if (p.valueType === 'pixaroma_editor') {
+                        // CRITICAL: Force STRING for API submission.
+                        // Many custom nodes fail if they get an object when expecting a JSON string.
+                        if (typeof fv === 'object') fv = JSON.stringify(fv);
+                        else if (typeof fv === 'string' && (fv.startsWith('{') || fv.startsWith('['))) {
+                            // Already a JSON string, ensure it's not double-stringified
+                            try {
+                                const parsed = JSON.parse(fv);
+                                fv = JSON.stringify(parsed);
+                            } catch(e) {}
+                        }
+                    }
                     workflow[p.nodeId].inputs[p.inputName] = fv;
-                    console.log(`[Run] Applying ${pk} to Node ${p.nodeId} (${p.inputName}):`, typeof fv === 'object' ? 'JSON object' : fv);
+                    if (p.valueType === 'pixaroma_editor') {
+                        console.log(`[Run] Applied Pixaroma ${p.nodeId}.${p.inputName}:`, (typeof fv === 'string' && fv.length > 50) ? fv.substring(0, 50) + '...' : fv);
+                    }
                 }
             }));
         }
 
-        const { workflow: vw, warnings } = validateWorkflowParameters(workflow);
-        console.log('[Run] Submitting prompt to ComfyUI...');
+        const { workflow: vw } = validateWorkflowParameters(workflow);
+        console.log('[Run] Submitting prompt...');
+
         const qRes = await fetch(`${target}/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: vw }) });
         const qData = await qRes.json(); if (qData.error) throw new Error(qData.error.message || JSON.stringify(qData.error));
+        console.log(`[Run] Accepted ID: ${qData.prompt_id}`);
 
         let result = null, attempts = 0;
         while (!result && attempts < 180) { await new Promise(r => setTimeout(r, 2000)); const h = await (await fetch(`${target}/history`)).json(); if (h[qData.prompt_id]) { result = h[qData.prompt_id]; break; } attempts++; }
         if (!result) throw new Error('Timeout');
-
         const outputFiles = [];
         for (const [nodeId, output] of Object.entries(result.outputs || {})) {
             for (const item of [...(output.images || []), ...(output.videos || [])]) {
@@ -409,18 +439,17 @@ async function runWorkflowLogic(req, res, isPublic = false) {
                 outputFiles.push({ filename: localFn, url: `/output/${localFn}`, type: item.type === 'video' || localFn.endsWith('.mp4') ? 'video' : 'image' });
             }
         }
-        res.json({ success: true, files: outputFiles, warnings: warnings.length > 0 ? warnings : undefined });
+        res.json({ success: true, files: outputFiles });
     } catch (e) { res.status(500).json({ error: e.message }); }
 }
 
 adminApp.post('/api/workflows/save-parameters', (req, res) => {
     try {
         const { workflowId, parameters } = req.body;
-        if (!workflowId) return res.status(400).json({ error: 'Workflow ID missing' });
-        const savedDir = path.join('workflows', 'saved');
-        const file = fs.readdirSync(savedDir).find(f => f.includes(workflowId));
-        if (!file) return res.status(404).json({ error: 'Workflow not found' });
-        const filePath = path.join(savedDir, file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        if (!workflowId) return res.status(400).json({ error: 'ID missing' });
+        const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
+        if (!file) return res.status(404).json({ error: 'Not found' });
+        const filePath = path.join(savedDir = path.join('workflows', 'saved'), file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         if (data.analysis?.workflowApi) {
             const workflow = data.analysis.workflowApi;
             Object.entries(parameters || {}).forEach(([key, value]) => {
@@ -431,22 +460,17 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
                         let finalValue = value;
                         if (typeof value === 'string' && (value.startsWith('{') || value.startsWith('['))) { try { finalValue = JSON.parse(value); } catch(e){} }
                         workflow[nodeId].inputs[inputName] = finalValue;
-
-                        // SYNC: Update in-memory data if this is the active workflow
                         if (currentWorkflowId && workflowId.includes(currentWorkflowId)) {
                             originalWorkflowValues[key] = value;
-                            if (currentWorkflowData?.workflowApi?.[nodeId]) {
-                                currentWorkflowData.workflowApi[nodeId].inputs[inputName] = finalValue;
-                            }
+                            if (currentWorkflowData?.workflowApi?.[nodeId]) currentWorkflowData.workflowApi[nodeId].inputs[inputName] = finalValue;
                         }
                     }
                 }
             });
             fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
-            console.log(`[SaveParam] Persisted and synced parameters for ${workflowId}`);
             return res.json({ success: true });
         }
-        res.status(400).json({ error: 'Analysis missing' });
+        res.status(400).json({ error: 'Missing analysis' });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

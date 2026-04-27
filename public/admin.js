@@ -161,14 +161,25 @@ function renderLiveUI() {
             const btn = div.querySelector(`#btn-editor-${key}`);
             btn.onclick = () => {
                 if (window.openPixaromaEditor) {
-                    let initialData = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
+                    // FIX: Use originalValues if parameters[key] is not yet set in this session
+                    let initialData = parameters[key] !== undefined ? parameters[key] : (originalValues[key] !== undefined ? originalValues[key] : obj.data.defaultValue);
+
                     // If it's a string from server, parse it for the shim
                     if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
                         try { initialData = JSON.parse(initialData); } catch(e) {}
                     }
                     window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr) => {
                         // Crucial: Update local parameters immediately
-                        parameters[key] = jsonStr;
+                        const finalValue = typeof jsonStr === 'object' ? JSON.stringify(jsonStr) : jsonStr;
+                        parameters[key] = finalValue;
+
+                        // SYNC: Update originalValues locally as well to ensure next Open uses latest data
+                        if (typeof jsonStr === 'string' && (jsonStr.startsWith('{') || jsonStr.startsWith('['))) {
+                            try { originalValues[key] = JSON.parse(jsonStr); } catch(e) { originalValues[key] = jsonStr; }
+                        } else {
+                            originalValues[key] = jsonStr;
+                        }
+
                         console.log(`[Admin] Pixaroma ${obj.data.nodeType} save received. Syncing...`);
 
                         if (currentWorkflowId) {
@@ -176,7 +187,7 @@ function renderLiveUI() {
                                 const res = await fetch('/api/workflows/save-parameters', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: jsonStr } })
+                                    body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: finalValue } })
                                 });
                                 const data = await res.json();
                                 if (data.success) console.log(`[Admin] Pixaroma data persisted and synced on server.`);

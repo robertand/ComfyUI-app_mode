@@ -227,7 +227,7 @@
                 const data = await res.json();
                 if (data.success) {
                     currentWorkflowId = id;
-                    currentWorkflow = data.analysis;
+                    currentWorkflow = { ...data.analysis, originalValues: data.originalValues };
                     uiConfig = data.uiConfig;
                     window.mediaFiles = {}; mediaFiles = window.mediaFiles; parameters = {}; bypassedNodes = {};
                     document.getElementById('empty-state').classList.add('hidden');
@@ -305,13 +305,26 @@
                     const btn = div.querySelector(`#btn-editor-${key}`);
                     btn.onclick = () => {
                         if (window.openPixaromaEditor) {
-                            let initialData = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
+                            // FIX: Use originalValues from workflow if parameters[key] is not yet set
+                            let initialData = parameters[key] !== undefined ? parameters[key] : (currentWorkflow.originalValues && currentWorkflow.originalValues[key] !== undefined ? currentWorkflow.originalValues[key] : obj.data.defaultValue);
+
                             if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
                                 try { initialData = JSON.parse(initialData); } catch(e) {}
                             }
                             window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr) => {
                                 // Crucial: Update local parameters immediately
-                                parameters[key] = jsonStr;
+                                const finalValue = typeof jsonStr === 'object' ? JSON.stringify(jsonStr) : jsonStr;
+                                parameters[key] = finalValue;
+
+                                // SYNC locally for immediate reopen
+                                if (currentWorkflow.originalValues) {
+                                    if (typeof jsonStr === 'string' && (jsonStr.startsWith('{') || jsonStr.startsWith('['))) {
+                                        try { currentWorkflow.originalValues[key] = JSON.parse(jsonStr); } catch(e) { currentWorkflow.originalValues[key] = jsonStr; }
+                                    } else {
+                                        currentWorkflow.originalValues[key] = jsonStr;
+                                    }
+                                }
+
                                 console.log(`[User] Pixaroma ${obj.data.nodeType} save received. Syncing...`);
 
                                 if (currentWorkflowId) {
@@ -319,7 +332,7 @@
                                         const res = await fetch('/api/workflows/save-parameters', {
                                             method: 'POST',
                                             headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: jsonStr } })
+                                            body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: finalValue } })
                                         });
                                         const data = await res.json();
                                         if (data.success) console.log(`[User] Pixaroma data persisted and synced on server.`);
