@@ -196,8 +196,13 @@ function analyzeWorkflow(workflowJson) {
             
             if (node.inputs) {
                 Object.entries(node.inputs).forEach(([inputName, inputValue]) => {
-                    const isPixaromaWidget = (nodeType.toLowerCase().includes('pixaroma') || nodeType.toLowerCase().includes('pxf')) &&
-                        (inputName.toLowerCase().includes('widget') || inputName.toLowerCase().includes('scene') || inputName.toLowerCase().includes('paint') || inputName.toLowerCase().includes('compare') || inputName.toLowerCase().includes('builder') || inputName.toLowerCase().includes('studio'));
+                    // EXTREMELY broad check for Pixaroma widgets
+                    const nodeTypeLower = nodeType.toLowerCase();
+                    const inputNameLower = inputName.toLowerCase();
+
+                    const isPixaromaWidget = (nodeTypeLower.includes('pixaroma') || nodeTypeLower.includes('pxf')) &&
+                        (inputNameLower.includes('widget') || inputNameLower.includes('scene') || inputNameLower.includes('paint') ||
+                         inputNameLower.includes('compare') || inputNameLower.includes('builder') || inputNameLower.includes('studio'));
 
                     // Filter out link objects unless it's a Pixaroma widget
                     if (!isPixaromaWidget && inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
@@ -273,33 +278,38 @@ async function proxyToComfy(req, res) {
 
         let response = await fetch(`${targetInstance}${targetPath}`, fetchOptions);
 
-        if (response.status === 404 && (targetPath.includes('pixaroma') || targetPath.includes('Pixaroma'))) {
+        if (response.status === 404 && (targetPath.toLowerCase().includes('pixaroma') || targetPath.toLowerCase().includes('pxf'))) {
             const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
             const fallbacks = [];
 
-            // If it's a request to /pixaroma/... it might be directly in extensions
-            if (targetPath.startsWith('/pixaroma/')) {
-                const sub = targetPath.replace('/pixaroma/', '');
-                variants.forEach(v => {
-                    fallbacks.push(`/extensions/${v}/${sub}`);
-                    fallbacks.push(`/extensions/${v}/js/${sub}`);
-                });
-            }
+            const subFromPix = targetPath.includes('/pixaroma/') ? targetPath.split('/pixaroma/')[1] : targetPath.split('/').pop();
+            const folderName = subFromPix.split('/')[0];
+            const fileName = subFromPix.split('/').pop();
 
-            for (const v of variants) {
-                const ext = `/extensions/${v}/`;
-                if (targetPath.includes('/assets/')) {
-                    const sub = targetPath.split('/assets/')[1];
-                    fallbacks.push(ext + sub, ext + 'js/' + sub, ext + 'assets/' + sub);
+            variants.forEach(v => {
+                const base = `/extensions/${v}/`;
+                // Path permutations
+                fallbacks.push(`${base}${subFromPix}`);
+                fallbacks.push(`${base}js/${subFromPix}`);
+                fallbacks.push(`${base}js/${folderName}/${fileName}`);
+                fallbacks.push(`${base}js/pixaroma_${folderName}.js`);
+                fallbacks.push(`${base}js/pixaroma_${fileName}`);
+                if (subFromPix.includes('assets/')) {
+                    const assetSub = subFromPix.split('assets/')[1];
+                    fallbacks.push(`${base}${assetSub}`);
+                    fallbacks.push(`${base}js/${assetSub}`);
                 }
-                fallbacks.push(targetPath.replace('/pixaroma/assets/', ext), targetPath.replace('/pixaroma/assets/', ext + 'js/'), targetPath.replace('/pixaroma/js/', ext), targetPath.replace('/pixaroma/', ext), targetPath.replace('/pixaroma/', ext + 'js/'));
-                if (targetPath.endsWith('.js') || targetPath.endsWith('.mjs')) {
-                    const parts = targetPath.split('/'), fn = parts.pop(), fld = parts.pop();
-                    if (fld !== 'assets' && fld !== 'pixaroma') fallbacks.push(ext + fld + '/' + fn, ext + 'js/' + fld + '/' + fn);
-                }
-            }
-            for (const fbPath of [...new Set(fallbacks)].filter(f => f !== targetPath)) {
-                try { const fbRes = await fetch(`${targetInstance}${fbPath}`, fetchOptions); if (fbRes.ok) { response = fbRes; break; } } catch (e) {}
+            });
+
+            console.log(`[Proxy] 404 for ${targetPath}. Trying ${fallbacks.length} fallbacks...`);
+            for (const fbPath of [...new Set(fallbacks)].filter(f => f && f !== targetPath)) {
+                try {
+                    const fbRes = await fetch(`${targetInstance}${fbPath}`, fetchOptions);
+                    if (fbRes.ok) {
+                        console.log(`[Proxy] Fallback Success: ${fbPath}`);
+                        response = fbRes; break;
+                    }
+                } catch (e) {}
             }
         }
 

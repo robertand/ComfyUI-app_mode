@@ -54,7 +54,7 @@ function showToast() {
 // Robust Mock for ComfyUI environment
 window.app = window.app || {
     registerExtension: (ext) => {
-        console.log("[Shim] Extension Registered:", ext.name);
+        console.log("[Shim] Registered extension:", ext.name);
         window._pixaroma_extensions[ext.name] = ext;
     },
     ui: { settings: { getSettingValue: (id) => JSON.parse(localStorage.getItem('pixaroma_settings') || '{}')[id] || null } },
@@ -103,18 +103,28 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
     if (OriginalClass && !OriginalClass._hijacked) {
         const origOpen = OriginalClass.prototype.open;
         OriginalClass.prototype.open = function(data) {
-            // FIX: Prioritize global session data. If this instance has a _nodeId, use it.
+            // FIX: Always prioritize the global session truth for the active node ID
             const targetId = this._nodeId || window._pixaroma_active_node_id;
             const latestData = window._pixaroma_node_data.get(targetId);
+
+            // CRITICAL: Ensure we pass EXACTLY what was saved, avoiding any partial merges that might trigger a cube
             const openData = (latestData && Object.keys(latestData).length > 0) ? latestData : (data || sessionData);
 
-            console.log(`[Shim] ${editorClassName}.open() - Node ${targetId} Data:`, openData);
+            console.log(`[Shim] ${editorClassName}.open() - Node ${targetId} Truth Data:`, openData);
+
+            this._nodeId = targetId;
+            // SYNC: Force the instance state to match our truth before proceeding
+            if (openData) {
+                if (typeof this.setProjectData === 'function') this.setProjectData(openData);
+                else if (typeof this.loadData === 'function') this.loadData(openData);
+                else if (this.scene && typeof this.scene.load === 'function') this.scene.load(openData);
+            }
 
             let internalOnSave = null;
             Object.defineProperty(this, 'onSave', {
                 get: () => (jsonStr, dataURL) => {
                     const saveId = this._nodeId || window._pixaroma_active_node_id;
-                    console.log(`[Shim] Save for Node ${saveId}`);
+                    console.log(`[Shim] Save Captured for Node ${saveId}`);
                     try {
                         const saved = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
                         window._pixaroma_node_data.set(saveId, saved);
@@ -131,8 +141,7 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
                 configurable: true
             });
 
-            // ENSURE THE EDITOR DOESN'T CREATE A DEFAULT SCENE IF DATA IS PRESENT
-            // We do this by calling open with the actual data
+            // Return open call with our forced truth data
             return origOpen.call(this, openData);
         };
         OriginalClass._hijacked = true;
@@ -186,8 +195,7 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
             const oldProtoOpen = OriginalClass.prototype.open;
             OriginalClass.prototype.open = function(d) {
                 this._nodeId = sid;
-                // CRITICAL: If opening without data but we have session data, force it.
-                const finalData = (d && Object.keys(d).length > 0) ? d : window._pixaroma_node_data.get(sid);
+                const finalData = (window._pixaroma_node_data.get(sid) || d);
                 return oldProtoOpen.call(this, finalData);
             };
         }

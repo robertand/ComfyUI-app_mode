@@ -185,7 +185,7 @@ function renderLiveUI() {
 
             container.appendChild(div);
             const btn = div.querySelector(`#btn-editor-${key}`);
-            btn.onclick = () => {
+            btn.onclick = async () => {
                 if (window.openPixaromaEditor) {
                     let initialData = parameters[key] !== undefined ? parameters[key] : (originalValues[key] !== undefined ? originalValues[key] : obj.data.defaultValue);
                     if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
@@ -218,6 +218,9 @@ function renderLiveUI() {
                                 });
                             } catch (e) { console.error(`[Admin] Sync error:`, e); }
                         }
+                    }).catch(e => {
+                        console.error(`[Admin] Editor error:`, e);
+                        alert(`Editor Error: ${e.message}`);
                     });
                 } else {
                     alert('Pixaroma Bridge not loaded');
