@@ -4,6 +4,7 @@
 
 window._pixaroma_extensions = {};
 window._pixaroma_classes = {};
+window._pixaroma_active_node = null;
 
 // Inject standard ComfyUI and Pixaroma CSS variables
 const style = document.createElement('style');
@@ -79,7 +80,7 @@ window.app = window.app || {
     api_base: window.location.origin,
     graph: {
         serialize: () => ({}),
-        getNodeById: (id) => null,
+        getNodeById: (id) => (window._pixaroma_active_node && window._pixaroma_active_node.id === id) ? window._pixaroma_active_node : null,
         _nodes: [],
         _groups: []
     },
@@ -109,13 +110,17 @@ window.LiteGraph = window.LiteGraph || {
     NODE_TITLE_HEIGHT: 30,
     registerNodeType: () => {},
     createNode: () => ({ widgets: [], addWidget: () => ({}) }),
-    LGraph: function() { this._nodes = []; this.add = () => {}; }
+    LGraph: function() {
+        this._nodes = [];
+        this.add = (n) => { if (n) this._nodes.push(n); };
+        this.getNodeById = (id) => this._nodes.find(n => n.id === id);
+    }
 };
 
 let activeEditorCallback = null;
 
 export async function openPixaromaEditor(nodeType, initialData, onSave) {
-    console.log(`Opening Pixaroma Editor for ${nodeType}`);
+    console.log(`Opening Pixaroma Editor for ${nodeType} with data:`, initialData);
     activeEditorCallback = onSave;
 
     await loadPixaromaExtension(nodeType);
@@ -128,10 +133,20 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
     const editorClassName = getEditorClass(nodeType);
     const OriginalClass = window._pixaroma_classes[editorClassName];
 
+    // Process initialData - ensure it's an object if it's a string
+    let parsedData = initialData;
+    if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
+        try { parsedData = JSON.parse(initialData); } catch(e) { console.error("Shim: Error parsing initial data", e); }
+    }
+
     if (OriginalClass && !OriginalClass._hijacked) {
         const origOpen = OriginalClass.prototype.open;
         OriginalClass.prototype.open = function(data) {
-            console.log(`${editorClassName}.open() called`);
+            console.log(`${editorClassName}.open() called with:`, data);
+
+            // If we have parsedData from our closure, prioritize it if the call data is empty or default
+            const finalData = (parsedData && Object.keys(parsedData).length > 0) ? parsedData : data;
+
             let internalOnSave = null;
             Object.defineProperty(this, 'onSave', {
                 get: () => {
@@ -146,7 +161,7 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
                 set: (val) => { internalOnSave = val; },
                 configurable: true
             });
-            return origOpen.call(this, initialData || data);
+            return origOpen.call(this, finalData);
         };
         OriginalClass._hijacked = true;
     }
@@ -155,17 +170,24 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
         comfyClass: nodeType,
         widgets: [],
         type: nodeType,
-        id: Date.now(),
+        id: 999,
         properties: {},
         size: [300, 300],
         serialize: function() { return { widgets_values: this.widgets.map(w => w.value) }; },
         addWidget: function(type, name, value, callback, options) {
-            const w = { type, name, value: value || '', callback, options };
+            // If this is the main state widget, pre-fill it with our parsedData
+            const isStateWidget = name === 'SceneWidget' || name === 'PaintWidget' || name === 'ComposerWidget' || name === 'CropWidget';
+            const finalValue = (isStateWidget && parsedData) ? parsedData : value;
+
+            const w = { type, name, value: finalValue || '', callback, options };
             this.widgets.push(w);
             return w;
         },
         addDOMWidget: function(name, type, element, options) {
-            const w = { name, type, element, options, value: initialData };
+            const isStateWidget = name === 'SceneWidget' || name === 'PaintWidget' || name === 'ComposerWidget' || name === 'CropWidget';
+            const finalValue = (isStateWidget && parsedData) ? parsedData : initialData;
+
+            const w = { name, type, element, options, value: finalValue };
             this.widgets.push(w);
             return w;
         },
@@ -173,7 +195,18 @@ export async function openPixaromaEditor(nodeType, initialData, onSave) {
         onRemoved: () => {}
     };
 
+    window._pixaroma_active_node = mockNode;
+    window.app.graph._nodes = [mockNode];
+
     if (ext.nodeCreated) await ext.nodeCreated(mockNode);
+
+    // After nodeCreated, check if any widget needs to be updated with parsedData
+    mockNode.widgets.forEach(w => {
+        const isStateWidget = w.name === 'SceneWidget' || w.name === 'PaintWidget' || w.name === 'ComposerWidget' || w.name === 'CropWidget';
+        if (isStateWidget && parsedData) {
+            w.value = parsedData;
+        }
+    });
 
     const openButton = mockNode.widgets.find(w => w.type === 'button' && (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor')));
     if (openButton && typeof openButton.callback === 'function') {

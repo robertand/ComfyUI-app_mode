@@ -166,9 +166,16 @@ function renderLiveUI() {
                     if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
                         try { initialData = JSON.parse(initialData); } catch(e) {}
                     }
-                    window.openPixaromaEditor(obj.data.nodeType, initialData, (jsonStr) => {
+                    window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr) => {
                         parameters[key] = jsonStr;
                         console.log(`Pixaroma ${obj.data.nodeType} saved data updated`);
+                        if (currentWorkflowId) {
+                            await fetch('/api/workflows/save-parameters', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: jsonStr } })
+                            });
+                        }
                     });
                 } else {
                     alert('Pixaroma Bridge not loaded');

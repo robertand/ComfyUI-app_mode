@@ -186,6 +186,7 @@
     <script src="/qwen3d.js?v=1.0.6"></script>
     <script>
         let currentWorkflow = null;
+        let currentWorkflowId = null;
         window.mediaFiles = {};
         let mediaFiles = window.mediaFiles;
         let parameters = {};
@@ -225,6 +226,7 @@
                 const res = await fetch(`/api/workflows/load/${id}`, { method: 'POST' });
                 const data = await res.json();
                 if (data.success) {
+                    currentWorkflowId = id;
                     currentWorkflow = data.analysis;
                     uiConfig = data.uiConfig;
                     window.mediaFiles = {}; mediaFiles = window.mediaFiles; parameters = {}; bypassedNodes = {};
@@ -307,9 +309,16 @@
                             if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
                                 try { initialData = JSON.parse(initialData); } catch(e) {}
                             }
-                            window.openPixaromaEditor(obj.data.nodeType, initialData, (jsonStr) => {
+                            window.openPixaromaEditor(obj.data.nodeType, initialData, async (jsonStr) => {
                                 parameters[key] = jsonStr;
                                 console.log(`Pixaroma ${obj.data.nodeType} saved data updated`);
+                                if (currentWorkflowId) {
+                                    await fetch('/api/workflows/save-parameters', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: jsonStr } })
+                                    });
+                                }
                             });
                         } else {
                             alert('Pixaroma Bridge not loaded');

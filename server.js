@@ -318,8 +318,8 @@ adminApp.post('/api/workflows/load/:id', (req, res) => {
 });
 
 adminApp.post('/api/workflows/save', (req, res) => {
-    if (!currentWorkflowData) return res.status(400).json({ error: 'No workflow' });
-    const id = generateId(), name = req.body.name, filePath = path.join('workflows', 'saved', `${name.replace(/[^a-z0-9]/gi, '_')}_${id}.json`);
+    if (!currentWorkflowData) return res.status(400).json({ error: 'No workflow loaded' });
+    const id = generateId(), name = req.body.name, fileName = `${name.replace(/[^a-z0-9]/gi, '_')}_${id}.json`, filePath = path.join('workflows', 'saved', fileName);
     fs.writeFileSync(filePath, JSON.stringify({ metadata: { id, name, description: req.body.description || '', createdAt: new Date().toISOString(), presets: req.body.presets || [] }, workflow: currentWorkflowData.raw, analysis: currentWorkflowData.analysis, uiConfig }, null, 2));
     currentWorkflowId = id; res.json({ success: true, id, name });
 });
@@ -403,6 +403,34 @@ async function runWorkflowLogic(req, res, isPublic = false) {
         res.json({ success: true, files: outputFiles, warnings: warnings.length > 0 ? warnings : undefined });
     } catch (e) { res.status(500).json({ error: e.message }); }
 }
+
+adminApp.post('/api/workflows/save-parameters', (req, res) => {
+    try {
+        const { workflowId, parameters } = req.body;
+        if (!workflowId) return res.status(400).json({ error: 'Workflow ID missing' });
+        const savedDir = path.join('workflows', 'saved');
+        const file = fs.readdirSync(savedDir).find(f => f.includes(workflowId));
+        if (!file) return res.status(404).json({ error: 'Workflow not found' });
+        const filePath = path.join(savedDir, file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        if (data.analysis?.workflowApi) {
+            const workflow = data.analysis.workflowApi;
+            Object.entries(parameters || {}).forEach(([key, value]) => {
+                const parts = key.split('_');
+                if (parts[0] === 'node' && parts.length >= 3) {
+                    const nodeId = parts[1], inputName = parts.slice(2).join('_');
+                    if (workflow[nodeId]?.inputs) {
+                        let finalValue = value;
+                        if (typeof value === 'string' && (value.startsWith('{') || value.startsWith('['))) { try { finalValue = JSON.parse(value); } catch(e){} }
+                        workflow[nodeId].inputs[inputName] = finalValue;
+                    }
+                }
+            });
+            fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+            return res.json({ success: true });
+        }
+        res.status(400).json({ error: 'Analysis missing' });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 adminApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res));
 publicApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res, true));
