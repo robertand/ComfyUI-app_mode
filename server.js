@@ -269,6 +269,10 @@ async function proxyToComfy(req, res) {
             }
         }
 
+        if (!response.ok) {
+            console.log(`[Proxy] Response: ${response.status} for ${targetPath}`);
+        }
+
         response.headers.forEach((v, n) => { if (!['content-encoding', 'content-length', 'transfer-encoding', 'access-control-allow-origin', 'content-security-policy'].includes(n.toLowerCase())) res.setHeader(n, v); });
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('X-Frame-Options', 'ALLOWALL');

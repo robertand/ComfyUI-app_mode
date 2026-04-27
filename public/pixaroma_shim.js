@@ -5,9 +5,9 @@
 window._pixaroma_extensions = {};
 window._pixaroma_classes = {};
 window._pixaroma_active_node = null;
-window._pixaroma_node_data = new Map(); // Store state by node ID
+window._pixaroma_node_data = new Map(); // Source of truth by nodeId
 
-// Inject standard ComfyUI and Pixaroma CSS variables
+// Standard ComfyUI and Pixaroma CSS variables
 const style = document.createElement('style');
 style.textContent = `
     :root {
@@ -57,14 +57,14 @@ function showToast() {
 // Robust Mock for ComfyUI environment
 window.app = window.app || {
     registerExtension: (ext) => {
-        console.log("[Shim] Registered extension:", ext.name);
+        console.log("[Shim] Extension Registered:", ext.name);
         window._pixaroma_extensions[ext.name] = ext;
     },
     ui: { settings: { getSettingValue: (id) => JSON.parse(localStorage.getItem('pixaroma_settings') || '{}')[id] || null } },
     api_base: window.location.origin,
     graph: {
-        serialize: () => ({}),
-        getNodeById: (id) => (window._pixaroma_active_node && window._pixaroma_active_node.id == id) ? window._pixaroma_active_node : null,
+        serialize: () => ({ nodes: window._pixaroma_active_node ? [window._pixaroma_active_node] : [] }),
+        getNodeById: (id) => (window._pixaroma_active_node && (window._pixaroma_active_node.id == id || window._pixaroma_active_node.id === String(id))) ? window._pixaroma_active_node : null,
         _nodes: [], _groups: []
     },
     canvas: { setDirty: () => {}, draw: () => {} }
@@ -86,14 +86,15 @@ window.LiteGraph = window.LiteGraph || {
     LGraph: function() {
         this._nodes = [];
         this.add = (n) => { if (n) { n.graph = this; this._nodes.push(n); } };
-        this.getNodeById = (id) => this._nodes.find(n => n.id == id);
+        this.getNodeById = (id) => this._nodes.find(n => n.id == id || n.id === String(id));
     }
 };
 
 let activeEditorCallback = null;
 
 export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) {
-    console.log(`[Shim] Opening Editor: ${nodeType} (Node ${nodeId})`);
+    const sid = String(nodeId);
+    console.log(`[Shim] Open Request: ${nodeType} (Node ${sid})`);
     activeEditorCallback = onSave;
 
     await loadPixaromaExtension(nodeType);
@@ -107,39 +108,33 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
 
     let parsedData = initialData;
     if (typeof initialData === 'string' && (initialData.startsWith('{') || initialData.startsWith('['))) {
-        try { parsedData = JSON.parse(initialData); } catch(e) { console.error("[Shim] JSON Parse Error", e); }
+        try { parsedData = JSON.parse(initialData); } catch(e) { console.error("[Shim] Parse Error", e); }
     }
 
-    // Store parsed data for this node if not already present in session
-    if (!window._pixaroma_node_data.has(nodeId)) {
-        window._pixaroma_node_data.set(nodeId, parsedData);
+    // Ensure we have data for this node in the session
+    if (!window._pixaroma_node_data.has(sid) || !window._pixaroma_node_data.get(sid)) {
+        window._pixaroma_node_data.set(sid, parsedData);
     }
 
-    const finalTruthData = window._pixaroma_node_data.get(nodeId);
-    console.log(`[Shim] Final truth data for open:`, typeof finalTruthData, finalTruthData);
+    const finalTruthData = window._pixaroma_node_data.get(sid);
 
     if (OriginalClass && !OriginalClass._hijacked) {
         const origOpen = OriginalClass.prototype.open;
         OriginalClass.prototype.open = function(data) {
-            // Re-fetch current data from global map in case multiple opens happen
-            // Prioritize what's currently in window._pixaroma_node_data[this._nodeId]
+            // Priority: Session Map > Passed Data > Initial Data
             const currentData = window._pixaroma_node_data.get(this._nodeId);
             const openData = (currentData && Object.keys(currentData).length > 0) ? currentData : (data || finalTruthData);
 
-            console.log(`[Shim] ${editorClassName}.open() called with:`, openData);
+            console.log(`[Shim] ${editorClassName}.open() - Applying Data:`, typeof openData, openData);
 
             let internalOnSave = null;
             Object.defineProperty(this, 'onSave', {
                 get: () => (jsonStr, dataURL) => {
-                    console.log(`[Shim] ${editorClassName} Save Captured for Node ${this._nodeId}`);
-
-                    // Capture latest data specifically for this node
+                    console.log(`[Shim] ${editorClassName} Save for Node ${this._nodeId}`);
                     try {
-                        const savedData = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
-                        window._pixaroma_node_data.set(this._nodeId, savedData);
-                    } catch(e) {
-                        window._pixaroma_node_data.set(this._nodeId, jsonStr);
-                    }
+                        const savedObj = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+                        window._pixaroma_node_data.set(this._nodeId, savedObj);
+                    } catch(e) { window._pixaroma_node_data.set(this._nodeId, jsonStr); }
 
                     showToast();
                     if (internalOnSave) internalOnSave.call(this, jsonStr, dataURL);
@@ -160,8 +155,9 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
         comfyClass: nodeType,
         widgets: [],
         type: nodeType,
-        id: nodeId,
+        id: sid,
         properties: {},
+        flags: {},
         size: [300, 300],
         get widgets_values() {
             const data = window._pixaroma_node_data.get(this.id);
@@ -196,12 +192,12 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
 
     if (ext.nodeCreated) await ext.nodeCreated(mockNode);
 
-    // Deep sync widgets with current data after creation
+    // Deep sync widgets with current truth
     mockNode.widgets.forEach(w => {
         const isStateWidget = ['SceneWidget', 'PaintWidget', 'ComposerWidget', 'CropWidget'].includes(w.name);
-        const data = window._pixaroma_node_data.get(nodeId);
+        const data = window._pixaroma_node_data.get(sid);
         if (isStateWidget && data) {
-            console.log(`[Shim] Syncing widget ${w.name}`);
+            console.log(`[Shim] Widget ${w.name} value synced to:`, data);
             w.value = data;
             if (typeof w.callback === 'function') w.callback.call(mockNode, data);
         }
@@ -213,13 +209,13 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
         if (OriginalClass) {
             const oldProtoOpen = OriginalClass.prototype.open;
             OriginalClass.prototype.open = function(d) {
-                this._nodeId = nodeId; // Set node ID on instance
+                this._nodeId = sid;
                 return oldProtoOpen.call(this, d);
             };
         }
 
-        // Delay more to ensure constructor finishes if it was triggered by nodeCreated
         setTimeout(() => {
+            console.log(`[Shim] Triggering Open for ${sid}`);
             openButton.callback.call(mockNode, mockNode);
         }, 200);
     } else {

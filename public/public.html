@@ -230,6 +230,22 @@
                     currentWorkflowId = id;
                     currentWorkflow = { ...data.analysis, originalValues: data.originalValues };
                     uiConfig = data.uiConfig;
+
+                    // POPULATE SHIM WITH SAVED DATA
+                    if (window._pixaroma_node_data && data.originalValues) {
+                        Object.entries(data.originalValues).forEach(([key, val]) => {
+                            const parts = key.split('_');
+                            if (parts[0] === 'node' && parts.length >= 3) {
+                                const nodeId = parts[1];
+                                let finalVal = val;
+                                if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+                                    try { finalVal = JSON.parse(val); } catch(e) {}
+                                }
+                                window._pixaroma_node_data.set(String(nodeId), finalVal);
+                            }
+                        });
+                    }
+
                     window.mediaFiles = {}; mediaFiles = window.mediaFiles; parameters = {}; bypassedNodes = {};
                     document.getElementById('empty-state').classList.add('hidden');
                     document.getElementById('generator-interface').classList.remove('hidden');

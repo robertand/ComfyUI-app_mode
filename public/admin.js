@@ -48,6 +48,23 @@ function setupWorkflow(data) {
     currentWorkflow = data.analysis;
     uiConfig = data.uiConfig;
     originalValues = data.originalValues || {};
+
+    // POPULATE SHIM WITH SAVED DATA IMMEDIATELY
+    if (window._pixaroma_node_data) {
+        Object.entries(originalValues).forEach(([key, val]) => {
+            // Key format node_ID_inputName
+            const parts = key.split('_');
+            if (parts[0] === 'node' && parts.length >= 3) {
+                const nodeId = parts[1];
+                let finalVal = val;
+                if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+                    try { finalVal = JSON.parse(val); } catch(e) {}
+                }
+                window._pixaroma_node_data.set(String(nodeId), finalVal);
+            }
+        });
+    }
+
     window.mediaFiles = {}; mediaFiles = window.mediaFiles; parameters = {}; bypassedNodes = {};
     currentPresets = data.metadata?.presets || [];
 
