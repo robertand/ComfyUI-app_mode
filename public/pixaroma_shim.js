@@ -32,6 +32,17 @@ style.textContent = `
     .pxf-editor-layout, .pxf-body { height: 100% !important; width: 100% !important; flex: 1 !important; display: flex !important; }
     .pxf-workspace { flex: 1 !important; position: relative !important; background: #000 !important; }
 
+    #pxf-loading-overlay {
+        position: fixed; inset: 0; background: #0f172a; z-index: 1000001;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
+        color: white; font-family: 'Inter', sans-serif; gap: 1rem;
+    }
+    .pxf-spinner {
+        width: 40px; height: 40px; border: 4px solid rgba(255,255,255,0.1);
+        border-top-color: #3b82f6; border-radius: 50%; animation: pxf-spin 1s linear infinite;
+    }
+    @keyframes pxf-spin { to { transform: rotate(360deg); } }
+
     #pixaroma-save-toast {
         position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%);
         background: #10b981; color: white; padding: 0.75rem 1.5rem; border-radius: 9999px;
@@ -45,6 +56,15 @@ const toast = document.createElement('div');
 toast.id = 'pixaroma-save-toast';
 toast.textContent = 'Changes Saved Successfully';
 document.body.appendChild(toast);
+
+const loading = document.createElement('div');
+loading.id = 'pxf-loading-overlay';
+    loading.innerHTML = `<div class="pxf-spinner"></div><div id="pxf-loading-text">Loading Session...</div><button id="pxf-cancel-btn" style="margin-top: 20px; padding: 8px 16px; background: #334155; border: none; border-radius: 4px; color: white; cursor: pointer; display: none;">Cancel</button>`;
+loading.style.display = 'none';
+document.body.appendChild(loading);
+
+    const cancelBtn = loading.querySelector('#pxf-cancel-btn');
+    cancelBtn.onclick = () => { loading.style.display = 'none'; };
 
 function showToast() {
     toast.style.display = 'block';
@@ -76,9 +96,11 @@ window.LiteGraph = window.LiteGraph || {
 let activeEditorCallback = null;
 
 function applyDataToEditor(instance, data) {
-    if (!instance || !data || Object.keys(data).length === 0) return;
+    if (!instance || !data || Object.keys(data).length === 0) {
+        if (loading.style.display !== 'none') loading.style.display = 'none';
+        return;
+    }
     try {
-        // Anti-cube / Anti-default logic - only clear if it looks like a default cube and we are replacing it
         if (instance.scene && instance.scene.traverse) {
             const toRemove = [];
             let meshCount = 0;
@@ -88,33 +110,35 @@ function applyDataToEditor(instance, data) {
                 const isMesh = obj.type === 'Mesh';
                 const isDefaultName = obj.name.toLowerCase() === 'cube' || obj.name === 'Mesh' || !obj.name;
                 if (isMesh && isDefaultName && obj.geometry && (obj.geometry.type === 'BoxGeometry' || obj.geometry.type === 'BoxBufferGeometry')) {
-                    // Only nuke it if it's one of very few objects (likely default) or if we haven't successfully loaded our data yet
-                    if (meshCount < 3 || !instance._data_applied_successfully) {
-                        toRemove.push(obj);
-                    }
+                    if (meshCount < 3 || !instance._data_applied_successfully) toRemove.push(obj);
                 }
             });
-            if (toRemove.length > 0) {
-                console.log(`[Shim] Clearing ${toRemove.length} potential default objects...`);
-                toRemove.forEach(obj => {
-                    if (obj.parent) obj.parent.remove(obj);
-                    if (obj.geometry) obj.geometry.dispose();
-                    if (obj.material) {
-                        if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
-                        else obj.material.dispose();
-                    }
-                });
-            }
+            toRemove.forEach(obj => {
+                if (obj.parent) obj.parent.remove(obj);
+                if (obj.geometry) obj.geometry.dispose();
+                if (obj.material) {
+                    if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+                    else obj.material.dispose();
+                }
+            });
         }
 
         console.log("[Shim] Applying session data to editor instance...");
-        if (typeof instance.setProjectData === 'function') { instance.setProjectData(data); instance._data_applied_successfully = true; }
-        else if (typeof instance.loadData === 'function') { instance.loadData(data); instance._data_applied_successfully = true; }
-        else if (typeof instance.loadProject === 'function') { instance.loadProject(data); instance._data_applied_successfully = true; }
-        else if (instance.project && typeof instance.project.load === 'function') { instance.project.load(data); instance._data_applied_successfully = true; }
-        else if (instance.scene && typeof instance.scene.load === 'function') { instance.scene.load(data); instance._data_applied_successfully = true; }
-        else if (instance.load && typeof instance.load === 'function') { instance.load(data); instance._data_applied_successfully = true; }
+        let success = false;
+        if (typeof instance.setProjectData === 'function') { instance.setProjectData(data); success = true; }
+        else if (typeof instance.loadData === 'function') { instance.loadData(data); success = true; }
+        else if (typeof instance.loadProject === 'function') { instance.loadProject(data); success = true; }
+        else if (instance.project && typeof instance.project.load === 'function') { instance.project.load(data); success = true; }
+        else if (instance.scene && typeof instance.scene.load === 'function') { instance.scene.load(data); success = true; }
+        else if (instance.load && typeof instance.load === 'function') { instance.load(data); success = true; }
 
+        if (success) {
+            instance._data_applied_successfully = true;
+            setTimeout(() => {
+                loading.style.display = 'none';
+                if (window._pxf_load_timer) clearTimeout(window._pxf_load_timer);
+            }, 100);
+        }
     } catch(e) { console.error("[Shim] Error applying data:", e); }
 }
 
@@ -124,7 +148,23 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
     activeEditorCallback = onSave;
     window._pixaroma_active_node_id = sid;
 
-    await loadPixaromaExtension(nodeType);
+    loading.style.display = 'flex';
+    loading.querySelector('#pxf-loading-text').textContent = `Loading ${nodeType}...`;
+    loading.querySelector('#pxf-cancel-btn').style.display = 'none';
+
+    if (window._pxf_load_timer) clearTimeout(window._pxf_load_timer);
+    window._pxf_load_timer = setTimeout(() => {
+        loading.querySelector('#pxf-loading-text').textContent = 'Loading taking longer than expected. Please ensure ComfyUI is running and try "Sync Pixaroma Nodes" in Settings.';
+        loading.querySelector('#pxf-cancel-btn').style.display = 'block';
+    }, 10000);
+
+    try {
+        await loadPixaromaExtension(nodeType);
+    } catch(e) {
+        loading.querySelector('#pxf-loading-text').textContent = `Error: ${e.message}. Try "Sync Pixaroma Nodes" in Settings.`;
+        loading.querySelector('#pxf-cancel-btn').style.display = 'block';
+        throw e;
+    }
 
     const extName = getExtensionName(nodeType);
     const ext = window._pixaroma_extensions[extName];
@@ -275,6 +315,7 @@ function getEditorClass(nodeType) {
 async function loadPixaromaExtension(nodeType) {
     const extName = getExtensionName(nodeType);
     if (window._pixaroma_extensions[extName]) return;
+    // Local first
     const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
     const editorClassName = getEditorClass(nodeType);
     const sub = nodeType.replace('Pixaroma', '').toLowerCase();

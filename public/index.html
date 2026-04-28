@@ -247,6 +247,19 @@
                 <button id="close-settings" class="p-2 hover:bg-slate-800 rounded-lg text-slate-500"><i data-lucide="x" class="w-5 h-5"></i></button>
             </div>
             <div class="space-y-6 flex-1 overflow-y-auto scrollbar-hide">
+                    <!-- Extensions Management -->
+                    <div class="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <h4 class="text-xs font-bold text-slate-400 uppercase tracking-widest">Extensions</h4>
+                            <span id="ext-status" class="px-2 py-0.5 bg-green-900/30 text-green-400 text-[10px] rounded border border-green-500/50 font-bold">Local Host Active</span>
+                        </div>
+                        <p class="text-[10px] text-slate-500">Sync Pixaroma nodes to local cache for maximum stability and speed.</p>
+                        <button id="sync-extensions-btn" class="w-full py-2 bg-blue-600/10 hover:bg-blue-600/20 text-blue-400 border border-blue-500/20 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2">
+                            <i data-lucide="refresh-cw" class="w-3 h-3"></i>
+                            <span>Sync Pixaroma Nodes</span>
+                        </button>
+                    </div>
+
                 <div class="space-y-4">
                     <div class="flex items-center justify-between">
                         <label class="block text-sm font-medium text-slate-400" data-i18n="comfy_urls">ComfyUI URLs</label>

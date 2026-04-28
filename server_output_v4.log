@@ -1,0 +1,6 @@
+(node:1472559) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+🔧 ADMIN http://localhost:3001
+🌐 PUBLIC http://localhost:3002
+[Analyze] Processing Node 10: Pixaroma3D (3D Scene)
+[Analyze] Found Pixaroma Widget: Pixaroma3D.SceneWidget (Node 10)

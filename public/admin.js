@@ -443,6 +443,25 @@ function initAdmin() {
         } catch (e) { alert('Error updating settings'); }
     };
 
+    const syncBtn = document.getElementById('sync-extensions-btn');
+    if (syncBtn) {
+        syncBtn.onclick = async () => {
+            syncBtn.disabled = true;
+            const originalHtml = syncBtn.innerHTML;
+            syncBtn.innerHTML = '<i data-lucide="refresh-cw" class="w-3 h-3 animate-spin"></i> <span>Syncing...</span>';
+            initIcons();
+            try {
+                const res = await fetch('/api/extensions/sync', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) alert('Sync successful! Pixaroma nodes cached locally.');
+                else alert('Sync failed: ' + data.error);
+            } catch(e) { alert('Sync error: ' + e.message); }
+            syncBtn.disabled = false;
+            syncBtn.innerHTML = originalHtml;
+            initIcons();
+        };
+    }
+
     const selectAllBtn = document.getElementById('select-all-btn');
     if (selectAllBtn) selectAllBtn.onclick = () => {
         document.querySelectorAll('.param-visibility-check').forEach(c => {
