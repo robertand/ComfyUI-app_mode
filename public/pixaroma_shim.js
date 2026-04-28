@@ -96,10 +96,22 @@ window.LiteGraph = window.LiteGraph || {
 let activeEditorCallback = null;
 
 function applyDataToEditor(instance, data) {
-    if (!instance || !data || Object.keys(data).length === 0) {
-        if (loading.style.display !== 'none') loading.style.display = 'none';
+    if (!instance) return;
+
+    // Reliability: Always hide loading after a short delay if we have an instance
+    setTimeout(() => {
+        if (loading.style.display !== 'none') {
+            console.log("[Shim] Hiding overlay via safety timeout");
+            loading.style.display = 'none';
+            if (window._pxf_load_timer) clearTimeout(window._pxf_load_timer);
+        }
+    }, 1500);
+
+    if (!data || Object.keys(data).length === 0) {
+        loading.style.display = 'none';
         return;
     }
+
     try {
         if (instance.scene && instance.scene.traverse) {
             const toRemove = [];
@@ -268,7 +280,9 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
     const openButton = mockNode.widgets.find(w => w.type === 'button' &&
         (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor') ||
          w.name.toLowerCase().includes('builder') || w.name.toLowerCase().includes('studio') ||
-         w.name.toLowerCase().includes('composer') || w.name.toLowerCase().includes('compare')));
+         w.name.toLowerCase().includes('composer') || w.name.toLowerCase().includes('compare') ||
+         w.name.toLowerCase().includes('canvas') || w.name.toLowerCase().includes('edit') ||
+         w.name.toLowerCase().includes('launch')));
     if (openButton && typeof openButton.callback === 'function') {
         const OriginalClass = window._pixaroma_classes[editorClassName];
         if (OriginalClass) {
