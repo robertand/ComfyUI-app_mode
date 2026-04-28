@@ -516,19 +516,47 @@ publicApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res, tru
 
 adminApp.post('/api/extensions/sync', async (req, res) => {
     try {
-        const extDir = path.join(__dirname, 'extensions', 'ComfyUI-Pixaroma');
-        if (!fs.existsSync(extDir)) fs.mkdirSync(extDir, { recursive: true });
+        const target = await getFreestInstance();
+        const baseExtDir = path.join(__dirname, 'extensions', 'ComfyUI-Pixaroma');
+        if (!fs.existsSync(baseExtDir)) fs.mkdirSync(baseExtDir, { recursive: true });
 
-        const files = [
-            { folder: '3d', name: 'index.js' }, { folder: 'paint', name: 'index.js' },
-            { folder: 'composer', name: 'index.js' }, { folder: 'crop', name: 'index.js' },
-            { folder: 'compare', name: 'index.js' }
-        ];
+        const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'comfyui-pixaroma'];
+        const folders = ['3d', 'paint', 'composer', 'crop', 'compare'];
+        let count = 0;
 
-        // This is a simplified downloader. In a real scenario, we'd clone the repo.
-        // For now, we'll proxy and save to cache if they don't exist locally.
-        res.json({ success: true, message: 'Extensions ready' });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+        for (const f of folders) {
+            const subDir = path.join(baseExtDir, 'js', f);
+            if (!fs.existsSync(subDir)) fs.mkdirSync(subDir, { recursive: true });
+
+            let found = false;
+            for (const v of variants) {
+                if (found) break;
+                const paths = [
+                    `/extensions/${v}/js/${f}/index.js`,
+                    `/extensions/${v}/${f}/index.js`,
+                    `/pixaroma/assets/${f}/index.js`
+                ];
+
+                for (const p of paths) {
+                    try {
+                        const response = await fetch(`${target}${p}`, { timeout: 5000 });
+                        if (response.ok) {
+                            const buffer = await response.buffer();
+                            fs.writeFileSync(path.join(subDir, 'index.js'), buffer);
+                            console.log(`[Sync] Downloaded ${f}/index.js from ${p}`);
+                            count++;
+                            found = true;
+                            break;
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+        res.json({ success: true, message: `Synced ${count} folders successfully.` });
+    } catch (e) {
+        console.error('[Sync] Error:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 adminApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));

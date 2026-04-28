@@ -195,6 +195,15 @@ function renderLiveUI() {
                     window.openPixaromaEditor(obj.data.nodeType, obj.data.nodeId, initialData, async (jsonStr, dataURL) => {
                         const finalValue = typeof jsonStr === 'object' ? JSON.stringify(jsonStr) : jsonStr;
                         parameters[key] = finalValue;
+
+                        // Immediate Session Update
+                        if (window._pixaroma_node_data) {
+                            try {
+                                const parsed = typeof jsonStr === 'string' ? JSON.parse(jsonStr) : jsonStr;
+                                window._pixaroma_node_data.set(String(obj.data.nodeId), parsed);
+                            } catch(e) { window._pixaroma_node_data.set(String(obj.data.nodeId), jsonStr); }
+                        }
+
                         if (dataURL) {
                             window._pixaroma_session_previews[key] = dataURL;
                             const prevContainer = document.getElementById(`preview-pixaroma-${key}`);
@@ -216,6 +225,7 @@ function renderLiveUI() {
                                     headers: { 'Content-Type': 'application/json' },
                                     body: JSON.stringify({ workflowId: currentWorkflowId, parameters: { [key]: finalValue } })
                                 });
+                                console.log(`[Admin] Successfully persisted Pixaroma state for ${key}`);
                             } catch (e) { console.error(`[Admin] Sync error:`, e); }
                         }
                     }).catch(e => {
