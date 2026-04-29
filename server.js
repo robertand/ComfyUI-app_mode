@@ -199,12 +199,12 @@ function analyzeWorkflow(workflowJson) {
                     const nodeTypeLower = nodeType.toLowerCase();
                     const inputNameLower = inputName.toLowerCase();
 
-                    const isPixaromaWidget = (nodeTypeLower.includes('pixaroma') || nodeTypeLower.includes('pxf')) &&
+                    const isPixaromaWidget = (nodeTypeLower.includes('pixaroma') || nodeTypeLower.includes('pxf') || nodeTypeLower.includes('composition')) &&
                         (inputNameLower.includes('widget') || inputNameLower.includes('scene') || inputNameLower.includes('paint') ||
                          inputNameLower.includes('compare') || inputNameLower.includes('builder') || inputNameLower.includes('studio') ||
                          inputNameLower.includes('composer') || inputNameLower.includes('canvas') || inputNameLower.includes('editor') ||
                          inputNameLower.includes('project') || inputNameLower.includes('config') || inputNameLower.includes('data') ||
-                         inputNameLower === 'scene' || inputNameLower === 'paint');
+                         inputNameLower === 'scene' || inputNameLower === 'paint' || inputNameLower === 'images');
 
                     if (!isPixaromaWidget && inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
                     if (!isPixaromaWidget && (inputName === 'image' || inputName === 'video' || inputName.toLowerCase().includes('file') || inputName === 'filename')) return;
@@ -521,7 +521,7 @@ adminApp.post('/api/extensions/sync', async (req, res) => {
         if (!fs.existsSync(baseExtDir)) fs.mkdirSync(baseExtDir, { recursive: true });
 
         const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'comfyui-pixaroma'];
-        const folders = ['3d', 'paint', 'composer', 'crop', 'compare'];
+        const folders = ['3d', 'paint', 'composer', 'crop', 'compare', 'studio', 'composition'];
         let count = 0;
 
         for (const f of folders) {

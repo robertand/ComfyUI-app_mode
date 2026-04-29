@@ -333,7 +333,11 @@ async function loadPixaromaExtension(nodeType) {
     const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
     const editorClassName = getEditorClass(nodeType);
     const sub = nodeType.replace('Pixaroma', '').toLowerCase();
-    const folderMap = { '3d': '3d', 'paint': 'paint', 'imagecomposition': 'composer', 'crop': 'crop', 'imagecompare': 'compare', '3dbuilder': '3d' };
+    const folderMap = {
+        '3d': '3d', 'paint': 'paint', 'paintstudio': 'paint', 'imagecomposition': 'composer',
+        'imagecomposer': 'composer', 'crop': 'crop', 'imagecompare': 'compare',
+        'compare': 'compare', '3dbuilder': '3d', 'composition': 'composer', 'studio': 'paint'
+    };
     const subFolder = folderMap[sub] || sub;
 
     for (const v of variants) {
@@ -347,8 +351,17 @@ async function loadPixaromaExtension(nodeType) {
         ];
         for (const p of paths) {
             try {
-                const module = await import(p);
-                let exportedClass = module[editorClassName] || module['PaintEditor'] || module['ComposerEditor'] || module['CompareEditor'] || module['PixaromaPaintStudio'] || module['Pixaroma3DBuilder'] || module['PaintStudio'] || module['ComposerStudio'];
+                console.log(`[Shim] Attempting import: ${p}`);
+                const module = await Promise.race([
+                    import(p),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+                ]);
+
+                let exportedClass = module[editorClassName] || module['PaintEditor'] || module['ComposerEditor'] || module['CompareEditor'] || module['PixaromaPaintStudio'] || module['Pixaroma3DBuilder'] || module['PaintStudio'] || module['ComposerStudio'] || module.default;
+
+                if (!exportedClass && module.default) {
+                    exportedClass = module.default[editorClassName] || module.default;
+                }
 
                 if (!exportedClass) {
                     for (const key of Object.keys(module)) {
