@@ -253,7 +253,8 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
         serialize: function() { return { widgets_values: this.widgets.map(w => w.value) }; },
         addWidget: function(type, name, value, callback, options) {
             const data = window._pixaroma_node_data.get(this.id);
-            const isTarget = name.toLowerCase().includes('widget') || name.toLowerCase().includes('scene') || name.toLowerCase().includes('paint') || name.toLowerCase().includes('compare');
+            const lowName = name.toLowerCase();
+            const isTarget = lowName.includes('widget') || lowName.includes('scene') || lowName.includes('paint') || lowName.includes('compare') || lowName.includes('images') || lowName.includes('composition') || lowName.includes('canvas');
             const finalValue = isTarget ? (data || value) : value;
             const w = { type, name, value: finalValue || '', callback, options };
             this.widgets.push(w);
@@ -261,7 +262,8 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
         },
         addDOMWidget: function(name, type, element, options) {
             const data = window._pixaroma_node_data.get(this.id);
-            const isTarget = name.toLowerCase().includes('widget') || name.toLowerCase().includes('scene') || name.toLowerCase().includes('paint') || name.toLowerCase().includes('compare');
+            const lowName = name.toLowerCase();
+            const isTarget = lowName.includes('widget') || lowName.includes('scene') || lowName.includes('paint') || lowName.includes('compare') || lowName.includes('images') || lowName.includes('composition') || lowName.includes('canvas');
             const finalValue = isTarget ? (data || initialData) : initialData;
             const w = { name, type, element, options, value: finalValue };
             this.widgets.push(w);
@@ -277,7 +279,8 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
     // Sync widgets
     mockNode.widgets.forEach(w => {
         const data = window._pixaroma_node_data.get(sid);
-        const isTarget = w.name.toLowerCase().includes('widget') || w.name.toLowerCase().includes('scene') || w.name.toLowerCase().includes('paint') || w.name.toLowerCase().includes('composer') || w.name.toLowerCase().includes('compare');
+        const lowName = w.name.toLowerCase();
+        const isTarget = lowName.includes('widget') || lowName.includes('scene') || lowName.includes('paint') || lowName.includes('composer') || lowName.includes('compare') || lowName.includes('images') || lowName.includes('composition') || lowName.includes('canvas');
         if (isTarget && data) {
             w.value = data;
             if (typeof w.callback === 'function') w.callback.call(mockNode, data, mockNode);

@@ -151,25 +151,14 @@ function validateWorkflowParameters(workflow) {
     const warnings = [];
     Object.entries(workflow).forEach(([nodeId, node]) => {
         if (!node.inputs) return;
-        const isVideoNode = node.class_type && (node.class_type.includes('LTX') || node.class_type.includes('Video') || node.class_type.includes('VHS_VideoCombine') || node.class_type === 'SaveVideo' || node.class_type.includes('Sampler'));
         
-        const check = (key, def, min, max, isInt = false) => {
-            if (node.inputs[key] === undefined || Array.isArray(node.inputs[key])) return;
-            let val = isInt ? parseInt(node.inputs[key]) : parseFloat(node.inputs[key]);
-            if (isNaN(val) || (min !== undefined && val < min) || (max !== undefined && val > max)) {
-                node.inputs[key] = def;
-                warnings.push(`[${node.class_type}] ${key} invalid: ${val} -> ${def}`);
-            }
-        };
-
-        if (isVideoNode) {
-            check('length', 25, 1, 300); check('num_frames', 25, 1, 300);
-            check('frame_rate', 24, 0.1, 120); check('width', 768, 64, 2048, true); check('height', 512, 64, 2048, true);
-        }
-        check('batch_size', 1, 1, 16, true); check('steps', 20, 1, 100, true);
-        check('cfg', 7.0, 0, 100); check('denoise', 1.0, 0, 1.0);
+        // Ensure seeds are valid if present
         if (node.inputs.seed !== undefined && !Array.isArray(node.inputs.seed)) {
-            if (isNaN(parseInt(node.inputs.seed)) || node.inputs.seed < 0) node.inputs.seed = generateRandomSeed();
+            const seedVal = parseInt(node.inputs.seed);
+            if (isNaN(seedVal) || seedVal < 0) {
+                node.inputs.seed = generateRandomSeed();
+                warnings.push(`[Node ${nodeId}] Reset invalid seed to ${node.inputs.seed}`);
+            }
         }
     });
     return { workflow, warnings };
@@ -279,12 +268,17 @@ async function proxyToComfy(req, res) {
         delete fetchOptions.headers.host;
         fetchOptions.headers['origin'] = parsedTarget.origin;
         fetchOptions.headers['referer'] = parsedTarget.origin + '/';
+        fetchOptions.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
         if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
             fetchOptions.body = (req.headers['content-type']?.includes('application/json') && req.body && Object.keys(req.body).length > 0) ? JSON.stringify(req.body) : req;
         }
 
         let response = await fetch(`${targetInstance}${targetPath}`, fetchOptions);
+
+        if (response.status === 403) {
+            console.warn(`[Proxy] 403 Forbidden from ComfyUI for ${targetPath}. Check ComfyUI security settings.`);
+        }
 
         // Cache success responses for Pixaroma assets locally if they are missing
         if (response.ok && (targetPath.toLowerCase().includes('pixaroma') || targetPath.toLowerCase().includes('pxf'))) {
@@ -466,7 +460,10 @@ async function runWorkflowLogic(req, res, isPublic = false) {
                     if (existingInput && typeof existingInput === 'object' && (existingInput[0] || existingInput.hasOwnProperty('0'))) return;
 
                     let fv = finalParams[pk];
-                    if (p.valueType === 'number') fv = parseFloat(fv);
+                    if (p.valueType === 'number') {
+                        fv = parseFloat(fv);
+                        if (isNaN(fv)) fv = p.defaultValue || 0;
+                    }
                     else if (p.valueType === 'boolean') fv = (fv === 'true' || fv === true);
                     else if (p.valueType === 'pixaroma_editor') { if (typeof fv === 'string' && (fv.startsWith('{') || fv.startsWith('['))) { try { fv = JSON.parse(fv); } catch(e) {} } }
                     workflow[p.nodeId].inputs[p.inputName] = fv;
