@@ -122,12 +122,23 @@ function applyBypass(workflow, bypassedNodes) {
         if (node.class_type?.includes('Save') || node.class_type?.includes('Preview') || node.class_type?.includes('Combine')) {
             delete workflow[nodeId]; return;
         }
-        let sourceLink = node.inputs ? Object.values(node.inputs).find(v => Array.isArray(v)) : null;
+        let sourceLink = null;
+        if (node.inputs) {
+            // Find the most likely main input link (usually the first one or one with common name)
+            const links = Object.entries(node.inputs).filter(([_, v]) => Array.isArray(v));
+            if (links.length > 0) {
+                const mainLink = links.find(([k, _]) => k.includes('image') || k.includes('latent') || k.includes('model') || k.includes('vae') || k.includes('clip')) || links[0];
+                sourceLink = mainLink[1];
+            }
+        }
+
         Object.values(workflow).forEach(other => {
             if (!other.inputs) return;
             Object.entries(other.inputs).forEach(([k, v]) => {
                 if (Array.isArray(v) && String(v[0]) === String(nodeId)) {
-                    if (sourceLink) other.inputs[k] = sourceLink; else delete other.inputs[k];
+                    // Try to match input/output types if we have source link
+                    if (sourceLink) other.inputs[k] = sourceLink;
+                    else delete other.inputs[k];
                 }
             });
         });
@@ -206,7 +217,7 @@ function analyzeWorkflow(workflowJson) {
                          inputNameLower.includes('project') || inputNameLower.includes('config') || inputNameLower.includes('data') ||
                          inputNameLower === 'scene' || inputNameLower === 'paint' || inputNameLower === 'images');
 
-                    if (!isPixaromaWidget && inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
+                    if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
                     if (!isPixaromaWidget && (inputName === 'image' || inputName === 'video' || inputName.toLowerCase().includes('file') || inputName === 'filename')) return;
                     if ((nodeTypeLower.includes('pixaroma') || nodeTypeLower.includes('pxf')) && (inputNameLower.startsWith('open') || inputNameLower.includes('builder') || inputNameLower.includes('studio'))) return;
                     
@@ -448,8 +459,12 @@ async function runWorkflowLogic(req, res, isPublic = false) {
         for (const [pk, v] of Object.entries(finalParams)) {
             if (shouldGenerateRandomSeed(pk, v, auto)) finalParams[pk] = generateRandomSeed();
             analysis.advancedInputs.forEach(g => g.inputs?.forEach(p => {
-                if (p.key === pk && workflow[p.nodeId]) {
+                if (p.key === pk && workflow[p.nodeId] && workflow[p.nodeId].inputs) {
                     if ((p.nodeType?.toLowerCase().includes('pixaroma') || p.nodeType?.toLowerCase().includes('pxf')) && p.inputName?.startsWith('Open')) return;
+                    // Double check we are not overwriting a link
+                    const existingInput = workflow[p.nodeId].inputs[p.inputName];
+                    if (existingInput && typeof existingInput === 'object' && (existingInput[0] || existingInput.hasOwnProperty('0'))) return;
+
                     let fv = finalParams[pk];
                     if (p.valueType === 'number') fv = parseFloat(fv);
                     else if (p.valueType === 'boolean') fv = (fv === 'true' || fv === true);

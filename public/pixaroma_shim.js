@@ -183,6 +183,12 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
     if (!ext) throw new Error(`Extension ${extName} not found`);
 
     const editorClassName = getEditorClass(nodeType);
+
+    // Safety check: ensure we try to load the extension if it's missing or corrupted
+    if (!window._pixaroma_classes[editorClassName]) {
+        try { await loadPixaromaExtension(nodeType); } catch(e) { console.error("[Shim] Extension recovery failed:", e); }
+    }
+
     const OriginalClass = window._pixaroma_classes[editorClassName];
 
     let parsedData = initialData;
@@ -201,6 +207,7 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
             const openData = (latestData && Object.keys(latestData).length > 0) ? latestData : (data || sessionData);
 
             console.log(`[Shim] ${editorClassName}.open() called for Node ${targetId}`);
+            if (loading.style.display === 'none') loading.style.display = 'flex';
             this._nodeId = targetId;
 
             applyDataToEditor(this, openData);
