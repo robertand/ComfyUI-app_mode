@@ -483,8 +483,89 @@ publicApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res, tru
 
 adminApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
 adminApp.post('/api/settings', (req, res) => { COMFYUI_URLS = req.body.comfyuiUrls; CONFIG.COMFYUI_URLS = COMFYUI_URLS; fs.writeFileSync(CONFIG_FILE, JSON.stringify(CONFIG, null, 2)); res.json({ success: true }); });
-adminApp.delete('/api/outputs/:filename', (req, res) => { const p = path.join('output', req.params.filename); if (fs.existsSync(p)) fs.unlinkSync(p); res.json({ success: true }); });
-adminApp.get('/api/outputs', (req, res) => res.json({ files: fs.readdirSync('output').filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase())).map(f => ({ name: f, url: `/output/${f}`, type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image', mtime: fs.statSync(path.join('output', f)).mtime })).sort((a,b) => b.mtime - a.mtime) }));
+function safeJoin(base, ...parts) {
+    const resolvedBase = path.resolve(base);
+    const joined = path.resolve(path.join(resolvedBase, ...parts));
+    if (!joined.startsWith(resolvedBase)) throw new Error('Path traversal attempt');
+    return joined;
+}
+
+adminApp.delete('/api/outputs', (req, res) => {
+    try {
+        const filename = req.query.filename;
+        if (!filename) throw new Error('Filename required');
+        const p = safeJoin('output', filename);
+        if (fs.existsSync(p)) {
+            if (fs.statSync(p).isDirectory()) fs.rmSync(p, { recursive: true });
+            else fs.unlinkSync(p);
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+adminApp.get('/api/outputs', (req, res) => {
+    try {
+        const subPath = req.query.path || '';
+        const fullPath = safeJoin('output', subPath);
+        if (!fs.existsSync(fullPath)) return res.json({ files: [] });
+
+        const files = fs.readdirSync(fullPath).map(f => {
+            const p = path.join(fullPath, f);
+            const stats = fs.statSync(p);
+            const isFolder = stats.isDirectory();
+            const ext = path.extname(f).toLowerCase();
+            return {
+                name: f,
+                url: `/output/${path.join(subPath, f).replace(/\\/g, '/')}`,
+                type: isFolder ? 'folder' : (['.mp4', '.webm'].includes(ext) ? 'video' : 'image'),
+                mtime: stats.mtime,
+                isFolder
+            };
+        }).filter(f => f.isFolder || ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f.name).toLowerCase()))
+          .sort((a, b) => {
+              if (a.isFolder && !b.isFolder) return -1;
+              if (!a.isFolder && b.isFolder) return 1;
+              return b.mtime - a.mtime;
+          });
+        res.json({ files });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+adminApp.post('/api/outputs/mkdir', (req, res) => {
+    try {
+        const { path: subPath, name } = req.body;
+        if (!name || name.includes('/') || name.includes('\\') || name === '..') throw new Error('Invalid folder name');
+        const p = safeJoin('output', subPath || '', name);
+        if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+adminApp.post('/api/outputs/rename', (req, res) => {
+    try {
+        const { path: subPath, oldName, newName } = req.body;
+        if (!newName || newName.includes('/') || newName.includes('\\') || newName === '..') throw new Error('Invalid name');
+        const oldP = safeJoin('output', subPath || '', oldName);
+        const newP = safeJoin('output', subPath || '', newName);
+        fs.renameSync(oldP, newP);
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+adminApp.post('/api/outputs/delete-batch', (req, res) => {
+    try {
+        const { path: subPath, items } = req.body;
+        items.forEach(name => {
+            const p = safeJoin('output', subPath || '', name);
+            if (fs.existsSync(p)) {
+                if (fs.statSync(p).isDirectory()) fs.rmSync(p, { recursive: true });
+                else fs.unlinkSync(p);
+            }
+        });
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 adminApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
 
 publicApp.get('/api/workflows/list', (req, res) => {
@@ -502,7 +583,33 @@ publicApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res)
     res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
 });
 publicApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
-publicApp.get('/api/outputs', (req, res) => res.json({ files: fs.readdirSync('output').filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase())).map(f => ({ name: f, url: `/output/${f}`, type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image', mtime: fs.statSync(path.join('output', f)).mtime })).sort((a,b) => b.mtime - a.mtime) }));
+publicApp.get('/api/outputs', (req, res) => {
+    try {
+        const subPath = req.query.path || '';
+        const fullPath = safeJoin('output', subPath);
+        if (!fs.existsSync(fullPath)) return res.json({ files: [] });
+
+        const files = fs.readdirSync(fullPath).map(f => {
+            const p = path.join(fullPath, f);
+            const stats = fs.statSync(p);
+            const isFolder = stats.isDirectory();
+            const ext = path.extname(f).toLowerCase();
+            return {
+                name: f,
+                url: `/output/${path.join(subPath, f).replace(/\\/g, '/')}`,
+                type: isFolder ? 'folder' : (['.mp4', '.webm'].includes(ext) ? 'video' : 'image'),
+                mtime: stats.mtime,
+                isFolder
+            };
+        }).filter(f => f.isFolder || ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f.name).toLowerCase()))
+          .sort((a, b) => {
+              if (a.isFolder && !b.isFolder) return -1;
+              if (!a.isFolder && b.isFolder) return 1;
+              return b.mtime - a.mtime;
+          });
+        res.json({ files });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
 publicApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
 
 // ============ START ============
