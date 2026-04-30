@@ -42,26 +42,26 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     const initialFov = 2 * Math.atan(18 / initialFocal) * (180 / Math.PI); // 18mm is half of 35mm film width
 
     const camera = new THREE.PerspectiveCamera(initialFov, 1, 0.1, 1000);
-    const overviewCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-    overviewCamera.position.set(10, 10, 10);
-    overviewCamera.lookAt(0, 1.25, 0);
+    const overviewCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+    overviewCamera.position.set(40, 40, 40);
+    overviewCamera.lookAt(0, 5, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
     containerEl.appendChild(renderer.domElement);
 
-    const grid = new THREE.GridHelper(10, 10, 0x334155, 0x1e293b);
+    const grid = new THREE.GridHelper(40, 40, 0x334155, 0x1e293b);
     scene.add(grid);
 
-    // Subject: Plane
-    const geometry = new THREE.PlaneGeometry(2.5, 2.5);
+    // Subject: Plane (Scaled 4x)
+    const geometry = new THREE.PlaneGeometry(10, 10);
     const material = new THREE.MeshPhongMaterial({
         color: 0xffffff,
         side: THREE.DoubleSide,
         transparent: true
     });
     const subject = new THREE.Mesh(geometry, material);
-    subject.position.y = 1.25;
+    subject.position.y = 5;
     scene.add(subject);
 
     // Lights
@@ -72,9 +72,9 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
 
     // Camera Marker
     const camMarker = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.3), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
-    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.2), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-    lens.rotateX(Math.PI/2); lens.position.z = 0.2;
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.2, 1.2), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    lens.rotateX(Math.PI/2); lens.position.z = 0.8;
     camMarker.add(body); camMarker.add(lens);
     scene.add(camMarker);
 
@@ -102,11 +102,12 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     zoomLine.position.y = 1.25;
     handleGroup.add(zoomLine);
 
-    // Drag indicators (Small spheres on handles)
-    const sphereGeo = new THREE.SphereGeometry(0.15, 16, 16);
+    // Drag indicators
+    const sphereGeo = new THREE.SphereGeometry(0.4, 16, 16);
+    const coneGeo = new THREE.ConeGeometry(0.4, 0.8, 16);
     const hIndicator = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: 0xff00ff }));
     const vIndicator = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: 0x00ffff }));
-    const zIndicator = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: 0xffd700 }));
+    const zIndicator = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xffd700 }));
     handleGroup.add(hIndicator, vIndicator, zIndicator);
 
     function updateHandles() {
@@ -118,32 +119,45 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         const phi = (90 - v) * (Math.PI / 180);
         const theta = (-h + 90) * (Math.PI / 180);
 
-        // Update indicators
-        hIndicator.position.set(3.5 * Math.cos(theta), 1.25, 3.5 * Math.sin(theta));
-        vIndicator.position.set(radius * Math.sin(phi) * Math.cos(theta), radius * Math.cos(phi) + 1.25, radius * Math.sin(phi) * Math.sin(theta));
-        zIndicator.position.copy(vIndicator.position);
+        // Update indicators (scaled 4x)
+        const azimuthRadius = 14;
+        hIndicator.position.set(azimuthRadius * Math.cos(theta), 5, azimuthRadius * Math.sin(theta));
+
+        const currentRadius = radius * 4;
+        vIndicator.position.set(currentRadius * Math.sin(phi) * Math.cos(theta), currentRadius * Math.cos(phi) + 5, currentRadius * Math.sin(phi) * Math.sin(theta));
+
+        // Separate zoom handle: place it at the end of the line
+        zIndicator.position.copy(vIndicator.position).normalize().multiplyScalar(44); // At grid edge
+        zIndicator.position.y = 5;
+        zIndicator.lookAt(0, 5, 0);
+        zIndicator.rotateX(Math.PI/2);
 
         // Update Elevation Arc
         handleGroup.remove(elevationArc);
-        const arcGeo = new THREE.TorusGeometry(radius, 0.02, 8, 50, (120 * Math.PI / 180));
+        const arcGeo = new THREE.TorusGeometry(currentRadius, 0.08, 8, 50, (120 * Math.PI / 180));
         elevationArc = new THREE.Mesh(arcGeo, arcMat);
-        elevationArc.position.y = 1.25;
+        elevationArc.position.y = 5;
         elevationArc.rotation.y = theta;
         elevationArc.rotation.z = Math.PI / 2 + (30 * Math.PI / 180);
         handleGroup.add(elevationArc);
 
+        // Update Azimuth Ring
+        azimuthRing.geometry.dispose();
+        azimuthRing.geometry = new THREE.TorusGeometry(azimuthRadius, 0.2, 8, 100);
+        azimuthRing.position.y = 5;
+
         // Update Zoom Line Orientation
         zoomLine.lookAt(vIndicator.position.x, vIndicator.position.y, vIndicator.position.z);
         zoomLine.rotateX(Math.PI/2);
-        zoomLine.position.set(vIndicator.position.x/2, (vIndicator.position.y + 1.25)/2, vIndicator.position.z/2);
-        zoomLine.scale.y = radius / 10;
+        zoomLine.position.set(vIndicator.position.x/2, (vIndicator.position.y + 5)/2, vIndicator.position.z/2);
+        zoomLine.scale.y = currentRadius / 5; // Updated scale
     }
 
     function updateCamera() {
         if (controlMode === 'orbit') {
             camera.position.copy(camMarker.position).multiplyScalar(1.4);
-            camera.position.y += 1;
-            camera.lookAt(0, 1.25, 0);
+            camera.position.y += 4; // Adjust offset for larger scale
+            camera.lookAt(0, 5, 0);
         }
     }
 
@@ -159,14 +173,14 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
 
         const phi = (90 - v) * (Math.PI / 180);
         const theta = (-h + 90) * (Math.PI / 180);
-        const radius = 11 - z;
+        const radius = (11 - z) * 4;
 
         camMarker.position.set(
             radius * Math.sin(phi) * Math.cos(theta),
-            radius * Math.cos(phi) + 1.25,
+            radius * Math.cos(phi) + 5,
             radius * Math.sin(phi) * Math.sin(theta)
         );
-        camMarker.lookAt(0, 1.25, 0);
+        camMarker.lookAt(0, 5, 0);
         updateCamera();
     }
 
@@ -264,18 +278,15 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
                     let h = 90 - (angle * 180 / Math.PI);
                     setVal('horizontal_angle', Math.round(((h % 360) + 360) % 360));
                 }
-            } else if (activeHandle === vIndicator || activeHandle === zIndicator) {
-                // Simplified handle drag for vertical and zoom
-                const dx = e.clientX - prevMouse.x;
+            } else if (activeHandle === vIndicator) {
                 const dy = e.clientY - prevMouse.y;
-                if (activeHandle === vIndicator) {
-                    let v = (parseFloat(getVal('vertical_angle')) || 0) + dy;
-                    setVal('vertical_angle', Math.round(Math.max(-30, Math.min(90, v))));
-                } else {
-                    let z = parseFloat(getVal('zoom')) || 5;
-                    z = Math.max(0, Math.min(10, z - dy * 0.1));
-                    setVal('zoom', parseFloat(z.toFixed(1)));
-                }
+                let v = (parseFloat(getVal('vertical_angle')) || 0) - dy; // Inverted
+                setVal('vertical_angle', Math.round(Math.max(-30, Math.min(90, v))));
+            } else if (activeHandle === zIndicator) {
+                const dy = e.clientY - prevMouse.y;
+                let z = parseFloat(getVal('zoom')) || 5;
+                z = Math.max(0, Math.min(10, z - dy * 0.1));
+                setVal('zoom', parseFloat(z.toFixed(1)));
             }
             updateMarker();
             updateHandles();
