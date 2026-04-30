@@ -42,6 +42,10 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     const initialFov = 2 * Math.atan(18 / initialFocal) * (180 / Math.PI); // 18mm is half of 35mm film width
 
     const camera = new THREE.PerspectiveCamera(initialFov, 1, 0.1, 1000);
+    const overviewCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+    overviewCamera.position.set(10, 10, 10);
+    overviewCamera.lookAt(0, 1.25, 0);
+
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
     containerEl.appendChild(renderer.domElement);
@@ -74,57 +78,76 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     camMarker.add(body); camMarker.add(lens);
     scene.add(camMarker);
 
-    // Transform Controls
-    let transformControls = null;
-    if (window.THREE.TransformControls) {
-        transformControls = new THREE.TransformControls(camera, renderer.domElement);
-        transformControls.addEventListener('change', () => {
-            if (controlMode === 'manual' && transformControls.dragging) {
-                syncSphericalFromMarker();
-            }
-        });
-        transformControls.addEventListener('dragging-changed', (event) => {
-            isDraggingMarker = event.value;
-        });
-        transformControls.attach(camMarker);
-        transformControls.visible = false;
-        transformControls.enabled = false;
-        scene.add(transformControls);
-    }
+    // --- SPECIALIZED HANDLES ---
+    const handleGroup = new THREE.Group();
+    scene.add(handleGroup);
 
-    let isDraggingMarker = false;
+    // 1. Azimuth Ring (Pink)
+    const ringGeo = new THREE.TorusGeometry(3.5, 0.05, 8, 100);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.6 });
+    const azimuthRing = new THREE.Mesh(ringGeo, ringMat);
+    azimuthRing.rotation.x = Math.PI / 2;
+    azimuthRing.position.y = 1.25;
+    handleGroup.add(azimuthRing);
 
-    function syncSphericalFromMarker() {
-        const pos = camMarker.position.clone();
-        pos.y -= 1.25; // Relative to center
-        const radius = pos.length();
+    // 2. Elevation Arc (Cyan) - Will be updated dynamically
+    const arcMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
+    let elevationArc = new THREE.Mesh(new THREE.BufferGeometry(), arcMat);
+    handleGroup.add(elevationArc);
 
-        // Clamp radius to zoom range (11 - zoom = radius -> zoom = 11 - radius)
-        const z = Math.max(0, Math.min(10, 11 - radius));
+    // 3. Zoom Line (Gold)
+    const zoomLineGeo = new THREE.CylinderGeometry(0.03, 0.03, 10);
+    const zoomLineMat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.4 });
+    const zoomLine = new THREE.Mesh(zoomLineGeo, zoomLineMat);
+    zoomLine.position.y = 1.25;
+    handleGroup.add(zoomLine);
 
-        const phi = Math.acos(pos.y / radius);
-        const theta = Math.atan2(pos.z, pos.x);
+    // Drag indicators (Small spheres on handles)
+    const sphereGeo = new THREE.SphereGeometry(0.15, 16, 16);
+    const hIndicator = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: 0xff00ff }));
+    const vIndicator = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: 0x00ffff }));
+    const zIndicator = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: 0xffd700 }));
+    handleGroup.add(hIndicator, vIndicator, zIndicator);
 
-        const v = 90 - (phi * 180 / Math.PI);
-        const h = 90 - (theta * 180 / Math.PI);
+    function updateHandles() {
+        const h = parseFloat(getVal('horizontal_angle')) || 0;
+        const v = parseFloat(getVal('vertical_angle')) || 0;
+        const z = parseFloat(getVal('zoom')) || 5;
+        const radius = 11 - z;
 
-        setVal('horizontal_angle', Math.round(((h % 360) + 360) % 360));
-        setVal('vertical_angle', Math.round(v));
-        setVal('zoom', parseFloat(z.toFixed(1)));
+        const phi = (90 - v) * (Math.PI / 180);
+        const theta = (-h + 90) * (Math.PI / 180);
 
-        camMarker.lookAt(0, 1.25, 0);
-        updateCamera();
+        // Update indicators
+        hIndicator.position.set(3.5 * Math.cos(theta), 1.25, 3.5 * Math.sin(theta));
+        vIndicator.position.set(radius * Math.sin(phi) * Math.cos(theta), radius * Math.cos(phi) + 1.25, radius * Math.sin(phi) * Math.sin(theta));
+        zIndicator.position.copy(vIndicator.position);
+
+        // Update Elevation Arc
+        handleGroup.remove(elevationArc);
+        const arcGeo = new THREE.TorusGeometry(radius, 0.02, 8, 50, (120 * Math.PI / 180));
+        elevationArc = new THREE.Mesh(arcGeo, arcMat);
+        elevationArc.position.y = 1.25;
+        elevationArc.rotation.y = theta;
+        elevationArc.rotation.z = Math.PI / 2 + (30 * Math.PI / 180);
+        handleGroup.add(elevationArc);
+
+        // Update Zoom Line Orientation
+        zoomLine.lookAt(vIndicator.position.x, vIndicator.position.y, vIndicator.position.z);
+        zoomLine.rotateX(Math.PI/2);
+        zoomLine.position.set(vIndicator.position.x/2, (vIndicator.position.y + 1.25)/2, vIndicator.position.z/2);
+        zoomLine.scale.y = radius / 10;
     }
 
     function updateCamera() {
-        camera.position.copy(camMarker.position).multiplyScalar(1.4);
-        camera.position.y += 1;
-        camera.lookAt(0, 1.25, 0);
+        if (controlMode === 'orbit') {
+            camera.position.copy(camMarker.position).multiplyScalar(1.4);
+            camera.position.y += 1;
+            camera.lookAt(0, 1.25, 0);
+        }
     }
 
     function updateMarker() {
-        if (isDraggingMarker) return;
-
         const h = parseFloat(getVal('horizontal_angle')) || 0;
         const v = parseFloat(getVal('vertical_angle')) || 0;
         const z = parseFloat(getVal('zoom')) || 5;
@@ -195,28 +218,87 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     let isDragging = false;
     let prevMouse = { x: 0, y: 0 };
 
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let activeHandle = null;
+
     const onMouseDown = e => {
-        if (controlMode !== 'orbit') return;
-        isDragging = true;
-        prevMouse = { x: e.clientX, y: e.clientY };
-        e.preventDefault();
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+        if (controlMode === 'manual') {
+            raycaster.setFromCamera(mouse, overviewCamera);
+            const intersects = raycaster.intersectObjects([hIndicator, vIndicator, zIndicator]);
+            if (intersects.length > 0) {
+                activeHandle = intersects[0].object;
+                isDragging = true;
+                e.preventDefault();
+                return;
+            }
+        }
+
+        if (controlMode === 'orbit') {
+            isDragging = true;
+            prevMouse = { x: e.clientX, y: e.clientY };
+            e.preventDefault();
+        }
     };
 
     const onMouseMove = e => {
-        if (controlMode !== 'orbit' || !isDragging) return;
-        const dx = e.clientX - prevMouse.x;
-        const dy = e.clientY - prevMouse.y;
-        let h = (parseFloat(getVal('horizontal_angle')) || 0) - dx;
-        let v = (parseFloat(getVal('vertical_angle')) || 0) + dy;
-        if (h < 0) h += 360; if (h >= 360) h -= 360;
-        v = Math.max(-89, Math.min(89, v));
-        setVal('horizontal_angle', Math.round(h));
-        setVal('vertical_angle', Math.round(v));
-        updateMarker();
-        prevMouse = { x: e.clientX, y: e.clientY };
+        if (!isDragging) return;
+
+        if (controlMode === 'manual' && activeHandle) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, overviewCamera);
+            const planeNormal = new THREE.Vector3(0, 1, 0);
+            const plane = new THREE.Plane(planeNormal, -1.25);
+            const intersectPoint = new THREE.Vector3();
+
+            if (activeHandle === hIndicator) {
+                if (raycaster.ray.intersectPlane(plane, intersectPoint)) {
+                    const angle = Math.atan2(intersectPoint.z, intersectPoint.x);
+                    let h = 90 - (angle * 180 / Math.PI);
+                    setVal('horizontal_angle', Math.round(((h % 360) + 360) % 360));
+                }
+            } else if (activeHandle === vIndicator || activeHandle === zIndicator) {
+                // Simplified handle drag for vertical and zoom
+                const dx = e.clientX - prevMouse.x;
+                const dy = e.clientY - prevMouse.y;
+                if (activeHandle === vIndicator) {
+                    let v = (parseFloat(getVal('vertical_angle')) || 0) + dy;
+                    setVal('vertical_angle', Math.round(Math.max(-30, Math.min(90, v))));
+                } else {
+                    let z = parseFloat(getVal('zoom')) || 5;
+                    z = Math.max(0, Math.min(10, z - dy * 0.1));
+                    setVal('zoom', parseFloat(z.toFixed(1)));
+                }
+            }
+            updateMarker();
+            updateHandles();
+            prevMouse = { x: e.clientX, y: e.clientY };
+            return;
+        }
+
+        if (controlMode === 'orbit') {
+            const dx = e.clientX - prevMouse.x;
+            const dy = e.clientY - prevMouse.y;
+            let h = (parseFloat(getVal('horizontal_angle')) || 0) - dx;
+            let v = (parseFloat(getVal('vertical_angle')) || 0) + dy;
+            if (h < 0) h += 360; if (h >= 360) h -= 360;
+            v = Math.max(-89, Math.min(89, v));
+            setVal('horizontal_angle', Math.round(h));
+            setVal('vertical_angle', Math.round(v));
+            updateMarker();
+            updateHandles();
+            prevMouse = { x: e.clientX, y: e.clientY };
+        }
     };
 
-    const onMouseUp = () => isDragging = false;
+    const onMouseUp = () => { isDragging = false; activeHandle = null; };
 
     renderer.domElement.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
@@ -242,14 +324,17 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
             orbitBtn.classList.remove('bg-slate-800', 'text-slate-400');
             manualBtn.classList.add('bg-slate-800', 'text-slate-400');
             manualBtn.classList.remove('bg-blue-600', 'text-white');
-            if (transformControls) { transformControls.visible = false; transformControls.enabled = false; }
+            handleGroup.visible = false;
+            camMarker.visible = false;
             renderer.domElement.style.cursor = 'move';
         } else {
             manualBtn.classList.add('bg-blue-600', 'text-white');
             manualBtn.classList.remove('bg-slate-800', 'text-slate-400');
             orbitBtn.classList.add('bg-slate-800', 'text-slate-400');
             orbitBtn.classList.remove('bg-blue-600', 'text-white');
-            if (transformControls) { transformControls.visible = true; transformControls.enabled = true; }
+            handleGroup.visible = true;
+            camMarker.visible = true;
+            updateHandles();
             renderer.domElement.style.cursor = 'default';
         }
     };
@@ -267,9 +352,11 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         }
         updateTexture();
         requestAnimationFrame(animate);
-        renderer.render(scene, camera);
+        renderer.render(scene, controlMode === 'orbit' ? camera : overviewCamera);
     }
     updateMarker();
+    updateHandles();
+    setMode('orbit'); // Initialize mode
     animate();
 };
 
@@ -299,12 +386,12 @@ window.renderQwen3DCard = function(container, nodeId, parameters, currentWorkflo
 
         <div class="flex gap-2 mb-2 ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
             <button id="btn-${nodeId}-orbit" class="flex-1 py-1.5 px-3 rounded bg-blue-600 text-white text-[10px] font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 uppercase tracking-wider">
-                <i data-lucide="rotate-3d" class="w-3.5 h-3.5"></i>
-                <span>Orbit Mode</span>
+                <i data-lucide="camera" class="w-3.5 h-3.5"></i>
+                <span>Camera View</span>
             </button>
             <button id="btn-${nodeId}-manual" class="flex-1 py-1.5 px-3 rounded bg-slate-800 text-slate-400 text-[10px] font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 uppercase tracking-wider">
-                <i data-lucide="mouse-pointer-2" class="w-3.5 h-3.5"></i>
-                <span>Manual Setup</span>
+                <i data-lucide="settings-2" class="w-3.5 h-3.5"></i>
+                <span>Manual Controls</span>
             </button>
         </div>
 
