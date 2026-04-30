@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/TransformControls.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f1f5f9; }
@@ -215,16 +216,29 @@
             <!-- Output Browser -->
             <div class="slate-card rounded-xl p-6 shadow-xl mt-8">
                 <div class="flex items-center justify-between mb-6">
-                    <div class="flex items-center gap-4">
-                        <h3 class="text-lg font-bold flex items-center gap-2 cursor-pointer" onclick="toggleCollapse('outputs-gallery-container')">
-                            <i data-lucide="gallery-thumbnails" class="w-5 h-5 text-pink-500"></i>
-                            <span data-i18n="output_browser">Output History</span>
-                            <i data-lucide="chevron-down" id="outputs-gallery-chevron" class="w-4 h-4 ml-2 transition-transform"></i>
-                        </h3>
+                    <div class="flex flex-col gap-4 w-full">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-bold flex items-center gap-2 cursor-pointer" onclick="toggleCollapse('outputs-gallery-container')">
+                                <i data-lucide="gallery-thumbnails" class="w-5 h-5 text-pink-500"></i>
+                                <span data-i18n="output_browser">Output History</span>
+                                <i data-lucide="chevron-down" id="outputs-gallery-chevron" class="w-4 h-4 ml-2 transition-transform"></i>
+                            </h3>
+                            <div class="flex items-center gap-2">
+                                <button id="mkdir-btn" class="p-2 hover:bg-slate-700 rounded-lg transition-all text-slate-400 hover:text-white" title="New Folder" data-i18n="new_folder">
+                                    <i data-lucide="folder-plus" class="w-5 h-5"></i>
+                                </button>
+                                <button id="delete-batch-btn" class="p-2 hover:bg-red-900/30 rounded-lg transition-all text-slate-400 hover:text-red-400 hidden" title="Delete Selected" data-i18n="delete_selected">
+                                    <i data-lucide="trash-2" class="w-5 h-5"></i>
+                                </button>
+                                <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all">
+                                    <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="gallery-nav" class="flex items-center gap-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded-lg">
+                            <!-- Breadcrumbs -->
+                        </div>
                     </div>
-                    <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all">
-                        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-                    </button>
                 </div>
                 <div id="outputs-gallery-container" class="transition-all duration-300 overflow-hidden">
                     <div id="outputs-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 pb-4"></div>

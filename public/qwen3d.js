@@ -5,6 +5,8 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     const containerEl = document.getElementById(containerId);
     if (!containerEl || !window.THREE) return;
 
+    let controlMode = 'orbit'; // 'orbit' or 'manual'
+
     const getVal = (name) => {
         const key = `node_${nodeId}_${name}`;
         if (parameters[key] !== undefined) return parameters[key];
@@ -72,7 +74,57 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     camMarker.add(body); camMarker.add(lens);
     scene.add(camMarker);
 
+    // Transform Controls
+    let transformControls = null;
+    if (window.THREE.TransformControls) {
+        transformControls = new THREE.TransformControls(camera, renderer.domElement);
+        transformControls.addEventListener('change', () => {
+            if (controlMode === 'manual' && transformControls.dragging) {
+                syncSphericalFromMarker();
+            }
+        });
+        transformControls.addEventListener('dragging-changed', (event) => {
+            isDraggingMarker = event.value;
+        });
+        transformControls.attach(camMarker);
+        transformControls.visible = false;
+        transformControls.enabled = false;
+        scene.add(transformControls);
+    }
+
+    let isDraggingMarker = false;
+
+    function syncSphericalFromMarker() {
+        const pos = camMarker.position.clone();
+        pos.y -= 1.25; // Relative to center
+        const radius = pos.length();
+
+        // Clamp radius to zoom range (11 - zoom = radius -> zoom = 11 - radius)
+        const z = Math.max(0, Math.min(10, 11 - radius));
+
+        const phi = Math.acos(pos.y / radius);
+        const theta = Math.atan2(pos.z, pos.x);
+
+        const v = 90 - (phi * 180 / Math.PI);
+        const h = 90 - (theta * 180 / Math.PI);
+
+        setVal('horizontal_angle', Math.round(((h % 360) + 360) % 360));
+        setVal('vertical_angle', Math.round(v));
+        setVal('zoom', parseFloat(z.toFixed(1)));
+
+        camMarker.lookAt(0, 1.25, 0);
+        updateCamera();
+    }
+
+    function updateCamera() {
+        camera.position.copy(camMarker.position).multiplyScalar(1.4);
+        camera.position.y += 1;
+        camera.lookAt(0, 1.25, 0);
+    }
+
     function updateMarker() {
+        if (isDraggingMarker) return;
+
         const h = parseFloat(getVal('horizontal_angle')) || 0;
         const v = parseFloat(getVal('vertical_angle')) || 0;
         const z = parseFloat(getVal('zoom')) || 5;
@@ -92,10 +144,7 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
             radius * Math.sin(phi) * Math.sin(theta)
         );
         camMarker.lookAt(0, 1.25, 0);
-
-        camera.position.copy(camMarker.position).multiplyScalar(1.4);
-        camera.position.y += 1;
-        camera.lookAt(0, 1.25, 0);
+        updateCamera();
     }
 
     // Texture logic
@@ -147,13 +196,14 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     let prevMouse = { x: 0, y: 0 };
 
     const onMouseDown = e => {
+        if (controlMode !== 'orbit') return;
         isDragging = true;
         prevMouse = { x: e.clientX, y: e.clientY };
         e.preventDefault();
     };
 
     const onMouseMove = e => {
-        if (!isDragging) return;
+        if (controlMode !== 'orbit' || !isDragging) return;
         const dx = e.clientX - prevMouse.x;
         const dy = e.clientY - prevMouse.y;
         let h = (parseFloat(getVal('horizontal_angle')) || 0) - dx;
@@ -173,12 +223,39 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     window.addEventListener('mouseup', onMouseUp);
 
     renderer.domElement.addEventListener('wheel', e => {
+        if (controlMode !== 'orbit') return;
         e.preventDefault();
         let z = parseFloat(getVal('zoom')) || 5;
         z = Math.max(0, Math.min(10, z - e.deltaY * 0.01));
         setVal('zoom', parseFloat(z.toFixed(1)));
         updateMarker();
     }, { passive: false });
+
+    // Mode Toggle Logic
+    const orbitBtn = document.getElementById(`btn-${nodeId}-orbit`);
+    const manualBtn = document.getElementById(`btn-${nodeId}-manual`);
+
+    const setMode = (mode) => {
+        controlMode = mode;
+        if (mode === 'orbit') {
+            orbitBtn.classList.add('bg-blue-600', 'text-white');
+            orbitBtn.classList.remove('bg-slate-800', 'text-slate-400');
+            manualBtn.classList.add('bg-slate-800', 'text-slate-400');
+            manualBtn.classList.remove('bg-blue-600', 'text-white');
+            if (transformControls) { transformControls.visible = false; transformControls.enabled = false; }
+            renderer.domElement.style.cursor = 'move';
+        } else {
+            manualBtn.classList.add('bg-blue-600', 'text-white');
+            manualBtn.classList.remove('bg-slate-800', 'text-slate-400');
+            orbitBtn.classList.add('bg-slate-800', 'text-slate-400');
+            orbitBtn.classList.remove('bg-blue-600', 'text-white');
+            if (transformControls) { transformControls.visible = true; transformControls.enabled = true; }
+            renderer.domElement.style.cursor = 'default';
+        }
+    };
+
+    if (orbitBtn) orbitBtn.onclick = () => setMode('orbit');
+    if (manualBtn) manualBtn.onclick = () => setMode('manual');
 
     function animate() {
         if (!document.getElementById(containerId)) {
@@ -219,6 +296,18 @@ window.renderQwen3DCard = function(container, nodeId, parameters, currentWorkflo
             </div>
             <button id="bypass-btn-${nodeId}" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
         </div>
+
+        <div class="flex gap-2 mb-2 ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
+            <button id="btn-${nodeId}-orbit" class="flex-1 py-1.5 px-3 rounded bg-blue-600 text-white text-[10px] font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 uppercase tracking-wider">
+                <i data-lucide="rotate-3d" class="w-3.5 h-3.5"></i>
+                <span>Orbit Mode</span>
+            </button>
+            <button id="btn-${nodeId}-manual" class="flex-1 py-1.5 px-3 rounded bg-slate-800 text-slate-400 text-[10px] font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 uppercase tracking-wider">
+                <i data-lucide="mouse-pointer-2" class="w-3.5 h-3.5"></i>
+                <span>Manual Setup</span>
+            </button>
+        </div>
+
         <div id="qwen-3d-${nodeId}" class="w-full aspect-square bg-slate-900 rounded-lg overflow-hidden border border-slate-700 cursor-move relative ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
             <div class="absolute bottom-2 left-2 text-[9px] text-slate-500 pointer-events-none bg-slate-950/40 px-2 py-1 rounded tracking-wider uppercase">DRAG TO ROTATE • SCROLL TO ZOOM</div>
         </div>

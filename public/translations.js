@@ -52,7 +52,15 @@ const translations = {
         no_workflows: "No workflows found",
         add_preset_hint: "Upload a workflow to add presets",
         no_presets_msg: "No preset images",
-        toggle_randomization: "Toggle Randomization"
+        toggle_randomization: "Toggle Randomization",
+        new_folder: "New Folder",
+        rename: "Rename",
+        delete_selected: "Delete Selected",
+        back: "Back",
+        confirm_delete_items: "Delete selected items?",
+        folder_name: "Folder Name",
+        new_name: "New Name",
+        root: "Root"
     },
     hr: {
         app_title: "ComfyUI Remote Generator",
@@ -107,7 +115,15 @@ const translations = {
         no_workflows: "Nema pronađenih tijekova rada",
         add_preset_hint: "Prenesite tijek rada da biste dodali postavke",
         no_presets_msg: "Nema unaprijed postavljenih slika",
-        toggle_randomization: "Prebaci nasumičnost"
+        toggle_randomization: "Prebaci nasumičnost",
+        new_folder: "Nova mapa",
+        rename: "Preimenuj",
+        delete_selected: "Obriši odabrano",
+        back: "Natrag",
+        confirm_delete_items: "Obrisati odabrane stavke?",
+        folder_name: "Naziv mape",
+        new_name: "Novi naziv",
+        root: "Korijen"
     },
     sl: {
         app_title: "ComfyUI Remote Generator",
@@ -162,7 +178,15 @@ const translations = {
         no_workflows: "Ni najdenih delovnih procesov",
         add_preset_hint: "Naložite delovni proces za dodajanje prednastavitev",
         no_presets_msg: "Ni prednastavljenih slik",
-        toggle_randomization: "Preklopi naključnost"
+        toggle_randomization: "Preklopi naključnost",
+        new_folder: "Nova mapa",
+        rename: "Preimenuj",
+        delete_selected: "Izbriši izbrano",
+        back: "Nazaj",
+        confirm_delete_items: "Izbrišem izbrane predmete?",
+        folder_name: "Ime mape",
+        new_name: "Novo ime",
+        root: "Koren"
     },
     sk: {
         app_title: "ComfyUI Remote Generator",
@@ -217,7 +241,15 @@ const translations = {
         no_workflows: "Nenašli sa žiadne pracovné postupy",
         add_preset_hint: "Nahrajte pracovný postup a pridajte predvoľby",
         no_presets_msg: "Žiadne prednastavené obrázky",
-        toggle_randomization: "Prepnúť náhodnosť"
+        toggle_randomization: "Prepnúť náhodnosť",
+        new_folder: "Novi priečinok",
+        rename: "Premenovať",
+        delete_selected: "Odstrániť vybrané",
+        back: "Späť",
+        confirm_delete_items: "Odstrániť vybrané položky?",
+        folder_name: "Názov priečinka",
+        new_name: "Nový názov",
+        root: "Koreň"
     },
     ro: {
         app_title: "ComfyUI Remote Generator",
@@ -272,7 +304,15 @@ const translations = {
         no_workflows: "Nu există workflow-uri",
         add_preset_hint: "Încarcă un workflow pentru a adăuga preseturi",
         no_presets_msg: "Nicio imagine presetată",
-        toggle_randomization: "Randomizare"
+        toggle_randomization: "Randomizare",
+        new_folder: "Dosar Nou",
+        rename: "Redenumește",
+        delete_selected: "Șterge Selecția",
+        back: "Înapoi",
+        confirm_delete_items: "Ștergi elementele selectate?",
+        folder_name: "Nume Dosar",
+        new_name: "Nume Nou",
+        root: "Rădăcină"
     }
 };
 

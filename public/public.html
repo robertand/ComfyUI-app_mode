@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.128.0/examples/js/controls/TransformControls.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f1f5f9; }
@@ -145,16 +146,21 @@
                 <!-- Output Browser (Collapsible for User) -->
                 <div class="slate-card rounded-xl p-6 shadow-xl">
                     <div class="flex items-center justify-between mb-6">
-                        <div class="flex items-center gap-4">
+                    <div class="flex flex-col gap-4 w-full">
+                        <div class="flex items-center justify-between">
                             <h3 class="text-lg font-bold flex items-center gap-2 cursor-pointer" onclick="toggleCollapse('outputs-gallery-container')">
                                 <i data-lucide="history" class="w-5 h-5 text-pink-500"></i>
                                 <span data-i18n="output_browser">Output Browser</span>
                                 <i data-lucide="chevron-down" id="outputs-gallery-chevron" class="w-4 h-4 ml-2 transition-transform"></i>
                             </h3>
+                            <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all">
+                                <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                            </button>
                         </div>
-                        <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all">
-                            <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-                        </button>
+                        <div id="gallery-nav" class="flex items-center gap-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded-lg">
+                            <!-- Breadcrumbs -->
+                        </div>
+                        </div>
                     </div>
                     <div id="outputs-gallery-container" class="transition-all duration-300 overflow-hidden">
                         <div id="outputs-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 pb-4"></div>
@@ -193,6 +199,7 @@
         let parameters = {};
         let bypassedNodes = {};
         let uiConfig = null;
+        let currentOutputPath = '';
 
         function toggleBypass(nodeId) { bypassedNodes[nodeId] = !bypassedNodes[nodeId]; renderInterface(); }
         function toggleRandom(key) {
@@ -451,17 +458,79 @@
 
         async function refreshOutputs() {
             try {
-                const res = await fetch('/api/outputs');
+                const res = await fetch(`/api/outputs?path=${encodeURIComponent(currentOutputPath)}`);
                 const data = await res.json();
-                const g = document.getElementById('outputs-gallery'); g.innerHTML = '';
-                if (data.files.length === 0) { g.innerHTML = '<div class="col-span-full text-center py-12 text-slate-600 italic">No items found</div>'; return; }
+                const g = document.getElementById('outputs-gallery');
+                g.innerHTML = '';
+                renderGalleryNav();
+
+                if (data.files.length === 0) {
+                    g.innerHTML = '<div class="col-span-full text-center py-12 text-slate-600 italic">No items found</div>';
+                    return;
+                }
+
                 data.files.forEach(f => {
-                    const card = document.createElement('div'); card.className = 'slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square';
-                    card.innerHTML = f.type === 'video' ? `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40"><i data-lucide="play-circle" class="w-10 h-10 text-white opacity-80"></i></div>` : `<img src="${f.url}" class="w-full h-full object-cover group-hover:scale-105 transition-all duration-500">`;
-                    card.onclick = () => showModal(f.url, f.type); g.appendChild(card);
+                    const card = document.createElement('div');
+                    card.className = `slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square transition-all ${f.isFolder ? 'bg-slate-800/50' : ''}`;
+
+                    let content = '';
+                    if (f.isFolder) {
+                        content = `<div class="w-full h-full flex flex-col items-center justify-center gap-2 p-4">
+                            <i data-lucide="folder" class="w-12 h-12 text-blue-500"></i>
+                            <span class="text-[10px] font-medium text-slate-300 truncate w-full text-center">${f.name}</span>
+                        </div>`;
+                    } else if (f.type === 'video') {
+                        content = `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40"><i data-lucide="play-circle" class="w-10 h-10 text-white opacity-80"></i></div>`;
+                    } else {
+                        content = `<img src="${f.url}" class="w-full h-full object-cover group-hover:scale-105 transition-all duration-500">`;
+                    }
+
+                    card.innerHTML = content;
+                    card.onclick = () => {
+                        if (f.isFolder) {
+                            currentOutputPath = currentOutputPath ? `${currentOutputPath}/${f.name}` : f.name;
+                            refreshOutputs();
+                        } else {
+                            showModal(f.url, f.type);
+                        }
+                    };
+                    g.appendChild(card);
                 });
                 if (window.lucide) window.lucide.createIcons();
+                translatePage(localStorage.getItem('preferredLanguage') || 'en');
             } catch (e) { console.error(e); }
+        }
+
+        function renderGalleryNav() {
+            const nav = document.getElementById('gallery-nav');
+            if (!nav) return;
+            nav.innerHTML = '';
+
+            const parts = currentOutputPath ? currentOutputPath.split('/') : [];
+
+            const rootBtn = document.createElement('button');
+            rootBtn.className = 'hover:text-white transition-colors flex items-center gap-1';
+            rootBtn.innerHTML = `<i data-lucide="home" class="w-3 h-3"></i> <span data-i18n="root">Root</span>`;
+            rootBtn.onclick = () => { currentOutputPath = ''; refreshOutputs(); };
+            nav.appendChild(rootBtn);
+
+            let pathAcc = '';
+            parts.forEach((p, idx) => {
+                pathAcc = pathAcc ? `${pathAcc}/${p}` : p;
+                const currentPath = pathAcc;
+
+                const sep = document.createElement('span');
+                sep.innerHTML = '<i data-lucide="chevron-right" class="w-3 h-3"></i>';
+                nav.appendChild(sep);
+
+                const btn = document.createElement('button');
+                btn.className = 'hover:text-white transition-colors';
+                btn.textContent = p;
+                btn.onclick = () => { currentOutputPath = currentPath; refreshOutputs(); };
+                nav.appendChild(btn);
+            });
+            if (window.lucide) window.lucide.createIcons();
+            translatePage(localStorage.getItem('preferredLanguage') || 'en');
         }
 
         function showModal(url, type) { const m = document.getElementById('media-modal'); const c = document.getElementById('modal-content'); c.innerHTML = type === 'video' ? `<video src="${url}" controls autoplay class="max-w-full max-h-full rounded-lg"></video>` : `<img src="${url}" class="max-w-full max-h-full object-contain rounded-lg">`; m.classList.remove('hidden'); }
