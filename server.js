@@ -566,6 +566,21 @@ adminApp.post('/api/outputs/delete-batch', (req, res) => {
     } catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+adminApp.post('/api/outputs/move', (req, res) => {
+    try {
+        const { sourcePath, items, targetPath } = req.body;
+        const targetDir = safeJoin('output', targetPath || '');
+        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+
+        items.forEach(name => {
+            const oldP = safeJoin('output', sourcePath || '', name);
+            const newP = safeJoin('output', targetPath || '', name);
+            if (fs.existsSync(oldP)) fs.renameSync(oldP, newP);
+        });
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 adminApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
 
 publicApp.get('/api/workflows/list', (req, res) => {

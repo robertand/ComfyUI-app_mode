@@ -60,7 +60,10 @@ const translations = {
         confirm_delete_items: "Delete selected items?",
         folder_name: "Folder Name",
         new_name: "New Name",
-        root: "Root"
+        root: "Root",
+        move: "Move",
+        move_selected: "Move Selected",
+        move_to: "Move to (folder path):"
     },
     hr: {
         app_title: "ComfyUI Remote Generator",
@@ -123,7 +126,10 @@ const translations = {
         confirm_delete_items: "Obrisati odabrane stavke?",
         folder_name: "Naziv mape",
         new_name: "Novi naziv",
-        root: "Korijen"
+        root: "Korijen",
+        move: "Premjesti",
+        move_selected: "Premjesti odabrano",
+        move_to: "Premjesti u (putanja mape):"
     },
     sl: {
         app_title: "ComfyUI Remote Generator",
@@ -186,7 +192,10 @@ const translations = {
         confirm_delete_items: "Izbrišem izbrane predmete?",
         folder_name: "Ime mape",
         new_name: "Novo ime",
-        root: "Koren"
+        root: "Koren",
+        move: "Premakni",
+        move_selected: "Premakni izbrano",
+        move_to: "Premakni v (pot mape):"
     },
     sk: {
         app_title: "ComfyUI Remote Generator",
@@ -249,7 +258,10 @@ const translations = {
         confirm_delete_items: "Odstrániť vybrané položky?",
         folder_name: "Názov priečinka",
         new_name: "Nový názov",
-        root: "Koreň"
+        root: "Koreň",
+        move: "Presunúť",
+        move_selected: "Presunúť vybrané",
+        move_to: "Presunúť do (cesta k priečinku):"
     },
     ro: {
         app_title: "ComfyUI Remote Generator",
@@ -312,7 +324,10 @@ const translations = {
         confirm_delete_items: "Ștergi elementele selectate?",
         folder_name: "Nume Dosar",
         new_name: "Nume Nou",
-        root: "Rădăcină"
+        root: "Rădăcină",
+        move: "Mută",
+        move_selected: "Mută Selecția",
+        move_to: "Mută în (cale dosar):"
     }
 };
 

@@ -377,8 +377,9 @@ async function refreshOutputs() {
         }
 
         data.files.forEach(f => {
+            const isSelected = selectedItems.has(f.name);
             const card = document.createElement('div');
-            card.className = `slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square transition-all ${f.isFolder ? 'bg-slate-800/50' : ''}`;
+            card.className = `slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square transition-all ${f.isFolder ? 'bg-slate-800/50' : ''} ${isSelected ? 'ring-2 ring-blue-500' : ''}`;
 
             let content = '';
             if (f.isFolder) {
@@ -394,12 +395,13 @@ async function refreshOutputs() {
 
             card.innerHTML = `
                 ${content}
-                <div class="absolute top-2 left-2 opacity-0 group-hover:opacity-100 transition-all z-20">
-                    <input type="checkbox" class="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 item-select" onclick="event.stopPropagation()" onchange="toggleItemSelection('${f.name}', this.checked)">
+                <div id="check-container-${f.name.replace(/[^a-z0-9]/gi, '_')}" class="absolute top-2 left-2 transition-all z-20 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}">
+                    <input type="checkbox" class="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 item-select" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation()" onchange="toggleItemSelection('${f.name}', this.checked)">
                 </div>
                 <div class="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
                     <button onclick="event.stopPropagation(); deleteOutput('${f.name}')" class="p-1.5 bg-red-600 rounded-lg text-white shadow-lg hover:bg-red-700"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
                     <button onclick="event.stopPropagation(); renameOutput('${f.name}')" class="p-1.5 bg-slate-700 rounded-lg text-white shadow-lg hover:bg-slate-600"><i data-lucide="edit-3" class="w-3 h-3"></i></button>
+                    <button onclick="event.stopPropagation(); moveOutput('${f.name}')" class="p-1.5 bg-slate-700 rounded-lg text-white shadow-lg hover:bg-slate-600"><i data-lucide="external-link" class="w-3 h-3"></i></button>
                 </div>
             `;
 
@@ -453,15 +455,23 @@ function renderGalleryNav() {
 function toggleItemSelection(name, selected) {
     if (selected) selectedItems.add(name);
     else selectedItems.delete(name);
+
+    // Update visibility immediately
+    const container = document.getElementById(`check-container-${name.replace(/[^a-z0-9]/gi, '_')}`);
+    if (container) {
+        if (selected) container.classList.replace('opacity-0', 'opacity-100');
+        else container.classList.replace('opacity-100', 'opacity-0');
+    }
+
     updateBatchBtn();
 }
 
 function updateBatchBtn() {
-    const btn = document.getElementById('delete-batch-btn');
-    if (btn) {
-        if (selectedItems.size > 0) btn.classList.remove('hidden');
-        else btn.classList.add('hidden');
-    }
+    const dBtn = document.getElementById('delete-batch-btn');
+    const mBtn = document.getElementById('move-batch-btn');
+    const hasSelection = selectedItems.size > 0;
+    if (dBtn) dBtn.classList.toggle('hidden', !hasSelection);
+    if (mBtn) mBtn.classList.toggle('hidden', !hasSelection);
 }
 
 async function deleteOutput(name) {
@@ -469,6 +479,33 @@ async function deleteOutput(name) {
     try {
         const fullFn = currentOutputPath ? `${currentOutputPath}/${name}` : name;
         await fetch(`/api/outputs?filename=${encodeURIComponent(fullFn)}`, { method: 'DELETE' });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function moveOutput(name) {
+    const targetPath = prompt(getTranslation('move_to'), currentOutputPath);
+    if (targetPath === null) return;
+    try {
+        await fetch('/api/outputs/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourcePath: currentOutputPath, items: [name], targetPath })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function moveBatch() {
+    if (selectedItems.size === 0) return;
+    const targetPath = prompt(getTranslation('move_to'), currentOutputPath);
+    if (targetPath === null) return;
+    try {
+        await fetch('/api/outputs/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourcePath: currentOutputPath, items: Array.from(selectedItems), targetPath })
+        });
         refreshOutputs();
     } catch (e) { console.error(e); }
 }
@@ -542,6 +579,7 @@ function initAdmin() {
     if (document.getElementById('generate-btn')) document.getElementById('generate-btn').onclick = runWorkflow;
     if (document.getElementById('refresh-outputs-btn')) document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
     if (document.getElementById('mkdir-btn')) document.getElementById('mkdir-btn').onclick = createFolder;
+    if (document.getElementById('move-batch-btn')) document.getElementById('move-batch-btn').onclick = moveBatch;
     if (document.getElementById('delete-batch-btn')) document.getElementById('delete-batch-btn').onclick = deleteBatch;
     if (document.getElementById('close-modal')) document.getElementById('close-modal').onclick = () => document.getElementById('media-modal').classList.add('hidden');
 
