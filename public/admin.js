@@ -270,6 +270,18 @@ function renderLiveUI() {
 
 async function handleMediaUpload(file, key) {
     if (!file) return;
+
+    // Show video processing options if a large video is uploaded
+    const isVideo = file.type.startsWith('video/');
+    const options = document.getElementById('video-processing-options');
+    if (options) {
+        if (isVideo && file.size > 50 * 1024 * 1024) { // > 50MB
+            options.classList.remove('hidden');
+        } else if (!window.mediaFiles || !Object.values(window.mediaFiles).some(v => v.endsWith('.mp4') || v.endsWith('.webm'))) {
+            options.classList.add('hidden');
+        }
+    }
+
     const p = document.getElementById(`preview-${key}`);
     p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-6 w-6 mx-auto"></div>';
     const fd = new FormData(); fd.append('media', file);
@@ -294,17 +306,83 @@ function toggleRandom(key) {
 }
 
 async function runWorkflow() {
-    const btn = document.getElementById('generate-btn'); const ov = document.getElementById('loading-overlay');
-    btn.disabled = true; ov.classList.remove('hidden');
+    const btn = document.getElementById('generate-btn');
+    const ov = document.getElementById('loading-overlay');
+    const isSegmented = document.getElementById('segmented-processing-toggle')?.checked;
+
+    btn.disabled = true;
+    ov.classList.remove('hidden');
+
+    const endpoint = isSegmented ? '/api/video/process-segmented' : '/api/workflow/run';
+
     try {
-        const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mediaFiles, parameters, bypassedNodes }) });
-        const data = await res.json();
-        if (data.success && data.files.length > 0) {
-            const f = data.files[0]; const c = document.getElementById('output-media-container'); const ph = document.getElementById('output-placeholder');
-            ph.classList.add('hidden'); c.classList.remove('hidden'); c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer rounded" onclick="showModal('${f.url}', 'image')">`;
-            refreshOutputs();
-        } else if (data.error) alert('Error: ' + data.error);
-    } catch (e) { alert('Connection error'); } finally { btn.disabled = false; ov.classList.add('hidden'); }
+        if (isSegmented) {
+            const statusMini = document.getElementById('segment-status-mini');
+            statusMini.classList.remove('hidden');
+            statusMini.textContent = 'Segmenting...';
+
+            // For segmented, we use a different progress tracking
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes })
+            });
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                const lines = decoder.decode(value).split('\n');
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const update = JSON.parse(line);
+                        if (update.status) {
+                            statusMini.textContent = update.status;
+                            const hint = document.querySelector('[data-i18n="processing_hint"]');
+                            if (hint) hint.textContent = update.status;
+                        }
+                        if (update.success && update.files) {
+                            const f = update.files[0];
+                            const c = document.getElementById('output-media-container');
+                            const ph = document.getElementById('output-placeholder');
+                            ph.classList.add('hidden');
+                            c.classList.remove('hidden');
+                            c.innerHTML = `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>`;
+                            refreshOutputs();
+                        }
+                    } catch (e) {}
+                }
+            }
+            statusMini.classList.add('hidden');
+        } else {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes })
+            });
+            const data = await res.json();
+            if (data.success && data.files.length > 0) {
+                const f = data.files[0];
+                const c = document.getElementById('output-media-container');
+                const ph = document.getElementById('output-placeholder');
+                ph.classList.add('hidden');
+                c.classList.remove('hidden');
+                c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer rounded" onclick="showModal('${f.url}', 'image')">`;
+                refreshOutputs();
+            } else if (data.error) alert('Error: ' + data.error);
+        }
+    } catch (e) {
+        alert('Connection error');
+    } finally {
+        btn.disabled = false;
+        ov.classList.add('hidden');
+        const hint = document.querySelector('[data-i18n="processing_hint"]');
+        if (hint) hint.setAttribute('data-i18n', 'processing_hint');
+    }
 }
 
 async function saveUIConfig() {
@@ -360,13 +438,20 @@ async function deleteWorkflow(id) {
     try { await fetch(`/api/workflows/delete/${id}`, { method: 'DELETE' }); loadWorkflows(); } catch (e) { console.error(e); }
 }
 
+let lastOutputPath = null;
+
 async function refreshOutputs() {
     try {
         const res = await fetch(`/api/outputs?path=${encodeURIComponent(currentOutputPath)}`);
         const data = await res.json();
         const gallery = document.getElementById('outputs-gallery');
         gallery.innerHTML = '';
-        selectedItems.clear();
+
+        if (lastOutputPath !== currentOutputPath) {
+            selectedItems.clear();
+            lastOutputPath = currentOutputPath;
+        }
+
         updateBatchBtn();
         renderGalleryNav();
 
