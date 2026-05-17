@@ -398,9 +398,17 @@ async function saveWorkflow() {
     const desc = document.getElementById('save-description').value;
     if (!name) return alert('Name is required');
     try {
-        const res = await fetch('/api/workflows/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, description: desc, presets: currentPresets }) });
+        const res = await fetch('/api/workflows/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, description: desc, presets: currentPresets, config: uiConfig })
+        });
         const data = await res.json();
-        if (data.success) { loadWorkflows(); alert(getTranslation('saved_msg')); }
+        if (data.success) {
+            currentWorkflowId = data.id;
+            loadWorkflows();
+            alert(getTranslation('saved_msg'));
+        }
     } catch (e) { console.error(e); }
 }
 

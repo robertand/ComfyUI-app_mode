@@ -328,8 +328,11 @@ adminApp.post('/api/workflows/load/:id', (req, res) => {
 adminApp.post('/api/workflows/save', (req, res) => {
     if (!currentWorkflowData) return res.status(400).json({ error: 'No workflow loaded' });
     const id = generateId(), name = req.body.name, fileName = `${name.replace(/[^a-z0-9]/gi, '_')}_${id}.json`, filePath = path.join('workflows', 'saved', fileName);
-    fs.writeFileSync(filePath, JSON.stringify({ metadata: { id, name, description: req.body.description || '', createdAt: new Date().toISOString(), presets: req.body.presets || [] }, workflow: currentWorkflowData.raw, analysis: currentWorkflowData.analysis, uiConfig }, null, 2));
-    currentWorkflowId = id; res.json({ success: true, id, name });
+    const savedUiConfig = req.body.config || uiConfig;
+    fs.writeFileSync(filePath, JSON.stringify({ metadata: { id, name, description: req.body.description || '', createdAt: new Date().toISOString(), presets: req.body.presets || [] }, workflow: currentWorkflowData.raw, analysis: currentWorkflowData.analysis, uiConfig: savedUiConfig }, null, 2));
+    currentWorkflowId = id;
+    uiConfig = savedUiConfig; // Ensure server-side state is updated
+    res.json({ success: true, id, name });
 });
 
 adminApp.delete('/api/workflows/delete/:id', (req, res) => {
