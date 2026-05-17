@@ -567,6 +567,18 @@ async function runWorkflow() {
                             const hint = document.querySelector('[data-i18n="processing_hint"]');
                             if (hint) hint.textContent = update.status;
                         }
+                        if (update.progress) {
+                            const pCont = document.getElementById('overlay-progress-container');
+                            const pBar = document.getElementById('overlay-progress-bar');
+                            const pText = document.getElementById('overlay-progress-text');
+                            const pSub = document.getElementById('overlay-progress-sub');
+                            if (pCont) {
+                                pCont.classList.remove('hidden');
+                                pBar.style.width = update.progress.percent + '%';
+                                pText.textContent = update.progress.percent + '%';
+                                pSub.innerHTML = `<span data-i18n="step">${getTranslation('step')}</span> ${update.progress.current}/${update.progress.total}`;
+                            }
+                        }
                         if (update.success && update.files) {
                             const f = update.files[0];
                             const c = document.getElementById('output-media-container');
@@ -602,6 +614,8 @@ async function runWorkflow() {
     } finally {
         btn.disabled = false;
         ov.classList.add('hidden');
+        const pCont = document.getElementById('overlay-progress-container');
+        if (pCont) pCont.classList.add('hidden');
         const hint = document.querySelector('[data-i18n="processing_hint"]');
         if (hint) hint.setAttribute('data-i18n', 'processing_hint');
     }

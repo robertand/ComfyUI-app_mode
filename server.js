@@ -599,10 +599,18 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
     }
 
     // 2. Prepare workflow
-    const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
-    const d = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8'));
-    let workflow = JSON.parse(JSON.stringify(d.analysis.workflowApi || d.workflow));
-    const analysis = d.analysis;
+    let workflow, analysis;
+    const file = workflowId ? fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId)) : null;
+    if (file) {
+        const d = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8'));
+        workflow = JSON.parse(JSON.stringify(d.analysis.workflowApi || d.workflow));
+        analysis = d.analysis;
+    } else if (currentWorkflowData) {
+        workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi));
+        analysis = currentWorkflowData.analysis;
+    } else {
+        throw new Error('Workflow not found for segmentation');
+    }
 
     workflow = applyBypass(workflow, bypassedNodes);
 
@@ -733,13 +741,23 @@ const preSegmentHandler = async (req, res) => {
 
 const processSegmentedHandler = async (req, res) => {
     const { mediaFiles, parameters, bypassedNodes, workflowId, advancedConfig, runId, segmentedInputs } = req.body;
-    const currentId = currentWorkflowId || workflowId;
-    if (!currentId) return res.status(400).json({ error: 'No workflow' });
+    const currentId = workflowId || currentWorkflowId;
+
+    // Ensure we have some workflow reference
+    if (!currentId && !currentWorkflowData) return res.status(400).json({ error: 'No workflow' });
 
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    const sendUpdate = (data) => res.write(JSON.stringify(data) + '\n');
+
+    const sendUpdate = (data) => {
+        if (!res.writableEnded) {
+            res.write(JSON.stringify(data) + '\n');
+        }
+    };
+
+    // Heartbeat to keep connection alive
+    const heartbeat = setInterval(() => sendUpdate({ type: 'heartbeat' }), 15000);
 
     const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
     const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 10;
@@ -809,7 +827,11 @@ const processSegmentedHandler = async (req, res) => {
         const target = await getFreestInstance();
 
         for (let i = 0; i < segments.length; i++) {
-            sendUpdate({ status: `Processing segment ${i + 1}/${segments.length}...` });
+            const progressPercent = Math.round(((i + 1) / segments.length) * 100);
+            sendUpdate({
+                status: `Processing segment ${i + 1}/${segments.length}...`,
+                progress: { current: i + 1, total: segments.length, percent: progressPercent }
+            });
 
             const extraSegments = {};
             if (segmentedInputs) {
@@ -854,12 +876,19 @@ const processSegmentedHandler = async (req, res) => {
                 });
         });
 
-        sendUpdate({ success: true, files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }] });
+        sendUpdate({
+            success: true,
+            files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }],
+            progress: { current: segments.length, total: segments.length, percent: 100 }
+        });
+
+        clearInterval(heartbeat);
         res.end();
 
         // Cleanup
         setTimeout(() => fs.rmSync(segmentDir, { recursive: true, force: true }), 60000);
     } catch (e) {
+        clearInterval(heartbeat);
         sendUpdate({ error: e.message });
         res.end();
     }

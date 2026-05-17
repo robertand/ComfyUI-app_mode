@@ -95,7 +95,17 @@
                         </div>
                     </div>
                     <p class="text-2xl font-bold text-white mb-2 processing-pulse" data-i18n="processing">Processing...</p>
-                    <p class="text-slate-400 text-sm max-w-xs mx-auto" data-i18n="processing_hint">Please wait while the AI magic happens</p>
+                    <p class="text-slate-400 text-sm max-w-xs mx-auto mb-6" data-i18n="processing_hint">Please wait while the AI magic happens</p>
+
+                    <div id="overlay-progress-container" class="hidden w-64 mx-auto">
+                        <div class="flex items-center justify-between mb-2">
+                            <span id="overlay-progress-text" class="text-[10px] font-bold text-blue-400 uppercase tracking-widest">0%</span>
+                            <span id="overlay-progress-sub" class="text-[10px] text-slate-500 uppercase"><span data-i18n="step">Step</span> 0/0</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden border border-slate-700">
+                            <div id="overlay-progress-bar" class="bg-blue-500 h-full transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -617,6 +627,18 @@
                                     const hint = document.querySelector('[data-i18n="processing_hint"]');
                                     if (hint) hint.textContent = update.status;
                                 }
+                                if (update.progress) {
+                                    const pCont = document.getElementById('overlay-progress-container');
+                                    const pBar = document.getElementById('overlay-progress-bar');
+                                    const pText = document.getElementById('overlay-progress-text');
+                                    const pSub = document.getElementById('overlay-progress-sub');
+                                    if (pCont) {
+                                        pCont.classList.remove('hidden');
+                                        pBar.style.width = update.progress.percent + '%';
+                                        pText.textContent = update.progress.percent + '%';
+                                        pSub.innerHTML = `<span data-i18n="step">${getTranslation('step')}</span> ${update.progress.current}/${update.progress.total}`;
+                                    }
+                                }
                                 if (update.success && update.files) {
                                     const f = update.files[0];
                                     const c = document.getElementById('output-media-container');
@@ -638,7 +660,13 @@
                     ph.classList.add('hidden'); c.classList.remove('hidden'); c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer" onclick="showModal('${f.url}', 'image')">`;
                     refreshOutputs();
                 } else if (data.error) { alert('Error: ' + data.error); }
-            } catch (e) { alert('Connection error'); } finally { btn.disabled = false; overlay.classList.add('hidden'); }
+            } catch (e) {
+                alert('Connection error');
+            } finally {
+                btn.disabled = false; overlay.classList.add('hidden');
+                const pCont = document.getElementById('overlay-progress-container');
+                if (pCont) pCont.classList.add('hidden');
+            }
         }
 
         async function refreshOutputs() {

@@ -203,7 +203,17 @@
                         </div>
                     </div>
                     <p class="text-2xl font-bold text-white mb-2 processing-pulse" data-i18n="processing">Processing...</p>
-                    <p class="text-slate-400 text-sm max-w-xs mx-auto" data-i18n="processing_hint">Please wait while the AI magic happens</p>
+                    <p class="text-slate-400 text-sm max-w-xs mx-auto mb-6" data-i18n="processing_hint">Please wait while the AI magic happens</p>
+
+                    <div id="overlay-progress-container" class="hidden w-64 mx-auto">
+                        <div class="flex items-center justify-between mb-2">
+                            <span id="overlay-progress-text" class="text-[10px] font-bold text-blue-400 uppercase tracking-widest">0%</span>
+                            <span id="overlay-progress-sub" class="text-[10px] text-slate-500 uppercase"><span data-i18n="step">Step</span> 0/0</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden border border-slate-700">
+                            <div id="overlay-progress-bar" class="bg-blue-500 h-full transition-all duration-500" style="width: 0%"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
