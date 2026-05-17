@@ -63,7 +63,11 @@ const translations = {
         root: "Root",
         move: "Move",
         move_selected: "Move Selected",
-        move_to: "Move to (folder path):"
+        move_to: "Move to (folder path):",
+        advanced_customization: "Advanced Workflow Customization",
+        segmented_video: "Segmented Processing",
+        scene_threshold: "Scene Change Threshold",
+        fallback_duration: "Fallback Segment Duration (s)"
     },
     hr: {
         app_title: "ComfyUI Remote Generator",
@@ -327,7 +331,11 @@ const translations = {
         root: "Rădăcină",
         move: "Mută",
         move_selected: "Mută Selecția",
-        move_to: "Mută în (cale dosar):"
+        move_to: "Mută în (cale dosar):",
+        advanced_customization: "Customizare Workflow Avansată",
+        segmented_video: "Procesare Segmentată",
+        scene_threshold: "Prag Detecție Scene",
+        fallback_duration: "Durată Segment Fallback (s)"
     }
 };
 

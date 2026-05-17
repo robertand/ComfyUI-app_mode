@@ -303,7 +303,13 @@ publicApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'pu
 publicApp.use(express.static('public')); publicApp.use('/output', express.static('output'));
 
 function reconcileUIConfig(analysis, existingConfig) {
-    const config = { visibleInputs: existingConfig?.visibleInputs || {}, visibleParams: existingConfig?.visibleParams || {}, inputOrder: existingConfig?.inputOrder || [], inputNames: existingConfig?.inputNames || {} };
+    const config = {
+        visibleInputs: existingConfig?.visibleInputs || {},
+        visibleParams: existingConfig?.visibleParams || {},
+        inputOrder: existingConfig?.inputOrder || [],
+        inputNames: existingConfig?.inputNames || {},
+        advancedConfig: existingConfig?.advancedConfig || { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10 }
+    };
     const allKeys = [];
     analysis.inputs?.forEach(g => g.inputs.forEach(i => { allKeys.push(i.key); if (config.visibleInputs[i.key] === undefined) config.visibleInputs[i.key] = true; }));
     analysis.advancedInputs?.forEach(g => g.inputs.forEach(p => { allKeys.push(p.key); if (config.visibleParams[p.key] === undefined) config.visibleParams[p.key] = true; }));
@@ -550,12 +556,15 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
 }
 
 adminApp.post('/api/video/process-segmented', async (req, res) => {
-    const { mediaFiles, parameters, bypassedNodes, workflowId } = req.body;
+    const { mediaFiles, parameters, bypassedNodes, workflowId, advancedConfig } = req.body;
     const currentId = currentWorkflowId || workflowId;
     if (!currentId) return res.status(400).json({ error: 'No workflow' });
 
     res.setHeader('Content-Type', 'application/json');
     const sendUpdate = (data) => res.write(JSON.stringify(data) + '\n');
+
+    const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
+    const fallbackDuration = advancedConfig?.fallbackDuration ?? 10;
 
     try {
         const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
@@ -578,7 +587,7 @@ adminApp.post('/api/video/process-segmented', async (req, res) => {
         await new Promise((resolve, reject) => {
             ffmpeg(inputVideo)
                 .outputOptions([
-                    '-vf', 'select=\'gt(scene,0.2)\',showinfo',
+                    '-vf', `select='gt(scene,${sceneThreshold})',showinfo`,
                     '-f', 'null'
                 ])
                 .output('-')
@@ -604,7 +613,7 @@ adminApp.post('/api/video/process-segmented', async (req, res) => {
             if (segmentTimes) {
                 cmd.outputOptions(['-f segment', '-segment_times', segmentTimes]);
             } else {
-                cmd.outputOptions(['-f segment', '-segment_time 10']);
+                cmd.outputOptions(['-f segment', `-segment_time ${fallbackDuration}`]);
             }
             cmd.output(path.join(segmentDir, 'seg_%03d.mp4'))
                 .on('end', resolve)

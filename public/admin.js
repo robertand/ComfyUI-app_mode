@@ -1,6 +1,6 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
-let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
+let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10 } };
 window._pixaroma_session_previews = {};
 window.mediaFiles = {};
 let mediaFiles = window.mediaFiles;
@@ -48,7 +48,20 @@ async function loadWorkflow(id) {
 
 function setupWorkflow(data) {
     currentWorkflow = data.analysis;
-    uiConfig = data.uiConfig;
+    uiConfig = data.uiConfig || uiConfig;
+    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10 };
+
+    // Sync UI with advancedConfig
+    const segToggles = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];
+    segToggles.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = uiConfig.advancedConfig.segmented;
+    });
+    const thresholdInput = document.getElementById('scene-threshold');
+    if (thresholdInput) thresholdInput.value = uiConfig.advancedConfig.sceneThreshold;
+    const durationInput = document.getElementById('fallback-duration');
+    if (durationInput) durationInput.value = uiConfig.advancedConfig.fallbackDuration;
+
     originalValues = data.originalValues || {};
 
     // POPULATE SHIM WITH SAVED DATA IMMEDIATELY
@@ -80,8 +93,25 @@ function setupWorkflow(data) {
 
 function refreshUI() {
     renderMediaConfig(); renderParametersConfig(); renderLiveUI(); renderPresets(currentPresets);
+
+    // Sync threshold and duration inputs to uiConfig
+    const thresholdInput = document.getElementById('scene-threshold');
+    if (thresholdInput) thresholdInput.onchange = (e) => uiConfig.advancedConfig.sceneThreshold = parseFloat(e.target.value);
+    const durationInput = document.getElementById('fallback-duration');
+    if (durationInput) durationInput.onchange = (e) => uiConfig.advancedConfig.fallbackDuration = parseInt(e.target.value);
+
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }
+
+function syncSegmentedToggles(checked) {
+    uiConfig.advancedConfig.segmented = checked;
+    const ids = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = checked;
+    });
+}
+window.syncSegmentedToggles = syncSegmentedToggles;
 
 function moveNode(key, direction) {
     const idx = uiConfig.inputOrder.indexOf(key);
@@ -308,7 +338,7 @@ function toggleRandom(key) {
 async function runWorkflow() {
     const btn = document.getElementById('generate-btn');
     const ov = document.getElementById('loading-overlay');
-    const isSegmented = document.getElementById('segmented-processing-toggle')?.checked;
+    const isSegmented = uiConfig.advancedConfig?.segmented;
 
     btn.disabled = true;
     ov.classList.remove('hidden');
@@ -325,7 +355,7 @@ async function runWorkflow() {
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes })
+                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes, advancedConfig: uiConfig.advancedConfig })
             });
 
             const reader = res.body.getReader();
