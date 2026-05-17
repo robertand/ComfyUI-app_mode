@@ -709,9 +709,20 @@ const preSegmentHandler = async (req, res) => {
 
         const segmentTimesStr = refinedTimes.join(',');
         await new Promise((resolve, reject) => {
-            const cmd = ffmpeg(inputVideo).outputOptions(['-reset_timestamps 1', '-map 0', '-c copy']);
-            if (segmentTimesStr) cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr]);
-            else cmd.outputOptions(['-f segment', `-segment_time ${maxSegmentDuration}`]);
+            const cmd = ffmpeg(inputVideo).outputOptions([
+                '-reset_timestamps 1',
+                '-map 0',
+                '-c:v libx264',
+                '-preset superfast',
+                '-crf 18',
+                '-c:a aac',
+                '-break_non_keyframes 1'
+            ]);
+            if (segmentTimesStr) {
+                cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr, `-force_key_frames expr:gte(t,n_forced*${maxSegmentDuration})`]);
+            } else {
+                cmd.outputOptions(['-f segment', `-segment_time ${maxSegmentDuration}`]);
+            }
             cmd.output(path.join(segmentDir, 'seg_%03d.mp4')).on('end', resolve).on('error', reject).run();
         });
 
@@ -775,9 +786,20 @@ const processSegmentedHandler = async (req, res) => {
 
             const segmentTimesStr = refinedTimes.join(',');
             await new Promise((resolve, reject) => {
-                const cmd = ffmpeg(inputVideo).outputOptions(['-reset_timestamps 1', '-map 0', '-c copy']);
-                if (segmentTimesStr) cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr]);
-                else cmd.outputOptions(['-f segment', `-segment_time ${maxSegmentDuration}`]);
+                const cmd = ffmpeg(inputVideo).outputOptions([
+                    '-reset_timestamps 1',
+                    '-map 0',
+                    '-c:v libx264',
+                    '-preset superfast',
+                    '-crf 18',
+                    '-c:a aac',
+                    '-break_non_keyframes 1'
+                ]);
+                if (segmentTimesStr) {
+                    cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr, `-force_key_frames expr:gte(t,n_forced*${maxSegmentDuration})`]);
+                } else {
+                    cmd.outputOptions(['-f segment', `-segment_time ${maxSegmentDuration}`]);
+                }
                 cmd.output(path.join(segmentDir, 'seg_%03d.mp4')).on('end', resolve).on('error', reject).run();
             });
         }
