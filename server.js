@@ -673,7 +673,8 @@ const preSegmentHandler = async (req, res) => {
         fs.mkdirSync(segmentDir, { recursive: true });
 
         const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
-        const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 10;
+        const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 5;
+        const segmentOverlap = advancedConfig?.segmentOverlap ?? 2;
 
         // 1. Detect scene changes
         const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
@@ -715,24 +716,39 @@ const preSegmentHandler = async (req, res) => {
             }
         }
 
-        const segmentTimesStr = refinedTimes.join(',');
-        await new Promise((resolve, reject) => {
-            const cmd = ffmpeg(inputVideo).outputOptions([
-                '-reset_timestamps 1',
-                '-map 0',
-                '-c:v libx264',
-                '-preset superfast',
-                '-crf 18',
-                '-c:a aac',
-                '-break_non_keyframes 1'
-            ]);
-            if (segmentTimesStr) {
-                cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr, `-force_key_frames expr:gte(t,n_forced*${maxSegmentDuration})`]);
-            } else {
-                cmd.outputOptions(['-f segment', `-segment_time ${maxSegmentDuration}`]);
+        const overlappingSegments = [];
+        if (videoDuration > maxSegmentDuration) {
+            let start = 0;
+            while (start < videoDuration) {
+                let end = Math.min(start + maxSegmentDuration, videoDuration);
+                overlappingSegments.push({ start, duration: end - start });
+                if (end >= videoDuration) break;
+                start = end - segmentOverlap;
             }
-            cmd.output(path.join(segmentDir, 'seg_%03d.mp4')).on('end', resolve).on('error', reject).run();
-        });
+        } else {
+            overlappingSegments.push({ start: 0, duration: videoDuration });
+        }
+
+        for (let i = 0; i < overlappingSegments.length; i++) {
+            const seg = overlappingSegments[i];
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputVideo)
+                    .setStartTime(seg.start)
+                    .setDuration(seg.duration)
+                    .outputOptions([
+                        '-map 0',
+                        '-c:v libx264',
+                        '-preset superfast',
+                        '-crf 18',
+                        '-c:a aac',
+                        '-avoid_negative_ts make_zero'
+                    ])
+                    .output(path.join(segmentDir, `seg_${String(i).padStart(3, '0')}.mp4`))
+                    .on('end', resolve)
+                    .on('error', reject)
+                    .run();
+            });
+        }
 
         const segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort();
         res.json({ success: true, runId, segments });
@@ -760,7 +776,8 @@ const processSegmentedHandler = async (req, res) => {
     const heartbeat = setInterval(() => sendUpdate({ type: 'heartbeat' }), 15000);
 
     const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
-    const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 10;
+    const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 5;
+    const segmentOverlap = advancedConfig?.segmentOverlap ?? 2;
 
     try {
         let activeRunId = runId || (segmentedInputs ? Object.values(segmentedInputs)[0] : null);
@@ -802,24 +819,40 @@ const processSegmentedHandler = async (req, res) => {
                 if (st < videoDuration && st > lastTime + 0.1) { lastTime = st; refinedTimes.push(lastTime); }
             }
 
-            const segmentTimesStr = refinedTimes.join(',');
-            await new Promise((resolve, reject) => {
-                const cmd = ffmpeg(inputVideo).outputOptions([
-                    '-reset_timestamps 1',
-                    '-map 0',
-                    '-c:v libx264',
-                    '-preset superfast',
-                    '-crf 18',
-                    '-c:a aac',
-                    '-break_non_keyframes 1'
-                ]);
-                if (segmentTimesStr) {
-                    cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr, `-force_key_frames expr:gte(t,n_forced*${maxSegmentDuration})`]);
-                } else {
-                    cmd.outputOptions(['-f segment', `-segment_time ${maxSegmentDuration}`]);
+            const overlappingSegments = [];
+
+            if (videoDuration > maxSegmentDuration) {
+                let start = 0;
+                while (start < videoDuration) {
+                    let end = Math.min(start + maxSegmentDuration, videoDuration);
+                    overlappingSegments.push({ start, duration: end - start });
+                    if (end >= videoDuration) break;
+                    start = end - segmentOverlap;
                 }
-                cmd.output(path.join(segmentDir, 'seg_%03d.mp4')).on('end', resolve).on('error', reject).run();
-            });
+            } else {
+                overlappingSegments.push({ start: 0, duration: videoDuration });
+            }
+
+            for (let i = 0; i < overlappingSegments.length; i++) {
+                const seg = overlappingSegments[i];
+                await new Promise((resolve, reject) => {
+                    ffmpeg(inputVideo)
+                        .setStartTime(seg.start)
+                        .setDuration(seg.duration)
+                        .outputOptions([
+                            '-map 0',
+                            '-c:v libx264',
+                            '-preset superfast',
+                            '-crf 18',
+                            '-c:a aac',
+                            '-avoid_negative_ts make_zero'
+                        ])
+                        .output(path.join(segmentDir, `seg_${String(i).padStart(3, '0')}.mp4`))
+                        .on('end', resolve)
+                        .on('error', reject)
+                        .run();
+                });
+            }
         }
 
         segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
@@ -848,33 +881,85 @@ const processSegmentedHandler = async (req, res) => {
             processedSegments.push(processed);
         }
 
-        sendUpdate({ status: 'Reassembling final video...' });
-        const listFile = path.join(segmentDir, 'list.txt');
-        fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p)}'`).join('\n'));
-
+        sendUpdate({ status: 'Reassembling with cross-fades...' });
         const finalName = `upscaled_${generateId()}.mp4`;
         const finalPath = path.join('output', finalName);
 
-        await new Promise((resolve, reject) => {
-            ffmpeg()
-                .input(listFile)
-                .inputOptions(['-f concat', '-safe 0'])
-                .outputOptions('-c copy')
-                .save(finalPath)
-                .on('end', resolve)
-                .on('error', (err) => {
-                    console.error('Concat with copy failed, trying re-encoding...', err);
-                    ffmpeg()
-                        .input(listFile)
-                        .inputOptions(['-f concat', '-safe 0'])
-                        .videoCodec('libx264')
-                        .audioCodec('aac')
-                        .outputOptions('-pix_fmt yuv420p')
-                        .save(finalPath)
-                        .on('end', resolve)
-                        .on('error', reject);
-                });
-        });
+        if (processedSegments.length > 1 && segmentOverlap > 0) {
+            const cmd = ffmpeg();
+            processedSegments.forEach(p => cmd.input(p));
+
+            let filterGraph = '';
+            let lastAudio = '0:a';
+            let offset = 0;
+
+            // Get actual durations of processed segments to be precise
+            const durations = [];
+            for (const p of processedSegments) {
+                durations.push(await new Promise((res) => {
+                    ffmpeg.ffprobe(p, (err, m) => res(m?.format?.duration || maxSegmentDuration));
+                }));
+            }
+
+            // [0:v][1:v]xfade=transition=fade:duration=2:offset=3[v1];
+            // [v1][2:v]xfade=transition=fade:duration=2:offset=6[v2]
+            for (let i = 0; i < processedSegments.length - 1; i++) {
+                const fadeDuration = segmentOverlap;
+                // Offset is: (Duration of current segment) - overlap + (cumulative previous offsets)
+                // But xfade works on the ALREADY merged stream for the next offset.
+                // The offset for segment i+1 is the timestamp in the output where it starts merging.
+                if (i === 0) {
+                    offset = durations[0] - fadeDuration;
+                    filterGraph += `[0:v][1:v]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
+                    filterGraph += `[0:a][1:a]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
+                } else {
+                    offset = offset + durations[i] - fadeDuration;
+                    filterGraph += `[v${i}][${i + 1}:v]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
+                    filterGraph += `[a${i}][${i + 1}:a]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
+                }
+            }
+
+            const lastIdx = processedSegments.length - 1;
+            await new Promise((resolve, reject) => {
+                cmd.complexFilter(filterGraph.trim())
+                    .map(`[v${lastIdx}]`)
+                    .map(`[a${lastIdx}]`)
+                    .videoCodec('libx264')
+                    .audioCodec('aac')
+                    .outputOptions('-pix_fmt yuv420p')
+                    .save(finalPath)
+                    .on('end', resolve)
+                    .on('error', (err) => {
+                        console.error('Xfade failed, falling back to basic concat:', err);
+                        // Fallback logic
+                        const listFile = path.join(segmentDir, 'list_fallback.txt');
+                        fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p)}'`).join('\n'));
+                        ffmpeg().input(listFile).inputOptions(['-f concat', '-safe 0']).videoCodec('libx264').audioCodec('aac').save(finalPath).on('end', resolve).on('error', reject);
+                    });
+            });
+        } else {
+            const listFile = path.join(segmentDir, 'list.txt');
+            fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p)}'`).join('\n'));
+            await new Promise((resolve, reject) => {
+                ffmpeg()
+                    .input(listFile)
+                    .inputOptions(['-f concat', '-safe 0'])
+                    .outputOptions('-c copy')
+                    .save(finalPath)
+                    .on('end', resolve)
+                    .on('error', (err) => {
+                        ffmpeg()
+                            .input(listFile)
+                            .inputOptions(['-f concat', '-safe 0'])
+                            .videoCodec('libx264')
+                            .audioCodec('aac')
+                            .outputOptions('-pix_fmt yuv420p')
+                            .save(finalPath)
+                            .on('end', resolve)
+                            .on('error', reject);
+                    });
+            });
+        }
 
         sendUpdate({
             success: true,

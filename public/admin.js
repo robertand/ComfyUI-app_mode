@@ -75,7 +75,7 @@ async function loadWorkflow(id) {
 function setupWorkflow(data) {
     currentWorkflow = data.analysis;
     uiConfig = data.uiConfig || uiConfig;
-    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 10 };
+    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2 };
 
     // Sync UI with advancedConfig
     const segToggles = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];
@@ -89,6 +89,8 @@ function setupWorkflow(data) {
     if (durationInput) durationInput.value = uiConfig.advancedConfig.fallbackDuration;
     const maxDurationInput = document.getElementById('max-segment-duration');
     if (maxDurationInput) maxDurationInput.value = uiConfig.advancedConfig.maxSegmentDuration;
+    const overlapInput = document.getElementById('segment-overlap');
+    if (overlapInput) overlapInput.value = uiConfig.advancedConfig.segmentOverlap;
 
     originalValues = data.originalValues || {};
 
@@ -129,6 +131,8 @@ function refreshUI() {
     if (durationInput) durationInput.onchange = (e) => uiConfig.advancedConfig.fallbackDuration = parseInt(e.target.value);
     const maxDurationInput = document.getElementById('max-segment-duration');
     if (maxDurationInput) maxDurationInput.onchange = (e) => uiConfig.advancedConfig.maxSegmentDuration = parseInt(e.target.value);
+    const overlapInput = document.getElementById('segment-overlap');
+    if (overlapInput) overlapInput.onchange = (e) => uiConfig.advancedConfig.segmentOverlap = parseFloat(e.target.value);
 
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }

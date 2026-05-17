@@ -69,6 +69,7 @@ const translations = {
         scene_threshold: "Scene Change Threshold",
         fallback_duration: "Fallback Segment Duration (s)",
         max_segment_duration: "Max Segment Duration (s)",
+        segment_overlap: "Segment Overlap (s)",
         step: "Step"
     },
     hr: {
@@ -339,6 +340,7 @@ const translations = {
         scene_threshold: "Prag Detecție Scene",
         fallback_duration: "Durată Segment Fallback (s)",
         max_segment_duration: "Durată Maximă Segment (s)",
+        segment_overlap: "Suprapunere Segmente (s)",
         step: "Pas"
     }
 };

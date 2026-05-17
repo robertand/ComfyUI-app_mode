@@ -208,8 +208,9 @@
         let segmentedRuns = {};
         let parameters = {};
         let bypassedNodes = {};
-        let uiConfig = null;
+        let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2 } };
         let currentOutputPath = '';
+        let lastPreSegmentRunId = null;
 
         function toggleBypass(nodeId) { bypassedNodes[nodeId] = !bypassedNodes[nodeId]; renderInterface(); }
 
@@ -271,7 +272,8 @@
                 if (data.success) {
                     currentWorkflowId = id;
                     currentWorkflow = { ...data.analysis, originalValues: data.originalValues };
-                    uiConfig = data.uiConfig;
+                    uiConfig = data.uiConfig || uiConfig;
+                    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2 };
 
                     // POPULATE SHIM WITH SAVED DATA
                     if (window._pixaroma_node_data && data.originalValues) {
@@ -533,6 +535,7 @@
                 if (segData.success) {
                     window.mediaFiles[key] = upData.filename;
                     segmentedRuns[key] = { runId: segData.runId, segments: segData.segments };
+                    lastPreSegmentRunId = segData.runId;
                     stext.textContent = 'READY';
                     stext.className = 'text-[10px] font-bold text-emerald-400 mb-1';
                     ssub.textContent = `${segData.segments.length} segments`;
@@ -604,6 +607,7 @@
                         parameters,
                         bypassedNodes,
                         advancedConfig: uiConfig?.advancedConfig,
+                        runId: lastPreSegmentRunId,
                         segmentedInputs
                     })
                 });
