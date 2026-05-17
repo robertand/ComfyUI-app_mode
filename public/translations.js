@@ -67,7 +67,8 @@ const translations = {
         advanced_customization: "Advanced Workflow Customization",
         segmented_video: "Segmented Processing",
         scene_threshold: "Scene Change Threshold",
-        fallback_duration: "Fallback Segment Duration (s)"
+        fallback_duration: "Fallback Segment Duration (s)",
+        max_segment_duration: "Max Segment Duration (s)"
     },
     hr: {
         app_title: "ComfyUI Remote Generator",
@@ -335,7 +336,8 @@ const translations = {
         advanced_customization: "Customizare Workflow Avansată",
         segmented_video: "Procesare Segmentată",
         scene_threshold: "Prag Detecție Scene",
-        fallback_duration: "Durată Segment Fallback (s)"
+        fallback_duration: "Durată Segment Fallback (s)",
+        max_segment_duration: "Durată Maximă Segment (s)"
     }
 };
 

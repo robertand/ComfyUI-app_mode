@@ -8,8 +8,10 @@ const FormData = require('form-data');
 const net = require('net');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
+const ffprobeStatic = require('ffprobe-static');
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfprobePath(ffprobeStatic.path);
 
 // ============ CONFIGURATION ============
 const CONFIG_FILE = path.join('workflows', 'config.json');
@@ -308,7 +310,7 @@ function reconcileUIConfig(analysis, existingConfig) {
         visibleParams: existingConfig?.visibleParams || {},
         inputOrder: existingConfig?.inputOrder || [],
         inputNames: existingConfig?.inputNames || {},
-        advancedConfig: existingConfig?.advancedConfig || { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10 }
+        advancedConfig: existingConfig?.advancedConfig || { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 10 }
     };
     const allKeys = [];
     analysis.inputs?.forEach(g => g.inputs.forEach(i => { allKeys.push(i.key); if (config.visibleInputs[i.key] === undefined) config.visibleInputs[i.key] = true; }));
@@ -366,10 +368,22 @@ adminApp.post('/api/config/save', (req, res) => {
 });
 
 adminApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file' });
-    const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn); fs.renameSync(req.file.path, p);
-    mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
-    res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file' });
+        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn);
+        try {
+            fs.renameSync(req.file.path, p);
+        } catch (e) {
+            // Fallback for cross-device move
+            fs.copyFileSync(req.file.path, p);
+            fs.unlinkSync(req.file.path);
+        }
+        mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
+        res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+    } catch (e) {
+        console.error('Upload API error:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 async function runWorkflowLogic(req, res, isPublic = false) {
@@ -565,6 +579,7 @@ adminApp.post('/api/video/process-segmented', async (req, res) => {
 
     const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
     const fallbackDuration = advancedConfig?.fallbackDuration ?? 10;
+    const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 10;
 
     try {
         const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
@@ -602,16 +617,45 @@ adminApp.post('/api/video/process-segmented', async (req, res) => {
                 .run();
         });
 
-        let segmentTimes = '';
+        let segmentTimes = [];
         if (fs.existsSync(sceneChangeFile)) {
-            segmentTimes = fs.readFileSync(sceneChangeFile, 'utf8').replace(/,$/, '');
+            const raw = fs.readFileSync(sceneChangeFile, 'utf8');
+            segmentTimes = raw.split(',').filter(t => t.trim()).map(t => parseFloat(t));
         }
 
-        // 2. Segment based on detected times or fallback
+        // 2. Refine segment times to honor maxSegmentDuration
+        const refinedTimes = [];
+        let lastTime = 0;
+
+        // Get video duration
+        const videoDuration = await new Promise((resolve, reject) => {
+            ffmpeg.ffprobe(inputVideo, (err, metadata) => {
+                if (err) reject(err);
+                else resolve(metadata.format.duration);
+            });
+        });
+
+        // Add scene changes and split if too long
+        const allPotentialSplits = [...new Set([...segmentTimes, videoDuration])].sort((a, b) => a - b);
+
+        for (const splitTime of allPotentialSplits) {
+            while (splitTime - lastTime > maxSegmentDuration + 0.1) { // 0.1s buffer
+                lastTime += maxSegmentDuration;
+                refinedTimes.push(lastTime);
+            }
+            if (splitTime < videoDuration && splitTime > lastTime + 0.1) {
+                lastTime = splitTime;
+                refinedTimes.push(lastTime);
+            }
+        }
+
+        const segmentTimesStr = refinedTimes.join(',');
+
+        // 3. Segment based on detected times or fallback
         await new Promise((resolve, reject) => {
             const cmd = ffmpeg(inputVideo).outputOptions(['-reset_timestamps 1', '-map 0', '-c copy']);
-            if (segmentTimes) {
-                cmd.outputOptions(['-f segment', '-segment_times', segmentTimes]);
+            if (segmentTimesStr) {
+                cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr]);
             } else {
                 cmd.outputOptions(['-f segment', `-segment_time ${fallbackDuration}`]);
             }

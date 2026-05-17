@@ -1,6 +1,6 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
-let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10 } };
+let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 10 } };
 window._pixaroma_session_previews = {};
 window.mediaFiles = {};
 let mediaFiles = window.mediaFiles;
@@ -49,7 +49,7 @@ async function loadWorkflow(id) {
 function setupWorkflow(data) {
     currentWorkflow = data.analysis;
     uiConfig = data.uiConfig || uiConfig;
-    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10 };
+    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 10 };
 
     // Sync UI with advancedConfig
     const segToggles = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];
@@ -61,6 +61,8 @@ function setupWorkflow(data) {
     if (thresholdInput) thresholdInput.value = uiConfig.advancedConfig.sceneThreshold;
     const durationInput = document.getElementById('fallback-duration');
     if (durationInput) durationInput.value = uiConfig.advancedConfig.fallbackDuration;
+    const maxDurationInput = document.getElementById('max-segment-duration');
+    if (maxDurationInput) maxDurationInput.value = uiConfig.advancedConfig.maxSegmentDuration;
 
     originalValues = data.originalValues || {};
 
@@ -99,6 +101,8 @@ function refreshUI() {
     if (thresholdInput) thresholdInput.onchange = (e) => uiConfig.advancedConfig.sceneThreshold = parseFloat(e.target.value);
     const durationInput = document.getElementById('fallback-duration');
     if (durationInput) durationInput.onchange = (e) => uiConfig.advancedConfig.fallbackDuration = parseInt(e.target.value);
+    const maxDurationInput = document.getElementById('max-segment-duration');
+    if (maxDurationInput) maxDurationInput.onchange = (e) => uiConfig.advancedConfig.maxSegmentDuration = parseInt(e.target.value);
 
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }
@@ -318,9 +322,17 @@ async function handleMediaUpload(file, key) {
     try {
         const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
         const data = await res.json();
-        window.mediaFiles[key] = data.filename;
-        p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
-    } catch (e) { p.innerHTML = '<i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i>'; initIcons(); }
+        if (data.success) {
+            window.mediaFiles[key] = data.filename;
+            p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
+        } else {
+            throw new Error(data.error || 'Upload failed');
+        }
+    } catch (e) {
+        console.error('Upload error:', e);
+        p.innerHTML = `<div class="text-center"><i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i><p class="text-[8px] text-red-500 mt-1">${e.message}</p></div>`;
+        initIcons();
+    }
 }
 
 function toggleBypass(id, src) {
