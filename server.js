@@ -65,7 +65,7 @@ async function findFreePort(startPort) {
 
 const upload = multer({ dest: 'uploads/', limits: { fileSize: 10 * 1024 * 1024 * 1024 } }); // 10GB Limit
 
-['uploads', 'output', 'workflows', 'workflows/saved', 'temp_segments'].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
+['uploads', 'output', 'workflows', 'workflows/saved', 'temp_segments', 'uploads/chunks'].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
 let currentWorkflowData = null;
 let currentWorkflowId = null;
@@ -231,17 +231,17 @@ const apps = [adminApp, publicApp];
 
 apps.forEach(app => {
     app.use((req, res, next) => {
-        if (req.path.includes('/api/upload/media/')) {
+        if (req.path.includes('/api/upload/media/') || req.path.includes('/api/upload/chunk')) {
             next(); // Let multer handle it
         } else {
-            express.json({ limit: '10GB' })(req, res, next);
+            express.json({ limit: '500mb' })(req, res, next);
         }
     });
     app.use((req, res, next) => {
-        if (req.path.includes('/api/upload/media/')) {
+        if (req.path.includes('/api/upload/media/') || req.path.includes('/api/upload/chunk')) {
             next();
         } else {
-            express.urlencoded({ limit: '10GB', extended: true })(req, res, next);
+            express.urlencoded({ limit: '500mb', extended: true })(req, res, next);
         }
     });
     app.use((req, res, next) => {
@@ -303,6 +303,13 @@ async function proxyToComfy(req, res) {
 
 const appShim = `export const app = { registerExtension: (ext) => { if (!window._pixaroma_extensions) window._pixaroma_extensions = {}; window._pixaroma_extensions[ext.name] = ext; }, ui: { settings: { getSettingValue: (id) => JSON.parse(localStorage.getItem('pixaroma_settings') || '{}')[id] || null } } };`;
 const apiShim = `export const api = { api_base: '', fetchApi: async (route, options) => fetch(route.startsWith('/') ? route : '/' + route, options) };`;
+
+apps.forEach(app => {
+    ['/scripts/app.js', '*/scripts/app.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(appShim); }));
+    ['/scripts/api.js', '*/scripts/api.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(apiShim); }));
+    app.all('/pixaroma/*', proxyToComfy); app.all('/extensions/*', proxyToComfy);
+    ['/view', '/prompt', '/history', '/embeddings', '/object_info', '/system_stats', '/queue', '/upload/image', '/ws'].forEach(r => app.all(r, proxyToComfy));
+});
 
 // ============ ROUTES ============
 
@@ -372,6 +379,71 @@ adminApp.post('/api/config/save', (req, res) => {
     }
     fs.writeFileSync(path.join('workflows', 'ui_config.json'), JSON.stringify(uiConfig, null, 2)); res.json({ success: true });
 });
+
+const handleChunkUpload = async (req, res) => {
+    try {
+        const { uploadId, chunkIndex, totalChunks, filename } = req.body;
+        if (!req.file) return res.status(400).json({ error: 'No chunk file' });
+
+        // SECURITY: Validate uploadId to prevent path traversal
+        if (!uploadId || !/^[a-z0-9-]+$/i.test(uploadId)) {
+            return res.status(400).json({ error: 'Invalid upload ID' });
+        }
+
+        const chunkDir = path.join('uploads', 'chunks', uploadId);
+        if (!fs.existsSync(chunkDir)) fs.mkdirSync(chunkDir, { recursive: true });
+
+        const chunkPath = path.join(chunkDir, `chunk-${chunkIndex}`);
+        try {
+            fs.renameSync(req.file.path, chunkPath);
+        } catch (e) {
+            fs.copyFileSync(req.file.path, chunkPath);
+            fs.unlinkSync(req.file.path);
+        }
+
+        const receivedChunks = fs.readdirSync(chunkDir).length;
+        if (receivedChunks === parseInt(totalChunks)) {
+            const finalFn = `${generateId()}${path.extname(filename)}`;
+            const finalPath = path.join('output', finalFn);
+            const writeStream = fs.createWriteStream(finalPath);
+
+            const sortedChunks = fs.readdirSync(chunkDir).sort((a, b) => {
+                return parseInt(a.split('-')[1]) - parseInt(b.split('-')[1]);
+            });
+
+            for (const chunkFile of sortedChunks) {
+                const partPath = path.join(chunkDir, chunkFile);
+                await new Promise((resolve, reject) => {
+                    const readStream = fs.createReadStream(partPath);
+                    readStream.pipe(writeStream, { end: false });
+                    readStream.on('end', resolve);
+                    readStream.on('error', reject);
+                });
+            }
+            writeStream.end();
+
+            await new Promise((resolve, reject) => {
+                writeStream.on('finish', resolve);
+                writeStream.on('error', reject);
+            });
+
+            mediaStore[finalFn] = { path: finalPath, originalName: filename, mimetype: filename.endsWith('.mp4') ? 'video/mp4' : 'image/png' };
+
+            // Cleanup
+            fs.rmSync(chunkDir, { recursive: true, force: true });
+
+            return res.json({ success: true, filename: finalFn, type: finalFn.endsWith('.mp4') ? 'video' : 'image', completed: true });
+        }
+
+        res.json({ success: true, chunkIndex, completed: false });
+    } catch (e) {
+        console.error('Chunk upload error:', e);
+        res.status(500).json({ error: e.message });
+    }
+};
+
+adminApp.post('/api/upload/chunk', upload.single('chunk'), handleChunkUpload);
+publicApp.post('/api/upload/chunk', upload.single('chunk'), handleChunkUpload);
 
 adminApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
     try {
@@ -657,7 +729,6 @@ const processSegmentedHandler = async (req, res) => {
     const sendUpdate = (data) => res.write(JSON.stringify(data) + '\n');
 
     const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
-    const fallbackDuration = advancedConfig?.fallbackDuration ?? 10;
     const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 10;
 
     try {
@@ -680,7 +751,6 @@ const processSegmentedHandler = async (req, res) => {
 
             sendUpdate({ status: 'Analyzing & Segmenting...' });
 
-            // Re-use logic from pre-segment or call it
             const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
             await new Promise((resolve, reject) => {
                 ffmpeg(inputVideo).outputOptions(['-vf', `select='gt(scene,${sceneThreshold})',showinfo`, '-f', 'null']).output('-')
@@ -933,32 +1003,12 @@ publicApp.get('/api/outputs', (req, res) => {
 });
 publicApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
 
-// Add proxy routes LAST
-apps.forEach(app => {
-    ['/scripts/app.js', '*/scripts/app.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(appShim); }));
-    ['/scripts/api.js', '*/scripts/api.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(apiShim); }));
-    app.all('/pixaroma/*', proxyToComfy); app.all('/extensions/*', proxyToComfy);
-    ['/view', '/prompt', '/history', '/embeddings', '/object_info', '/system_stats', '/queue', '/upload/image', '/ws'].forEach(r => app.all(r, proxyToComfy));
-});
-
-// Error handlers
-adminApp.use((err, req, res, next) => {
-    console.error('[Admin] Uncaught error:', err);
-    if (!res.headersSent) res.status(500).json({ error: err.message || 'Internal Server Error' });
-});
-publicApp.use((err, req, res, next) => {
-    console.error('[Public] Uncaught error:', err);
-    if (!res.headersSent) res.status(500).json({ error: err.message || 'Internal Server Error' });
-});
-
 // ============ START ============
 
 async function startServers() {
     ADMIN_PORT = await findFreePort(ADMIN_PORT); PUBLIC_PORT = await findFreePort(Math.max(PUBLIC_PORT, ADMIN_PORT + 1));
     const adminServer = adminApp.listen(ADMIN_PORT, '0.0.0.0', () => console.log(`🔧 ADMIN http://localhost:${ADMIN_PORT}`));
-    adminServer.timeout = 0; adminServer.keepAliveTimeout = 0; adminServer.headersTimeout = 0; adminServer.requestTimeout = 0;
     const publicServer = publicApp.listen(PUBLIC_PORT, '0.0.0.0', () => console.log(`🌐 PUBLIC http://localhost:${PUBLIC_PORT}`));
-    publicServer.timeout = 0; publicServer.keepAliveTimeout = 0; publicServer.headersTimeout = 0; publicServer.requestTimeout = 0;
     const setupWsProxy = (server) => {
         const wss = new WebSocket.Server({ noServer: true });
         server.on('upgrade', async (req, socket, head) => {

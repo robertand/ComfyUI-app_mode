@@ -14,6 +14,31 @@ let selectedItems = new Set();
 
 function initIcons() { if (window.lucide) window.lucide.createIcons(); }
 
+async function chunkedUpload(file, key, onProgress) {
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const uploadId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+    let result = null;
+
+    for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+        const formData = new FormData();
+        formData.append('chunk', chunk);
+        formData.append('uploadId', uploadId);
+        formData.append('chunkIndex', i);
+        formData.append('totalChunks', totalChunks);
+        formData.append('filename', file.name);
+
+        const res = await fetch('/api/upload/chunk', { method: 'POST', body: formData });
+        result = await res.json();
+        if (!result.success) throw new Error(result.error || 'Chunk upload failed');
+        if (onProgress) onProgress(Math.round(((i + 1) / totalChunks) * 100));
+    }
+    return result;
+}
+
 async function loadWorkflows() {
     try {
         const res = await fetch('/api/workflows/list');
@@ -281,6 +306,11 @@ function renderLiveUI() {
                                     <i data-lucide="split" class="w-6 h-6 mb-1 mx-auto text-slate-600"></i>
                                     <p class="text-[8px] text-slate-500">Click to Upload & Segment</p>
                                 </div>
+                                <div id="segmented-progress-container-${key}" class="hidden absolute inset-x-0 bottom-0 p-2 bg-slate-900/80">
+                                    <div class="w-full bg-slate-700 h-1 rounded-full overflow-hidden">
+                                        <div id="segmented-progress-bar-${key}" class="bg-blue-500 h-full transition-all" style="width: 0%"></div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <div id="status-card-${key}" class="hidden flex-1 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
@@ -290,7 +320,7 @@ function renderLiveUI() {
                     </div>
                 </div>` : '';
 
-            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div><div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"><input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')"><div id="preview-${key}" class="text-center p-4"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p></div></div>${segmentedHtml}`;
+            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div><div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"><input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')"><div id="preview-${key}" class="text-center p-4"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p></div><div id="media-progress-container-${key}" class="hidden absolute inset-x-0 bottom-0 p-4 bg-slate-900/80"><div class="w-full bg-slate-700 h-1.5 rounded-full overflow-hidden"><div id="media-progress-bar-${key}" class="bg-blue-500 h-full transition-all" style="width: 0%"></div></div></div></div>${segmentedHtml}`;
         } else {
             const cur = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
             const isRandom = parameters['_autoRandomSeed']?.[key] === true;
@@ -331,14 +361,25 @@ async function handleSegmentedUpload(file, key) {
     const card = document.getElementById(`status-card-${key}`);
     const stext = document.getElementById(`status-text-${key}`);
     const ssub = document.getElementById(`status-sub-${key}`);
+    const progCont = document.getElementById(`segmented-progress-container-${key}`);
+    const progBar = document.getElementById(`segmented-progress-bar-${key}`);
 
     p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-4 w-4 mx-auto"></div>';
 
-    const fd = new FormData(); fd.append('media', file);
     try {
-        const upRes = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
-        if (!upRes.ok) throw new Error('Upload failed');
-        const upData = await upRes.json();
+        let upData;
+        if (file.size > 10 * 1024 * 1024) {
+            progCont.classList.remove('hidden');
+            upData = await chunkedUpload(file, key, (percent) => {
+                progBar.style.width = percent + '%';
+            });
+            progCont.classList.add('hidden');
+        } else {
+            const fd = new FormData(); fd.append('media', file);
+            const upRes = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
+            if (!upRes.ok) throw new Error('Upload failed');
+            upData = await upRes.json();
+        }
 
         stext.textContent = 'Segmenting...';
         card.classList.remove('hidden');
@@ -381,11 +422,25 @@ async function handleMediaUpload(file, key) {
     }
 
     const p = document.getElementById(`preview-${key}`);
+    const progCont = document.getElementById(`media-progress-container-${key}`);
+    const progBar = document.getElementById(`media-progress-bar-${key}`);
+
     p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-6 w-6 mx-auto"></div>';
-    const fd = new FormData(); fd.append('media', file);
+
     try {
-        const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
-        const data = await res.json();
+        let data;
+        if (file.size > 10 * 1024 * 1024) {
+            progCont.classList.remove('hidden');
+            data = await chunkedUpload(file, key, (percent) => {
+                progBar.style.width = percent + '%';
+            });
+            progCont.classList.add('hidden');
+        } else {
+            const fd = new FormData(); fd.append('media', file);
+            const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
+            data = await res.json();
+        }
+
         if (data.success) {
             window.mediaFiles[key] = data.filename;
             if (data.type === 'video') {
