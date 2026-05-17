@@ -230,7 +230,8 @@ const publicApp = express();
 const apps = [adminApp, publicApp];
 
 apps.forEach(app => {
-    app.use(express.json({ limit: '500mb' }));
+    app.use(express.json({ limit: '10GB' }));
+    app.use(express.urlencoded({ limit: '10GB', extended: true }));
     app.use((req, res, next) => {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.setHeader('Pragma', 'no-cache');
@@ -290,13 +291,6 @@ async function proxyToComfy(req, res) {
 
 const appShim = `export const app = { registerExtension: (ext) => { if (!window._pixaroma_extensions) window._pixaroma_extensions = {}; window._pixaroma_extensions[ext.name] = ext; }, ui: { settings: { getSettingValue: (id) => JSON.parse(localStorage.getItem('pixaroma_settings') || '{}')[id] || null } } };`;
 const apiShim = `export const api = { api_base: '', fetchApi: async (route, options) => fetch(route.startsWith('/') ? route : '/' + route, options) };`;
-
-apps.forEach(app => {
-    ['/scripts/app.js', '*/scripts/app.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(appShim); }));
-    ['/scripts/api.js', '*/scripts/api.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(apiShim); }));
-    app.all('/pixaroma/*', proxyToComfy); app.all('/extensions/*', proxyToComfy);
-    ['/view', '/prompt', '/history', '/embeddings', '/object_info', '/system_stats', '/queue', '/upload/image', '/ws'].forEach(r => app.all(r, proxyToComfy));
-});
 
 // ============ ROUTES ============
 
@@ -569,8 +563,74 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
     return outputFn;
 }
 
+adminApp.post('/api/video/pre-segment', async (req, res) => {
+    try {
+        const { filename, advancedConfig } = req.body;
+        const inputVideo = path.join('output', filename);
+        if (!fs.existsSync(inputVideo)) throw new Error('File not found');
+
+        const runId = generateId();
+        const segmentDir = path.join('temp_segments', runId);
+        fs.mkdirSync(segmentDir, { recursive: true });
+
+        const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
+        const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 10;
+
+        // 1. Detect scene changes
+        const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
+        await new Promise((resolve, reject) => {
+            ffmpeg(inputVideo)
+                .outputOptions(['-vf', `select='gt(scene,${sceneThreshold})',showinfo`, '-f', 'null'])
+                .output('-')
+                .on('stderr', (line) => {
+                    const match = line.match(/pts_time:([\d.]+)/);
+                    if (match) fs.appendFileSync(sceneChangeFile, match[1] + ',');
+                })
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
+        });
+
+        let segmentTimes = [];
+        if (fs.existsSync(sceneChangeFile)) {
+            segmentTimes = fs.readFileSync(sceneChangeFile, 'utf8').split(',').filter(t => t.trim()).map(t => parseFloat(t));
+        }
+
+        const videoDuration = await new Promise((resolve, reject) => {
+            ffmpeg.ffprobe(inputVideo, (err, metadata) => {
+                if (err) reject(err); else resolve(metadata.format.duration);
+            });
+        });
+
+        const refinedTimes = [];
+        let lastTime = 0;
+        const allPotentialSplits = [...new Set([...segmentTimes, videoDuration])].sort((a, b) => a - b);
+        for (const splitTime of allPotentialSplits) {
+            while (splitTime - lastTime > maxSegmentDuration + 0.1) {
+                lastTime += maxSegmentDuration;
+                refinedTimes.push(lastTime);
+            }
+            if (splitTime < videoDuration && splitTime > lastTime + 0.1) {
+                lastTime = splitTime;
+                refinedTimes.push(lastTime);
+            }
+        }
+
+        const segmentTimesStr = refinedTimes.join(',');
+        await new Promise((resolve, reject) => {
+            const cmd = ffmpeg(inputVideo).outputOptions(['-reset_timestamps 1', '-map 0', '-c copy']);
+            if (segmentTimesStr) cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr]);
+            else cmd.outputOptions(['-f segment', `-segment_time ${maxSegmentDuration}`]);
+            cmd.output(path.join(segmentDir, 'seg_%03d.mp4')).on('end', resolve).on('error', reject).run();
+        });
+
+        const segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort();
+        res.json({ success: true, runId, segments });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 adminApp.post('/api/video/process-segmented', async (req, res) => {
-    const { mediaFiles, parameters, bypassedNodes, workflowId, advancedConfig } = req.body;
+    const { mediaFiles, parameters, bypassedNodes, workflowId, advancedConfig, runId } = req.body;
     const currentId = currentWorkflowId || workflowId;
     if (!currentId) return res.status(400).json({ error: 'No workflow' });
 
@@ -582,90 +642,54 @@ adminApp.post('/api/video/process-segmented', async (req, res) => {
     const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 10;
 
     try {
-        const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
-        let inputVideo = path.join('output', mediaFiles[videoKey]);
-        if (!fs.existsSync(inputVideo)) {
-            // Check in mediaStore if not in output (e.g. freshly uploaded)
-            const fn = mediaFiles[videoKey];
-            if (mediaStore[fn]) inputVideo = mediaStore[fn].path;
-            else throw new Error(`Video file not found: ${fn}`);
-        }
+        let activeRunId = runId;
+        let segmentDir = activeRunId ? path.join('temp_segments', activeRunId) : null;
+        let segments = [];
 
-        const runId = generateId();
-        const segmentDir = path.join('temp_segments', runId);
-        fs.mkdirSync(segmentDir, { recursive: true });
+        if (!activeRunId) {
+            const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
+            let inputVideo = path.join('output', mediaFiles[videoKey]);
+            if (!fs.existsSync(inputVideo)) {
+                const fn = mediaFiles[videoKey];
+                if (mediaStore[fn]) inputVideo = mediaStore[fn].path;
+                else throw new Error(`Video file not found: ${fn}`);
+            }
 
-        sendUpdate({ status: 'Analyzing scenes...' });
+            activeRunId = generateId();
+            segmentDir = path.join('temp_segments', activeRunId);
+            fs.mkdirSync(segmentDir, { recursive: true });
 
-        // 1. Detect scene changes
-        const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
-        await new Promise((resolve, reject) => {
-            ffmpeg(inputVideo)
-                .outputOptions([
-                    '-vf', `select='gt(scene,${sceneThreshold})',showinfo`,
-                    '-f', 'null'
-                ])
-                .output('-')
-                .on('stderr', (line) => {
-                    const match = line.match(/pts_time:([\d.]+)/);
-                    if (match) {
-                        fs.appendFileSync(sceneChangeFile, match[1] + ',');
-                    }
-                })
-                .on('end', resolve)
-                .on('error', reject)
-                .run();
-        });
+            sendUpdate({ status: 'Analyzing & Segmenting...' });
 
-        let segmentTimes = [];
-        if (fs.existsSync(sceneChangeFile)) {
-            const raw = fs.readFileSync(sceneChangeFile, 'utf8');
-            segmentTimes = raw.split(',').filter(t => t.trim()).map(t => parseFloat(t));
-        }
-
-        // 2. Refine segment times to honor maxSegmentDuration
-        const refinedTimes = [];
-        let lastTime = 0;
-
-        // Get video duration
-        const videoDuration = await new Promise((resolve, reject) => {
-            ffmpeg.ffprobe(inputVideo, (err, metadata) => {
-                if (err) reject(err);
-                else resolve(metadata.format.duration);
+            // Re-use logic from pre-segment or call it
+            const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
+            await new Promise((resolve, reject) => {
+                ffmpeg(inputVideo).outputOptions(['-vf', `select='gt(scene,${sceneThreshold})',showinfo`, '-f', 'null']).output('-')
+                    .on('stderr', line => { const m = line.match(/pts_time:([\d.]+)/); if (m) fs.appendFileSync(sceneChangeFile, m[1] + ','); })
+                    .on('end', resolve).on('error', reject).run();
             });
-        });
 
-        // Add scene changes and split if too long
-        const allPotentialSplits = [...new Set([...segmentTimes, videoDuration])].sort((a, b) => a - b);
+            let segmentTimes = [];
+            if (fs.existsSync(sceneChangeFile)) { segmentTimes = fs.readFileSync(sceneChangeFile, 'utf8').split(',').filter(t => t.trim()).map(t => parseFloat(t)); }
+            const videoDuration = await new Promise((res, rej) => { ffmpeg.ffprobe(inputVideo, (err, m) => err ? rej(err) : res(m.format.duration)); });
 
-        for (const splitTime of allPotentialSplits) {
-            while (splitTime - lastTime > maxSegmentDuration + 0.1) { // 0.1s buffer
-                lastTime += maxSegmentDuration;
-                refinedTimes.push(lastTime);
+            const refinedTimes = []; let lastTime = 0;
+            const allSplits = [...new Set([...segmentTimes, videoDuration])].sort((a, b) => a - b);
+            for (const st of allSplits) {
+                while (st - lastTime > maxSegmentDuration + 0.1) { lastTime += maxSegmentDuration; refinedTimes.push(lastTime); }
+                if (st < videoDuration && st > lastTime + 0.1) { lastTime = st; refinedTimes.push(lastTime); }
             }
-            if (splitTime < videoDuration && splitTime > lastTime + 0.1) {
-                lastTime = splitTime;
-                refinedTimes.push(lastTime);
-            }
+
+            const segmentTimesStr = refinedTimes.join(',');
+            await new Promise((resolve, reject) => {
+                const cmd = ffmpeg(inputVideo).outputOptions(['-reset_timestamps 1', '-map 0', '-c copy']);
+                if (segmentTimesStr) cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr]);
+                else cmd.outputOptions(['-f segment', `-segment_time ${maxSegmentDuration}`]);
+                cmd.output(path.join(segmentDir, 'seg_%03d.mp4')).on('end', resolve).on('error', reject).run();
+            });
         }
 
-        const segmentTimesStr = refinedTimes.join(',');
-
-        // 3. Segment based on detected times or fallback
-        await new Promise((resolve, reject) => {
-            const cmd = ffmpeg(inputVideo).outputOptions(['-reset_timestamps 1', '-map 0', '-c copy']);
-            if (segmentTimesStr) {
-                cmd.outputOptions(['-f segment', '-segment_times', segmentTimesStr]);
-            } else {
-                cmd.outputOptions(['-f segment', `-segment_time ${fallbackDuration}`]);
-            }
-            cmd.output(path.join(segmentDir, 'seg_%03d.mp4'))
-                .on('end', resolve)
-                .on('error', reject)
-                .run();
-        });
-
-        const segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
+        segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
         const processedSegments = [];
         const target = await getFreestInstance();
 
@@ -689,7 +713,18 @@ adminApp.post('/api/video/process-segmented', async (req, res) => {
                 .outputOptions('-c copy')
                 .save(finalPath)
                 .on('end', resolve)
-                .on('error', reject);
+                .on('error', (err) => {
+                    console.error('Concat with copy failed, trying re-encoding...', err);
+                    ffmpeg()
+                        .input(listFile)
+                        .inputOptions(['-f concat', '-safe 0'])
+                        .videoCodec('libx264')
+                        .audioCodec('aac')
+                        .outputOptions('-pix_fmt yuv420p')
+                        .save(finalPath)
+                        .on('end', resolve)
+                        .on('error', reject);
+                });
         });
 
         sendUpdate({ success: true, files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }] });
@@ -862,6 +897,14 @@ publicApp.get('/api/outputs', (req, res) => {
 });
 publicApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
 
+// Add proxy routes LAST
+apps.forEach(app => {
+    ['/scripts/app.js', '*/scripts/app.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(appShim); }));
+    ['/scripts/api.js', '*/scripts/api.js'].forEach(p => app.get(p, (req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.send(apiShim); }));
+    app.all('/pixaroma/*', proxyToComfy); app.all('/extensions/*', proxyToComfy);
+    ['/view', '/prompt', '/history', '/embeddings', '/object_info', '/system_stats', '/queue', '/upload/image', '/ws'].forEach(r => app.all(r, proxyToComfy));
+});
+
 // Error handlers
 adminApp.use((err, req, res, next) => {
     console.error('[Admin] Uncaught error:', err);
@@ -877,7 +920,9 @@ publicApp.use((err, req, res, next) => {
 async function startServers() {
     ADMIN_PORT = await findFreePort(ADMIN_PORT); PUBLIC_PORT = await findFreePort(Math.max(PUBLIC_PORT, ADMIN_PORT + 1));
     const adminServer = adminApp.listen(ADMIN_PORT, '0.0.0.0', () => console.log(`🔧 ADMIN http://localhost:${ADMIN_PORT}`));
+    adminServer.timeout = 0; adminServer.keepAliveTimeout = 0;
     const publicServer = publicApp.listen(PUBLIC_PORT, '0.0.0.0', () => console.log(`🌐 PUBLIC http://localhost:${PUBLIC_PORT}`));
+    publicServer.timeout = 0; publicServer.keepAliveTimeout = 0;
     const setupWsProxy = (server) => {
         const wss = new WebSocket.Server({ noServer: true });
         server.on('upgrade', async (req, socket, head) => {

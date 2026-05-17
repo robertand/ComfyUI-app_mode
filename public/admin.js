@@ -324,7 +324,17 @@ async function handleMediaUpload(file, key) {
         const data = await res.json();
         if (data.success) {
             window.mediaFiles[key] = data.filename;
-            p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
+            if (data.type === 'video') {
+                p.innerHTML = `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>
+                <div class="absolute bottom-2 right-2 flex gap-2">
+                    <button onclick="preSegmentVideo('${data.filename}', '${key}', event)" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[8px] font-bold rounded shadow-lg transition-all flex items-center gap-1">
+                        <i data-lucide="split" class="w-3 h-3"></i>
+                        <span>PROCESS & SEGMENT</span>
+                    </button>
+                </div>`;
+            } else {
+                p.innerHTML = `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
+            }
         } else {
             throw new Error(data.error || 'Upload failed');
         }
@@ -347,6 +357,44 @@ function toggleRandom(key) {
     renderLiveUI();
 }
 
+let lastPreSegmentRunId = null;
+
+async function preSegmentVideo(filename, key, ev) {
+    const btn = ev.currentTarget;
+    const originalContent = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader" class="w-3 h-3 animate-spin"></i><span>ANALYZING...</span>';
+    initIcons();
+
+    const statusMini = document.getElementById('segment-status-mini');
+    if (statusMini) { statusMini.classList.remove('hidden'); statusMini.textContent = 'Analyzing & Segmenting...'; }
+
+    try {
+        const res = await fetch('/api/video/pre-segment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename, advancedConfig: uiConfig.advancedConfig })
+        });
+        const data = await res.json();
+        if (data.success) {
+            lastPreSegmentRunId = data.runId;
+            alert(`Video split into ${data.segments.length} segments.`);
+            if (statusMini) statusMini.textContent = `Ready: ${data.segments.length} segments`;
+            btn.innerHTML = `<i data-lucide="check" class="w-3 h-3"></i><span>${data.segments.length} SEGMENTS</span>`;
+        } else {
+            alert('Segmentation failed: ' + data.error);
+            btn.innerHTML = originalContent;
+            btn.disabled = false;
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+        btn.innerHTML = originalContent;
+        btn.disabled = false;
+    }
+    initIcons();
+}
+window.preSegmentVideo = preSegmentVideo;
+
 async function runWorkflow() {
     const btn = document.getElementById('generate-btn');
     const ov = document.getElementById('loading-overlay');
@@ -367,7 +415,7 @@ async function runWorkflow() {
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes, advancedConfig: uiConfig.advancedConfig })
+                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes, advancedConfig: uiConfig.advancedConfig, runId: lastPreSegmentRunId })
             });
 
             const reader = res.body.getReader();
