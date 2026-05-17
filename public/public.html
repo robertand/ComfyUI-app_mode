@@ -435,9 +435,17 @@
             try {
                 const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
                 const data = await res.json();
-                window.mediaFiles[key] = data.filename;
-                p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
-            } catch (e) { p.innerHTML = '<i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i>'; if (window.lucide) window.lucide.createIcons(); }
+                if (data.success) {
+                    window.mediaFiles[key] = data.filename;
+                    p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
+                } else {
+                    throw new Error(data.error || 'Upload failed');
+                }
+            } catch (e) {
+                console.error('Upload error:', e);
+                p.innerHTML = `<div class="text-center"><i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i><p class="text-[8px] text-red-500 mt-1">${e.message}</p></div>`;
+                if (window.lucide) window.lucide.createIcons();
+            }
         }
 
         async function runWorkflow() {

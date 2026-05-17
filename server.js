@@ -815,9 +815,22 @@ publicApp.post('/api/workflows/load/:id', (req, res) => {
     res.json({ success: true, analysis: d.analysis, presets: d.metadata?.presets || [], uiConfig: reconcileUIConfig(d.analysis, d.uiConfig), originalValues: extractOriginalWorkflowValues(d.analysis.workflowApi) });
 });
 publicApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
-    const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn); fs.renameSync(req.file.path, p);
-    mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
-    res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file' });
+        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn);
+        try {
+            fs.renameSync(req.file.path, p);
+        } catch (e) {
+            // Fallback for cross-device move
+            fs.copyFileSync(req.file.path, p);
+            fs.unlinkSync(req.file.path);
+        }
+        mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
+        res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+    } catch (e) {
+        console.error('Public Upload API error:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 publicApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
 publicApp.get('/api/outputs', (req, res) => {
@@ -848,6 +861,16 @@ publicApp.get('/api/outputs', (req, res) => {
     } catch (e) { res.status(400).json({ error: e.message }); }
 });
 publicApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
+
+// Error handlers
+adminApp.use((err, req, res, next) => {
+    console.error('[Admin] Uncaught error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Internal Server Error' });
+});
+publicApp.use((err, req, res, next) => {
+    console.error('[Public] Uncaught error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Internal Server Error' });
+});
 
 // ============ START ============
 
