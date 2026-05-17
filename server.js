@@ -230,8 +230,20 @@ const publicApp = express();
 const apps = [adminApp, publicApp];
 
 apps.forEach(app => {
-    app.use(express.json({ limit: '10GB' }));
-    app.use(express.urlencoded({ limit: '10GB', extended: true }));
+    app.use((req, res, next) => {
+        if (req.path.includes('/api/upload/media/')) {
+            next(); // Let multer handle it
+        } else {
+            express.json({ limit: '10GB' })(req, res, next);
+        }
+    });
+    app.use((req, res, next) => {
+        if (req.path.includes('/api/upload/media/')) {
+            next();
+        } else {
+            express.urlencoded({ limit: '10GB', extended: true })(req, res, next);
+        }
+    });
     app.use((req, res, next) => {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.setHeader('Pragma', 'no-cache');
@@ -502,10 +514,17 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
 adminApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res));
 publicApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res, true));
 
-async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNodes, targetInstance) {
-    // 1. Upload segment to instance
+async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNodes, targetInstance, extraSegments = {}) {
+    // 1. Upload primary segment to instance
     const uploadRes = await uploadFileToInstance(targetInstance, segmentPath, path.basename(segmentPath), 'video/mp4');
-    const filename = uploadRes.name;
+    const primaryFilename = uploadRes.name;
+
+    const segmentMap = { ...extraSegments };
+    // Also upload extra segments
+    for (const [key, p] of Object.entries(segmentMap)) {
+        const res = await uploadFileToInstance(targetInstance, p, path.basename(p), 'video/mp4');
+        segmentMap[key] = res.name;
+    }
 
     // 2. Prepare workflow
     const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
@@ -518,7 +537,7 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
     // Map segment filename to all video inputs
     analysis.inputs?.forEach(g => g.inputs?.forEach(i => {
         if (i.valueType === 'video' && workflow[i.nodeId]) {
-            workflow[i.nodeId].inputs[i.inputName] = filename;
+            workflow[i.nodeId].inputs[i.inputName] = segmentMap[i.key] || primaryFilename;
         }
     }));
 
@@ -563,7 +582,7 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
     return outputFn;
 }
 
-adminApp.post('/api/video/pre-segment', async (req, res) => {
+const preSegmentHandler = async (req, res) => {
     try {
         const { filename, advancedConfig } = req.body;
         const inputVideo = path.join('output', filename);
@@ -627,10 +646,10 @@ adminApp.post('/api/video/pre-segment', async (req, res) => {
         const segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort();
         res.json({ success: true, runId, segments });
     } catch (e) { res.status(500).json({ error: e.message }); }
-});
+};
 
-adminApp.post('/api/video/process-segmented', async (req, res) => {
-    const { mediaFiles, parameters, bypassedNodes, workflowId, advancedConfig, runId } = req.body;
+const processSegmentedHandler = async (req, res) => {
+    const { mediaFiles, parameters, bypassedNodes, workflowId, advancedConfig, runId, segmentedInputs } = req.body;
     const currentId = currentWorkflowId || workflowId;
     if (!currentId) return res.status(400).json({ error: 'No workflow' });
 
@@ -695,7 +714,19 @@ adminApp.post('/api/video/process-segmented', async (req, res) => {
 
         for (let i = 0; i < segments.length; i++) {
             sendUpdate({ status: `Processing segment ${i + 1}/${segments.length}...` });
-            const processed = await runSingleSegment(segments[i], currentId, parameters, bypassedNodes, target);
+
+            const extraSegments = {};
+            if (segmentedInputs) {
+                Object.entries(segmentedInputs).forEach(([inputKey, rId]) => {
+                    const otherDir = path.join('temp_segments', rId);
+                    const otherSegments = fs.readdirSync(otherDir).filter(f => f.startsWith('seg_')).sort();
+                    if (otherSegments[i]) {
+                        extraSegments[inputKey] = path.join(otherDir, otherSegments[i]);
+                    }
+                });
+            }
+
+            const processed = await runSingleSegment(segments[i], currentId, parameters, bypassedNodes, target, extraSegments);
             processedSegments.push(processed);
         }
 
@@ -736,7 +767,12 @@ adminApp.post('/api/video/process-segmented', async (req, res) => {
         sendUpdate({ error: e.message });
         res.end();
     }
-});
+};
+
+adminApp.post('/api/video/pre-segment', preSegmentHandler);
+adminApp.post('/api/video/process-segmented', processSegmentedHandler);
+publicApp.post('/api/video/pre-segment', preSegmentHandler);
+publicApp.post('/api/video/process-segmented', processSegmentedHandler);
 
 adminApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
 adminApp.post('/api/settings', (req, res) => { COMFYUI_URLS = req.body.comfyuiUrls; CONFIG.COMFYUI_URLS = COMFYUI_URLS; fs.writeFileSync(CONFIG_FILE, JSON.stringify(CONFIG, null, 2)); res.json({ success: true }); });
@@ -920,9 +956,9 @@ publicApp.use((err, req, res, next) => {
 async function startServers() {
     ADMIN_PORT = await findFreePort(ADMIN_PORT); PUBLIC_PORT = await findFreePort(Math.max(PUBLIC_PORT, ADMIN_PORT + 1));
     const adminServer = adminApp.listen(ADMIN_PORT, '0.0.0.0', () => console.log(`🔧 ADMIN http://localhost:${ADMIN_PORT}`));
-    adminServer.timeout = 0; adminServer.keepAliveTimeout = 0;
+    adminServer.timeout = 0; adminServer.keepAliveTimeout = 0; adminServer.headersTimeout = 0; adminServer.requestTimeout = 0;
     const publicServer = publicApp.listen(PUBLIC_PORT, '0.0.0.0', () => console.log(`🌐 PUBLIC http://localhost:${PUBLIC_PORT}`));
-    publicServer.timeout = 0; publicServer.keepAliveTimeout = 0;
+    publicServer.timeout = 0; publicServer.keepAliveTimeout = 0; publicServer.headersTimeout = 0; publicServer.requestTimeout = 0;
     const setupWsProxy = (server) => {
         const wss = new WebSocket.Server({ noServer: true });
         server.on('upgrade', async (req, socket, head) => {

@@ -195,6 +195,7 @@
         window._pixaroma_session_previews = {};
         window.mediaFiles = {};
         let mediaFiles = window.mediaFiles;
+        let segmentedRuns = {};
         let parameters = {};
         let bypassedNodes = {};
         let uiConfig = null;
@@ -383,6 +384,27 @@
                 div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
 
                 if (obj.type === 'media') {
+                    const isSegmented = uiConfig.advancedConfig?.segmented && obj.data.valueType === 'video';
+                    const segmentedHtml = isSegmented ? `
+                        <div class="mt-4 pt-4 border-t border-slate-700/50">
+                            <div class="flex items-center justify-between gap-4">
+                                <div class="flex-1">
+                                    <label class="block text-[8px] font-bold text-slate-500 uppercase mb-1">Segmented Upload</label>
+                                    <div class="relative group aspect-video bg-slate-800 rounded-lg border border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer">
+                                        <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleSegmentedUpload(this.files[0], '${key}')">
+                                        <div id="segmented-preview-${key}" class="text-center p-2">
+                                            <i data-lucide="split" class="w-6 h-6 mb-1 mx-auto text-slate-600"></i>
+                                            <p class="text-[8px] text-slate-500">Click to Upload & Segment</p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div id="status-card-${key}" class="hidden flex-1 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                                     <div class="text-[10px] font-bold text-blue-400 mb-1" id="status-text-${key}">Ready</div>
+                                     <div class="text-[8px] text-slate-500" id="status-sub-${key}">0 segments</div>
+                                </div>
+                            </div>
+                        </div>` : '';
+
                     div.innerHTML = `
                         <div class="flex items-center justify-between mb-2">
                             <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label>
@@ -392,6 +414,7 @@
                             <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')">
                             <div id="preview-${key}" class="text-center"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500">Click or drag</p></div>
                         </div>
+                        ${segmentedHtml}
                     `;
                 } else {
                     const cur = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
@@ -427,6 +450,47 @@
             if (window.lucide) window.lucide.createIcons();
         }
 
+        async function handleSegmentedUpload(file, key) {
+            if (!file) return;
+            const p = document.getElementById(`segmented-preview-${key}`);
+            const card = document.getElementById(`status-card-${key}`);
+            const stext = document.getElementById(`status-text-${key}`);
+            const ssub = document.getElementById(`status-sub-${key}`);
+
+            p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-4 w-4 mx-auto"></div>';
+
+            const fd = new FormData(); fd.append('media', file);
+            try {
+                const upRes = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
+                if (!upRes.ok) throw new Error('Upload failed');
+                const upData = await upRes.json();
+
+                stext.textContent = 'Segmenting...';
+                card.classList.remove('hidden');
+
+                const segRes = await fetch('/api/video/pre-segment', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: upData.filename, advancedConfig: uiConfig.advancedConfig })
+                });
+                const segData = await segRes.json();
+                if (segData.success) {
+                    segmentedRuns[key] = { runId: segData.runId, segments: segData.segments };
+                    stext.textContent = 'READY';
+                    stext.className = 'text-[10px] font-bold text-emerald-400 mb-1';
+                    ssub.textContent = `${segData.segments.length} segments`;
+                    p.innerHTML = `<video src="/output/${upData.filename}" class="w-full h-full object-cover"></video>`;
+                } else throw new Error(segData.error);
+            } catch (e) {
+                console.error(e);
+                stext.textContent = 'FAILED';
+                stext.className = 'text-[10px] font-bold text-red-400 mb-1';
+                ssub.textContent = e.message;
+                p.innerHTML = '<i data-lucide="alert-circle" class="w-6 h-6 text-red-500 mx-auto"></i>';
+                if (window.lucide) window.lucide.createIcons();
+            }
+        }
+
         async function handleMediaUpload(file, key) {
             if (!file) return;
             const p = document.getElementById(`preview-${key}`);
@@ -452,8 +516,57 @@
             const btn = document.getElementById('generate-btn');
             const overlay = document.getElementById('loading-overlay');
             btn.disabled = true; overlay.classList.remove('hidden');
+
+            const isSegmented = uiConfig?.advancedConfig?.segmented;
+            const endpoint = isSegmented ? '/api/video/process-segmented' : '/api/workflow/run';
+
             try {
-                const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workflowId: document.getElementById('workflow-select').value, mediaFiles: window.mediaFiles, parameters, bypassedNodes }) });
+                const segmentedInputs = {};
+                Object.entries(segmentedRuns).forEach(([k, v]) => { if (window.mediaFiles[k]) segmentedInputs[k] = v.runId; });
+
+                const res = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        workflowId: document.getElementById('workflow-select').value,
+                        mediaFiles: window.mediaFiles,
+                        parameters,
+                        bypassedNodes,
+                        advancedConfig: uiConfig?.advancedConfig,
+                        segmentedInputs
+                    })
+                });
+
+                if (isSegmented) {
+                    const reader = res.body.getReader();
+                    const decoder = new TextDecoder();
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+                        const lines = decoder.decode(value).split('\n');
+                        for (const line of lines) {
+                            if (!line.trim()) continue;
+                            try {
+                                const update = JSON.parse(line);
+                                if (update.status) {
+                                    const hint = document.querySelector('[data-i18n="processing_hint"]');
+                                    if (hint) hint.textContent = update.status;
+                                }
+                                if (update.success && update.files) {
+                                    const f = update.files[0];
+                                    const c = document.getElementById('output-media-container');
+                                    const ph = document.getElementById('output-placeholder');
+                                    ph.classList.add('hidden');
+                                    c.classList.remove('hidden');
+                                    c.innerHTML = `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>`;
+                                    refreshOutputs();
+                                }
+                            } catch (e) {}
+                        }
+                    }
+                    return;
+                }
+
                 const data = await res.json();
                 if (data.success && data.files.length > 0) {
                     const f = data.files[0]; const c = document.getElementById('output-media-container'); const ph = document.getElementById('output-placeholder');

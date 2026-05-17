@@ -4,6 +4,7 @@ let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputName
 window._pixaroma_session_previews = {};
 window.mediaFiles = {};
 let mediaFiles = window.mediaFiles;
+let segmentedRuns = {};
 let parameters = {};
 let bypassedNodes = {};
 let originalValues = {};
@@ -267,7 +268,29 @@ function renderLiveUI() {
         div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
 
         if (obj.type === 'media') {
-            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div><div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"><input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')"><div id="preview-${key}" class="text-center p-4"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p></div></div>`;
+            const isSegmented = uiConfig.advancedConfig?.segmented && obj.data.valueType === 'video';
+            const runInfo = segmentedRuns[key];
+            const segmentedHtml = isSegmented ? `
+                <div class="mt-4 pt-4 border-t border-slate-700/50">
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="flex-1">
+                            <label class="block text-[8px] font-bold text-slate-500 uppercase mb-1">Segmented Upload</label>
+                            <div class="relative group aspect-video bg-slate-800 rounded-lg border border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer">
+                                <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleSegmentedUpload(this.files[0], '${key}')">
+                                <div id="segmented-preview-${key}" class="text-center p-2">
+                                    <i data-lucide="split" class="w-6 h-6 mb-1 mx-auto text-slate-600"></i>
+                                    <p class="text-[8px] text-slate-500">Click to Upload & Segment</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="status-card-${key}" class="hidden flex-1 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                             <div class="text-[10px] font-bold text-blue-400 mb-1" id="status-text-${key}">Ready</div>
+                             <div class="text-[8px] text-slate-500" id="status-sub-${key}">0 segments</div>
+                        </div>
+                    </div>
+                </div>` : '';
+
+            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div><div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"><input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')"><div id="preview-${key}" class="text-center p-4"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p></div></div>${segmentedHtml}`;
         } else {
             const cur = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
             const isRandom = parameters['_autoRandomSeed']?.[key] === true;
@@ -300,6 +323,47 @@ function renderLiveUI() {
         container.appendChild(div);
     });
     initIcons();
+}
+
+async function handleSegmentedUpload(file, key) {
+    if (!file) return;
+    const p = document.getElementById(`segmented-preview-${key}`);
+    const card = document.getElementById(`status-card-${key}`);
+    const stext = document.getElementById(`status-text-${key}`);
+    const ssub = document.getElementById(`status-sub-${key}`);
+
+    p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-4 w-4 mx-auto"></div>';
+
+    const fd = new FormData(); fd.append('media', file);
+    try {
+        const upRes = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
+        if (!upRes.ok) throw new Error('Upload failed');
+        const upData = await upRes.json();
+
+        stext.textContent = 'Segmenting...';
+        card.classList.remove('hidden');
+
+        const segRes = await fetch('/api/video/pre-segment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: upData.filename, advancedConfig: uiConfig.advancedConfig })
+        });
+        const segData = await segRes.json();
+        if (segData.success) {
+            segmentedRuns[key] = { runId: segData.runId, segments: segData.segments };
+            stext.textContent = 'READY';
+            stext.className = 'text-[10px] font-bold text-emerald-400 mb-1';
+            ssub.textContent = `${segData.segments.length} segments`;
+            p.innerHTML = `<video src="/output/${upData.filename}" class="w-full h-full object-cover"></video>`;
+        } else throw new Error(segData.error);
+    } catch (e) {
+        console.error(e);
+        stext.textContent = 'FAILED';
+        stext.className = 'text-[10px] font-bold text-red-400 mb-1';
+        ssub.textContent = e.message;
+        p.innerHTML = '<i data-lucide="alert-circle" class="w-6 h-6 text-red-500 mx-auto"></i>';
+        initIcons();
+    }
 }
 
 async function handleMediaUpload(file, key) {
@@ -407,6 +471,12 @@ async function runWorkflow() {
 
     try {
         if (isSegmented) {
+            // Check for per-input segments first
+            const segmentedInputs = {};
+            Object.entries(segmentedRuns).forEach(([k, v]) => {
+                if (window.mediaFiles[k]) segmentedInputs[k] = v.runId;
+            });
+
             const statusMini = document.getElementById('segment-status-mini');
             statusMini.classList.remove('hidden');
             statusMini.textContent = 'Segmenting...';
@@ -415,7 +485,7 @@ async function runWorkflow() {
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes, advancedConfig: uiConfig.advancedConfig, runId: lastPreSegmentRunId })
+                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes, advancedConfig: uiConfig.advancedConfig, runId: lastPreSegmentRunId, segmentedInputs })
             });
 
             const reader = res.body.getReader();
