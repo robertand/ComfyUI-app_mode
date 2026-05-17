@@ -8,6 +8,8 @@ let parameters = {};
 let bypassedNodes = {};
 let originalValues = {};
 let currentPresets = [];
+let currentOutputPath = '';
+let selectedItems = new Set();
 
 function initIcons() { if (window.lucide) window.lucide.createIcons(); }
 
@@ -268,6 +270,18 @@ function renderLiveUI() {
 
 async function handleMediaUpload(file, key) {
     if (!file) return;
+
+    // Show video processing options if a large video is uploaded
+    const isVideo = file.type.startsWith('video/');
+    const options = document.getElementById('video-processing-options');
+    if (options) {
+        if (isVideo && file.size > 50 * 1024 * 1024) { // > 50MB
+            options.classList.remove('hidden');
+        } else if (!window.mediaFiles || !Object.values(window.mediaFiles).some(v => v.endsWith('.mp4') || v.endsWith('.webm'))) {
+            options.classList.add('hidden');
+        }
+    }
+
     const p = document.getElementById(`preview-${key}`);
     p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-6 w-6 mx-auto"></div>';
     const fd = new FormData(); fd.append('media', file);
@@ -292,17 +306,83 @@ function toggleRandom(key) {
 }
 
 async function runWorkflow() {
-    const btn = document.getElementById('generate-btn'); const ov = document.getElementById('loading-overlay');
-    btn.disabled = true; ov.classList.remove('hidden');
+    const btn = document.getElementById('generate-btn');
+    const ov = document.getElementById('loading-overlay');
+    const isSegmented = document.getElementById('segmented-processing-toggle')?.checked;
+
+    btn.disabled = true;
+    ov.classList.remove('hidden');
+
+    const endpoint = isSegmented ? '/api/video/process-segmented' : '/api/workflow/run';
+
     try {
-        const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mediaFiles, parameters, bypassedNodes }) });
-        const data = await res.json();
-        if (data.success && data.files.length > 0) {
-            const f = data.files[0]; const c = document.getElementById('output-media-container'); const ph = document.getElementById('output-placeholder');
-            ph.classList.add('hidden'); c.classList.remove('hidden'); c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer rounded" onclick="showModal('${f.url}', 'image')">`;
-            refreshOutputs();
-        } else if (data.error) alert('Error: ' + data.error);
-    } catch (e) { alert('Connection error'); } finally { btn.disabled = false; ov.classList.add('hidden'); }
+        if (isSegmented) {
+            const statusMini = document.getElementById('segment-status-mini');
+            statusMini.classList.remove('hidden');
+            statusMini.textContent = 'Segmenting...';
+
+            // For segmented, we use a different progress tracking
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes })
+            });
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                const lines = decoder.decode(value).split('\n');
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const update = JSON.parse(line);
+                        if (update.status) {
+                            statusMini.textContent = update.status;
+                            const hint = document.querySelector('[data-i18n="processing_hint"]');
+                            if (hint) hint.textContent = update.status;
+                        }
+                        if (update.success && update.files) {
+                            const f = update.files[0];
+                            const c = document.getElementById('output-media-container');
+                            const ph = document.getElementById('output-placeholder');
+                            ph.classList.add('hidden');
+                            c.classList.remove('hidden');
+                            c.innerHTML = `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>`;
+                            refreshOutputs();
+                        }
+                    } catch (e) {}
+                }
+            }
+            statusMini.classList.add('hidden');
+        } else {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes })
+            });
+            const data = await res.json();
+            if (data.success && data.files.length > 0) {
+                const f = data.files[0];
+                const c = document.getElementById('output-media-container');
+                const ph = document.getElementById('output-placeholder');
+                ph.classList.add('hidden');
+                c.classList.remove('hidden');
+                c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer rounded" onclick="showModal('${f.url}', 'image')">`;
+                refreshOutputs();
+            } else if (data.error) alert('Error: ' + data.error);
+        }
+    } catch (e) {
+        alert('Connection error');
+    } finally {
+        btn.disabled = false;
+        ov.classList.add('hidden');
+        const hint = document.querySelector('[data-i18n="processing_hint"]');
+        if (hint) hint.setAttribute('data-i18n', 'processing_hint');
+    }
 }
 
 async function saveUIConfig() {
@@ -318,9 +398,17 @@ async function saveWorkflow() {
     const desc = document.getElementById('save-description').value;
     if (!name) return alert('Name is required');
     try {
-        const res = await fetch('/api/workflows/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, description: desc, presets: currentPresets }) });
+        const res = await fetch('/api/workflows/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, description: desc, presets: currentPresets, config: uiConfig })
+        });
         const data = await res.json();
-        if (data.success) { loadWorkflows(); alert(getTranslation('saved_msg')); }
+        if (data.success) {
+            currentWorkflowId = data.id;
+            loadWorkflows();
+            alert(getTranslation('saved_msg'));
+        }
     } catch (e) { console.error(e); }
 }
 
@@ -358,23 +446,201 @@ async function deleteWorkflow(id) {
     try { await fetch(`/api/workflows/delete/${id}`, { method: 'DELETE' }); loadWorkflows(); } catch (e) { console.error(e); }
 }
 
+let lastOutputPath = null;
+
 async function refreshOutputs() {
     try {
-        const res = await fetch('/api/outputs');
+        const res = await fetch(`/api/outputs?path=${encodeURIComponent(currentOutputPath)}`);
         const data = await res.json();
         const gallery = document.getElementById('outputs-gallery');
         gallery.innerHTML = '';
-        if (data.files.length === 0) { gallery.innerHTML = '<div class="col-span-full text-center py-12 text-slate-600 italic" data-i18n="no_outputs">No items found</div>'; translatePage(localStorage.getItem('preferredLanguage') || 'en'); return; }
+
+        if (lastOutputPath !== currentOutputPath) {
+            selectedItems.clear();
+            lastOutputPath = currentOutputPath;
+        }
+
+        updateBatchBtn();
+        renderGalleryNav();
+
+        if (data.files.length === 0) {
+            gallery.innerHTML = '<div class="col-span-full text-center py-12 text-slate-600 italic" data-i18n="no_outputs">No items found</div>';
+            translatePage(localStorage.getItem('preferredLanguage') || 'en');
+            return;
+        }
+
         data.files.forEach(f => {
-            const card = document.createElement('div'); card.className = 'slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square';
-            card.innerHTML = `${f.type === 'video' ? `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>` : `<img src="${f.url}" class="w-full h-full object-cover">`}<button onclick="event.stopPropagation(); deleteOutput('${f.name}')" class="absolute top-2 right-2 p-1.5 bg-red-600 rounded-full text-white opacity-0 group-hover:opacity-100 transition-all shadow-lg"><i data-lucide="trash-2" class="w-3 h-3"></i></button>`;
-            card.onclick = () => showModal(f.url, f.type); gallery.appendChild(card);
+            const isSelected = selectedItems.has(f.name);
+            const card = document.createElement('div');
+            card.className = `slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square transition-all ${f.isFolder ? 'bg-slate-800/50' : ''} ${isSelected ? 'ring-2 ring-blue-500' : ''}`;
+
+            let content = '';
+            if (f.isFolder) {
+                content = `<div class="w-full h-full flex flex-col items-center justify-center gap-2 p-4">
+                    <i data-lucide="folder" class="w-12 h-12 text-blue-500"></i>
+                    <span class="text-[10px] font-medium text-slate-300 truncate w-full text-center">${f.name}</span>
+                </div>`;
+            } else if (f.type === 'video') {
+                content = `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>`;
+            } else {
+                content = `<img src="${f.url}" class="w-full h-full object-cover">`;
+            }
+
+            card.innerHTML = `
+                ${content}
+                <div id="check-container-${f.name.replace(/[^a-z0-9]/gi, '_')}" class="absolute top-2 left-2 transition-all z-20 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}">
+                    <input type="checkbox" class="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 item-select" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation()" onchange="toggleItemSelection('${f.name}', this.checked)">
+                </div>
+                <div class="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
+                    <button onclick="event.stopPropagation(); deleteOutput('${f.name}')" class="p-1.5 bg-red-600 rounded-lg text-white shadow-lg hover:bg-red-700"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                    <button onclick="event.stopPropagation(); renameOutput('${f.name}')" class="p-1.5 bg-slate-700 rounded-lg text-white shadow-lg hover:bg-slate-600"><i data-lucide="edit-3" class="w-3 h-3"></i></button>
+                    <button onclick="event.stopPropagation(); moveOutput('${f.name}')" class="p-1.5 bg-slate-700 rounded-lg text-white shadow-lg hover:bg-slate-600"><i data-lucide="external-link" class="w-3 h-3"></i></button>
+                </div>
+            `;
+
+            card.onclick = () => {
+                if (f.isFolder) {
+                    currentOutputPath = currentOutputPath ? `${currentOutputPath}/${f.name}` : f.name;
+                    refreshOutputs();
+                } else {
+                    showModal(f.url, f.type);
+                }
+            };
+            gallery.appendChild(card);
         });
         initIcons();
+        translatePage(localStorage.getItem('preferredLanguage') || 'en');
     } catch (e) { console.error(e); }
 }
 
-async function deleteOutput(fn) { if (!confirm('Delete file?')) return; try { await fetch(`/api/outputs/${fn}`, { method: 'DELETE' }); refreshOutputs(); } catch (e) { console.error(e); } }
+function renderGalleryNav() {
+    const nav = document.getElementById('gallery-nav');
+    if (!nav) return;
+    nav.innerHTML = '';
+
+    const parts = currentOutputPath ? currentOutputPath.split('/') : [];
+
+    const rootBtn = document.createElement('button');
+    rootBtn.className = 'hover:text-white transition-colors flex items-center gap-1';
+    rootBtn.innerHTML = `<i data-lucide="home" class="w-3 h-3"></i> <span data-i18n="root">Root</span>`;
+    rootBtn.onclick = () => { currentOutputPath = ''; refreshOutputs(); };
+    nav.appendChild(rootBtn);
+
+    let pathAcc = '';
+    parts.forEach((p, idx) => {
+        pathAcc = pathAcc ? `${pathAcc}/${p}` : p;
+        const currentPath = pathAcc;
+
+        const sep = document.createElement('span');
+        sep.innerHTML = '<i data-lucide="chevron-right" class="w-3 h-3"></i>';
+        nav.appendChild(sep);
+
+        const btn = document.createElement('button');
+        btn.className = 'hover:text-white transition-colors';
+        btn.textContent = p;
+        btn.onclick = () => { currentOutputPath = currentPath; refreshOutputs(); };
+        nav.appendChild(btn);
+    });
+    initIcons();
+    translatePage(localStorage.getItem('preferredLanguage') || 'en');
+}
+
+function toggleItemSelection(name, selected) {
+    if (selected) selectedItems.add(name);
+    else selectedItems.delete(name);
+
+    // Update visibility immediately
+    const container = document.getElementById(`check-container-${name.replace(/[^a-z0-9]/gi, '_')}`);
+    if (container) {
+        if (selected) container.classList.replace('opacity-0', 'opacity-100');
+        else container.classList.replace('opacity-100', 'opacity-0');
+    }
+
+    updateBatchBtn();
+}
+
+function updateBatchBtn() {
+    const dBtn = document.getElementById('delete-batch-btn');
+    const mBtn = document.getElementById('move-batch-btn');
+    const hasSelection = selectedItems.size > 0;
+    if (dBtn) dBtn.classList.toggle('hidden', !hasSelection);
+    if (mBtn) mBtn.classList.toggle('hidden', !hasSelection);
+}
+
+async function deleteOutput(name) {
+    if (!confirm(getTranslation('confirm_delete_items'))) return;
+    try {
+        const fullFn = currentOutputPath ? `${currentOutputPath}/${name}` : name;
+        await fetch(`/api/outputs?filename=${encodeURIComponent(fullFn)}`, { method: 'DELETE' });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function moveOutput(name) {
+    const targetPath = prompt(getTranslation('move_to'), currentOutputPath);
+    if (targetPath === null) return;
+    try {
+        await fetch('/api/outputs/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourcePath: currentOutputPath, items: [name], targetPath })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function moveBatch() {
+    if (selectedItems.size === 0) return;
+    const targetPath = prompt(getTranslation('move_to'), currentOutputPath);
+    if (targetPath === null) return;
+    try {
+        await fetch('/api/outputs/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourcePath: currentOutputPath, items: Array.from(selectedItems), targetPath })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function renameOutput(oldName) {
+    const newName = prompt(getTranslation('new_name'), oldName);
+    if (!newName || newName === oldName) return;
+    try {
+        await fetch('/api/outputs/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentOutputPath, oldName, newName })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function createFolder() {
+    const name = prompt(getTranslation('folder_name'));
+    if (!name) return;
+    try {
+        await fetch('/api/outputs/mkdir', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentOutputPath, name })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function deleteBatch() {
+    if (selectedItems.size === 0) return;
+    if (!confirm(getTranslation('confirm_delete_items'))) return;
+    try {
+        await fetch('/api/outputs/delete-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentOutputPath, items: Array.from(selectedItems) })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
 
 function showModal(url, type) {
     const m = document.getElementById('media-modal'); const c = document.getElementById('modal-content');
@@ -405,6 +671,9 @@ function initAdmin() {
     if (document.getElementById('save-ui-config')) document.getElementById('save-ui-config').onclick = saveUIConfig;
     if (document.getElementById('generate-btn')) document.getElementById('generate-btn').onclick = runWorkflow;
     if (document.getElementById('refresh-outputs-btn')) document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
+    if (document.getElementById('mkdir-btn')) document.getElementById('mkdir-btn').onclick = createFolder;
+    if (document.getElementById('move-batch-btn')) document.getElementById('move-batch-btn').onclick = moveBatch;
+    if (document.getElementById('delete-batch-btn')) document.getElementById('delete-batch-btn').onclick = deleteBatch;
     if (document.getElementById('close-modal')) document.getElementById('close-modal').onclick = () => document.getElementById('media-modal').classList.add('hidden');
 
     const addUrlBtn = document.getElementById('add-url-btn');

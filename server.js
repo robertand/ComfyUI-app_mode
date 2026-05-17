@@ -6,6 +6,10 @@ const fs = require('fs');
 const WebSocket = require('ws');
 const FormData = require('form-data');
 const net = require('net');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegStatic = require('ffmpeg-static');
+
+ffmpeg.setFfmpegPath(ffmpegStatic);
 
 // ============ CONFIGURATION ============
 const CONFIG_FILE = path.join('workflows', 'config.json');
@@ -57,9 +61,9 @@ async function findFreePort(startPort) {
     });
 }
 
-const upload = multer({ dest: 'uploads/', limits: { fileSize: 1024 * 1024 * 1024 } });
+const upload = multer({ dest: 'uploads/', limits: { fileSize: 10 * 1024 * 1024 * 1024 } }); // 10GB Limit
 
-['uploads', 'output', 'workflows', 'workflows/saved'].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
+['uploads', 'output', 'workflows', 'workflows/saved', 'temp_segments'].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
 let currentWorkflowData = null;
 let currentWorkflowId = null;
@@ -224,7 +228,7 @@ const publicApp = express();
 const apps = [adminApp, publicApp];
 
 apps.forEach(app => {
-    app.use(express.json({ limit: '100mb' }));
+    app.use(express.json({ limit: '500mb' }));
     app.use((req, res, next) => {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.setHeader('Pragma', 'no-cache');
@@ -324,8 +328,11 @@ adminApp.post('/api/workflows/load/:id', (req, res) => {
 adminApp.post('/api/workflows/save', (req, res) => {
     if (!currentWorkflowData) return res.status(400).json({ error: 'No workflow loaded' });
     const id = generateId(), name = req.body.name, fileName = `${name.replace(/[^a-z0-9]/gi, '_')}_${id}.json`, filePath = path.join('workflows', 'saved', fileName);
-    fs.writeFileSync(filePath, JSON.stringify({ metadata: { id, name, description: req.body.description || '', createdAt: new Date().toISOString(), presets: req.body.presets || [] }, workflow: currentWorkflowData.raw, analysis: currentWorkflowData.analysis, uiConfig }, null, 2));
-    currentWorkflowId = id; res.json({ success: true, id, name });
+    const savedUiConfig = req.body.config || uiConfig;
+    fs.writeFileSync(filePath, JSON.stringify({ metadata: { id, name, description: req.body.description || '', createdAt: new Date().toISOString(), presets: req.body.presets || [] }, workflow: currentWorkflowData.raw, analysis: currentWorkflowData.analysis, uiConfig: savedUiConfig }, null, 2));
+    currentWorkflowId = id;
+    uiConfig = savedUiConfig; // Ensure server-side state is updated
+    res.json({ success: true, id, name });
 });
 
 adminApp.delete('/api/workflows/delete/:id', (req, res) => {
@@ -481,10 +488,268 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
 adminApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res));
 publicApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res, true));
 
+async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNodes, targetInstance) {
+    // 1. Upload segment to instance
+    const uploadRes = await uploadFileToInstance(targetInstance, segmentPath, path.basename(segmentPath), 'video/mp4');
+    const filename = uploadRes.name;
+
+    // 2. Prepare workflow
+    const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
+    const d = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8'));
+    let workflow = JSON.parse(JSON.stringify(d.analysis.workflowApi || d.workflow));
+    const analysis = d.analysis;
+
+    workflow = applyBypass(workflow, bypassedNodes);
+
+    // Map segment filename to all video inputs
+    analysis.inputs?.forEach(g => g.inputs?.forEach(i => {
+        if (i.valueType === 'video' && workflow[i.nodeId]) {
+            workflow[i.nodeId].inputs[i.inputName] = filename;
+        }
+    }));
+
+    const finalParams = { ...extractOriginalWorkflowValues(workflow), ...parameters };
+    const auto = parameters?.['_autoRandomSeed'] || {};
+
+    for (const [pk, v] of Object.entries(finalParams)) {
+        if (shouldGenerateRandomSeed(pk, v, auto)) finalParams[pk] = generateRandomSeed();
+        analysis.advancedInputs.forEach(g => g.inputs?.forEach(p => {
+            if (p.key === pk && workflow[p.nodeId]) {
+                let fv = finalParams[pk];
+                if (p.valueType === 'number') fv = parseFloat(fv);
+                else if (p.valueType === 'boolean') fv = (fv === 'true' || fv === true);
+                workflow[p.nodeId].inputs[p.inputName] = fv;
+            }
+        }));
+    }
+
+    const { workflow: vw } = validateWorkflowParameters(workflow);
+    const qRes = await fetch(`${targetInstance}/prompt`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: vw }) });
+    const qData = await qRes.json();
+    if (qData.error) throw new Error(qData.error.message || JSON.stringify(qData.error));
+
+    let result = null;
+    while (!result) {
+        await new Promise(r => setTimeout(r, 2000));
+        const h = await (await fetch(`${targetInstance}/history`)).json();
+        if (h[qData.prompt_id]) result = h[qData.prompt_id];
+    }
+
+    // Download result
+    let outputFn = null;
+    for (const [nodeId, output] of Object.entries(result.outputs || {})) {
+        const item = (output.videos || output.images || [])[0];
+        if (item) {
+            const fileRes = await fetch(`${targetInstance}/view?filename=${encodeURIComponent(item.filename)}&type=${item.type}&subfolder=${item.subfolder || ''}`);
+            outputFn = path.join('temp_segments', `processed_${generateId()}.mp4`);
+            fs.writeFileSync(outputFn, await fileRes.buffer());
+            break;
+        }
+    }
+    return outputFn;
+}
+
+adminApp.post('/api/video/process-segmented', async (req, res) => {
+    const { mediaFiles, parameters, bypassedNodes, workflowId } = req.body;
+    const currentId = currentWorkflowId || workflowId;
+    if (!currentId) return res.status(400).json({ error: 'No workflow' });
+
+    res.setHeader('Content-Type', 'application/json');
+    const sendUpdate = (data) => res.write(JSON.stringify(data) + '\n');
+
+    try {
+        const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
+        let inputVideo = path.join('output', mediaFiles[videoKey]);
+        if (!fs.existsSync(inputVideo)) {
+            // Check in mediaStore if not in output (e.g. freshly uploaded)
+            const fn = mediaFiles[videoKey];
+            if (mediaStore[fn]) inputVideo = mediaStore[fn].path;
+            else throw new Error(`Video file not found: ${fn}`);
+        }
+
+        const runId = generateId();
+        const segmentDir = path.join('temp_segments', runId);
+        fs.mkdirSync(segmentDir, { recursive: true });
+
+        sendUpdate({ status: 'Analyzing scenes...' });
+
+        // 1. Detect scene changes
+        const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
+        await new Promise((resolve, reject) => {
+            ffmpeg(inputVideo)
+                .outputOptions([
+                    '-vf', 'select=\'gt(scene,0.2)\',showinfo',
+                    '-f', 'null'
+                ])
+                .output('-')
+                .on('stderr', (line) => {
+                    const match = line.match(/pts_time:([\d.]+)/);
+                    if (match) {
+                        fs.appendFileSync(sceneChangeFile, match[1] + ',');
+                    }
+                })
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
+        });
+
+        let segmentTimes = '';
+        if (fs.existsSync(sceneChangeFile)) {
+            segmentTimes = fs.readFileSync(sceneChangeFile, 'utf8').replace(/,$/, '');
+        }
+
+        // 2. Segment based on detected times or fallback
+        await new Promise((resolve, reject) => {
+            const cmd = ffmpeg(inputVideo).outputOptions(['-reset_timestamps 1', '-map 0', '-c copy']);
+            if (segmentTimes) {
+                cmd.outputOptions(['-f segment', '-segment_times', segmentTimes]);
+            } else {
+                cmd.outputOptions(['-f segment', '-segment_time 10']);
+            }
+            cmd.output(path.join(segmentDir, 'seg_%03d.mp4'))
+                .on('end', resolve)
+                .on('error', reject)
+                .run();
+        });
+
+        const segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
+        const processedSegments = [];
+        const target = await getFreestInstance();
+
+        for (let i = 0; i < segments.length; i++) {
+            sendUpdate({ status: `Processing segment ${i + 1}/${segments.length}...` });
+            const processed = await runSingleSegment(segments[i], currentId, parameters, bypassedNodes, target);
+            processedSegments.push(processed);
+        }
+
+        sendUpdate({ status: 'Reassembling final video...' });
+        const listFile = path.join(segmentDir, 'list.txt');
+        fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p)}'`).join('\n'));
+
+        const finalName = `upscaled_${generateId()}.mp4`;
+        const finalPath = path.join('output', finalName);
+
+        await new Promise((resolve, reject) => {
+            ffmpeg()
+                .input(listFile)
+                .inputOptions(['-f concat', '-safe 0'])
+                .outputOptions('-c copy')
+                .save(finalPath)
+                .on('end', resolve)
+                .on('error', reject);
+        });
+
+        sendUpdate({ success: true, files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }] });
+        res.end();
+
+        // Cleanup
+        setTimeout(() => fs.rmSync(segmentDir, { recursive: true, force: true }), 60000);
+    } catch (e) {
+        sendUpdate({ error: e.message });
+        res.end();
+    }
+});
+
 adminApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
 adminApp.post('/api/settings', (req, res) => { COMFYUI_URLS = req.body.comfyuiUrls; CONFIG.COMFYUI_URLS = COMFYUI_URLS; fs.writeFileSync(CONFIG_FILE, JSON.stringify(CONFIG, null, 2)); res.json({ success: true }); });
-adminApp.delete('/api/outputs/:filename', (req, res) => { const p = path.join('output', req.params.filename); if (fs.existsSync(p)) fs.unlinkSync(p); res.json({ success: true }); });
-adminApp.get('/api/outputs', (req, res) => res.json({ files: fs.readdirSync('output').filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase())).map(f => ({ name: f, url: `/output/${f}`, type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image', mtime: fs.statSync(path.join('output', f)).mtime })).sort((a,b) => b.mtime - a.mtime) }));
+function safeJoin(base, ...parts) {
+    const resolvedBase = path.resolve(base);
+    const joined = path.resolve(path.join(resolvedBase, ...parts));
+    if (!joined.startsWith(resolvedBase)) throw new Error('Path traversal attempt');
+    return joined;
+}
+
+adminApp.delete('/api/outputs', (req, res) => {
+    try {
+        const filename = req.query.filename;
+        if (!filename) throw new Error('Filename required');
+        const p = safeJoin('output', filename);
+        if (fs.existsSync(p)) {
+            if (fs.statSync(p).isDirectory()) fs.rmSync(p, { recursive: true });
+            else fs.unlinkSync(p);
+        }
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+adminApp.get('/api/outputs', (req, res) => {
+    try {
+        const subPath = req.query.path || '';
+        const fullPath = safeJoin('output', subPath);
+        if (!fs.existsSync(fullPath)) return res.json({ files: [] });
+
+        const files = fs.readdirSync(fullPath).map(f => {
+            const p = path.join(fullPath, f);
+            const stats = fs.statSync(p);
+            const isFolder = stats.isDirectory();
+            const ext = path.extname(f).toLowerCase();
+            return {
+                name: f,
+                url: `/output/${path.join(subPath, f).replace(/\\/g, '/')}`,
+                type: isFolder ? 'folder' : (['.mp4', '.webm'].includes(ext) ? 'video' : 'image'),
+                mtime: stats.mtime,
+                isFolder
+            };
+        }).filter(f => f.isFolder || ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f.name).toLowerCase()))
+          .sort((a, b) => {
+              if (a.isFolder && !b.isFolder) return -1;
+              if (!a.isFolder && b.isFolder) return 1;
+              return b.mtime - a.mtime;
+          });
+        res.json({ files });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+adminApp.post('/api/outputs/mkdir', (req, res) => {
+    try {
+        const { path: subPath, name } = req.body;
+        if (!name || name.includes('/') || name.includes('\\') || name === '..') throw new Error('Invalid folder name');
+        const p = safeJoin('output', subPath || '', name);
+        if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+adminApp.post('/api/outputs/rename', (req, res) => {
+    try {
+        const { path: subPath, oldName, newName } = req.body;
+        if (!newName || newName.includes('/') || newName.includes('\\') || newName === '..') throw new Error('Invalid name');
+        const oldP = safeJoin('output', subPath || '', oldName);
+        const newP = safeJoin('output', subPath || '', newName);
+        fs.renameSync(oldP, newP);
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+adminApp.post('/api/outputs/delete-batch', (req, res) => {
+    try {
+        const { path: subPath, items } = req.body;
+        items.forEach(name => {
+            const p = safeJoin('output', subPath || '', name);
+            if (fs.existsSync(p)) {
+                if (fs.statSync(p).isDirectory()) fs.rmSync(p, { recursive: true });
+                else fs.unlinkSync(p);
+            }
+        });
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+adminApp.post('/api/outputs/move', (req, res) => {
+    try {
+        const { sourcePath, items, targetPath } = req.body;
+        const targetDir = safeJoin('output', targetPath || '');
+        if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+
+        items.forEach(name => {
+            const oldP = safeJoin('output', sourcePath || '', name);
+            const newP = safeJoin('output', targetPath || '', name);
+            if (fs.existsSync(oldP)) fs.renameSync(oldP, newP);
+        });
+        res.json({ success: true });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
 adminApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
 
 publicApp.get('/api/workflows/list', (req, res) => {
@@ -502,7 +767,33 @@ publicApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res)
     res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
 });
 publicApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
-publicApp.get('/api/outputs', (req, res) => res.json({ files: fs.readdirSync('output').filter(f => ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f).toLowerCase())).map(f => ({ name: f, url: `/output/${f}`, type: ['.mp4', '.webm'].includes(path.extname(f).toLowerCase()) ? 'video' : 'image', mtime: fs.statSync(path.join('output', f)).mtime })).sort((a,b) => b.mtime - a.mtime) }));
+publicApp.get('/api/outputs', (req, res) => {
+    try {
+        const subPath = req.query.path || '';
+        const fullPath = safeJoin('output', subPath);
+        if (!fs.existsSync(fullPath)) return res.json({ files: [] });
+
+        const files = fs.readdirSync(fullPath).map(f => {
+            const p = path.join(fullPath, f);
+            const stats = fs.statSync(p);
+            const isFolder = stats.isDirectory();
+            const ext = path.extname(f).toLowerCase();
+            return {
+                name: f,
+                url: `/output/${path.join(subPath, f).replace(/\\/g, '/')}`,
+                type: isFolder ? 'folder' : (['.mp4', '.webm'].includes(ext) ? 'video' : 'image'),
+                mtime: stats.mtime,
+                isFolder
+            };
+        }).filter(f => f.isFolder || ['.png', '.jpg', '.jpeg', '.mp4', '.webm', '.gif'].includes(path.extname(f.name).toLowerCase()))
+          .sort((a, b) => {
+              if (a.isFolder && !b.isFolder) return -1;
+              if (!a.isFolder && b.isFolder) return 1;
+              return b.mtime - a.mtime;
+          });
+        res.json({ files });
+    } catch (e) { res.status(400).json({ error: e.message }); }
+});
 publicApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
 
 // ============ START ============
