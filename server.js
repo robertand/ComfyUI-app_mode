@@ -726,18 +726,22 @@ const processSegmentedHandler = async (req, res) => {
     if (!currentId) return res.status(400).json({ error: 'No workflow' });
 
     res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
     const sendUpdate = (data) => res.write(JSON.stringify(data) + '\n');
 
     const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
     const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 10;
 
     try {
-        let activeRunId = runId;
+        let activeRunId = runId || (segmentedInputs ? Object.values(segmentedInputs)[0] : null);
         let segmentDir = activeRunId ? path.join('temp_segments', activeRunId) : null;
         let segments = [];
 
         if (!activeRunId) {
             const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
+            if (!videoKey) throw new Error('No video input found for segmented processing');
+
             let inputVideo = path.join('output', mediaFiles[videoKey]);
             if (!fs.existsSync(inputVideo)) {
                 const fn = mediaFiles[videoKey];
@@ -1002,6 +1006,16 @@ publicApp.get('/api/outputs', (req, res) => {
     } catch (e) { res.status(400).json({ error: e.message }); }
 });
 publicApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
+
+// Error handlers
+adminApp.use((err, req, res, next) => {
+    console.error('[Admin] Uncaught error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Internal Server Error' });
+});
+publicApp.use((err, req, res, next) => {
+    console.error('[Public] Uncaught error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Internal Server Error' });
+});
 
 // ============ START ============
 

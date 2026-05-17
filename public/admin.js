@@ -391,6 +391,7 @@ async function handleSegmentedUpload(file, key) {
         });
         const segData = await segRes.json();
         if (segData.success) {
+            window.mediaFiles[key] = upData.filename;
             segmentedRuns[key] = { runId: segData.runId, segments: segData.segments };
             stext.textContent = 'READY';
             stext.className = 'text-[10px] font-bold text-emerald-400 mb-1';
@@ -497,6 +498,7 @@ async function preSegmentVideo(filename, key, ev) {
         const data = await res.json();
         if (data.success) {
             lastPreSegmentRunId = data.runId;
+            segmentedRuns[key] = { runId: data.runId, segments: data.segments };
             alert(`Video split into ${data.segments.length} segments.`);
             if (statusMini) statusMini.textContent = `Ready: ${data.segments.length} segments`;
             btn.innerHTML = `<i data-lucide="check" class="w-3 h-3"></i><span>${data.segments.length} SEGMENTS</span>`;
@@ -540,8 +542,13 @@ async function runWorkflow() {
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes, advancedConfig: uiConfig.advancedConfig, runId: lastPreSegmentRunId, segmentedInputs })
+                body: JSON.stringify({ workflowId: currentWorkflowId, mediaFiles, parameters, bypassedNodes, advancedConfig: uiConfig.advancedConfig, runId: lastPreSegmentRunId, segmentedInputs })
             });
+
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.error || 'Server error');
+            }
 
             const reader = res.body.getReader();
             const decoder = new TextDecoder();

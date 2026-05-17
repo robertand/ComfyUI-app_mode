@@ -521,6 +521,7 @@
                 });
                 const segData = await segRes.json();
                 if (segData.success) {
+                    window.mediaFiles[key] = upData.filename;
                     segmentedRuns[key] = { runId: segData.runId, segments: segData.segments };
                     stext.textContent = 'READY';
                     stext.className = 'text-[10px] font-bold text-emerald-400 mb-1';
@@ -598,6 +599,10 @@
                 });
 
                 if (isSegmented) {
+                    if (!res.ok) {
+                        const errData = await res.json();
+                        throw new Error(errData.error || 'Server error');
+                    }
                     const reader = res.body.getReader();
                     const decoder = new TextDecoder();
                     while (true) {
