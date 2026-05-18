@@ -70,7 +70,10 @@ const translations = {
         fallback_duration: "Fallback Segment Duration (s)",
         max_segment_duration: "Max Segment Duration (s)",
         segment_overlap: "Segment Overlap (s)",
-        step: "Step"
+        step: "Step",
+        cancel_processing: "Cancel Processing",
+        processing_cancelled: "Processing cancelled.",
+        confirm_cancel: "Cancel current process?"
     },
     hr: {
         app_title: "ComfyUI Remote Generator",
@@ -341,7 +344,10 @@ const translations = {
         fallback_duration: "Durată Segment Fallback (s)",
         max_segment_duration: "Durată Maximă Segment (s)",
         segment_overlap: "Suprapunere Segmente (s)",
-        step: "Pas"
+        step: "Pas",
+        cancel_processing: "Anulează Procesarea",
+        processing_cancelled: "Procesarea a fost anulată.",
+        confirm_cancel: "Anulezi procesul curent?"
     }
 };
 

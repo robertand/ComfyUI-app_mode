@@ -889,6 +889,34 @@ function showModal(url, type) {
     m.classList.remove('hidden');
 }
 
+async function cancelProcessing() {
+    if (!confirm(getTranslation('confirm_cancel') || 'Cancel current process?')) return;
+
+    try {
+        // 1. Interrupt current ComfyUI job
+        await fetch('/api/workflow/interrupt', { method: 'POST' });
+
+        // 2. Mark segmented run as cancelled
+        const runId = lastPreSegmentRunId || (Object.values(segmentedRuns)[0]?.runId);
+        if (runId) {
+            await fetch('/api/video/cancel-segmented', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ runId })
+            });
+        }
+
+        alert(getTranslation('processing_cancelled') || 'Processing cancelled.');
+    } catch (e) {
+        console.error('Cancel error:', e);
+    } finally {
+        document.getElementById('loading-overlay').classList.add('hidden');
+        document.getElementById('generate-btn').disabled = false;
+        const statusMini = document.getElementById('segment-status-mini');
+        if (statusMini) statusMini.classList.add('hidden');
+    }
+}
+
 function toggleCollapse(id) {
     const el = document.getElementById(id); const ch = document.getElementById(id.replace('container', 'chevron'));
     if (el.style.maxHeight === '0px' || el.style.display === 'none') { el.style.display = 'block'; el.style.maxHeight = '2000px'; if (ch) ch.style.transform = 'rotate(0deg)'; }
@@ -912,6 +940,7 @@ function initAdmin() {
     if (document.getElementById('save-ui-config')) document.getElementById('save-ui-config').onclick = saveUIConfig;
     if (document.getElementById('generate-btn')) document.getElementById('generate-btn').onclick = runWorkflow;
     if (document.getElementById('refresh-outputs-btn')) document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
+    if (document.getElementById('cancel-processing-btn')) document.getElementById('cancel-processing-btn').onclick = cancelProcessing;
     if (document.getElementById('mkdir-btn')) document.getElementById('mkdir-btn').onclick = createFolder;
     if (document.getElementById('move-batch-btn')) document.getElementById('move-batch-btn').onclick = moveBatch;
     if (document.getElementById('delete-batch-btn')) document.getElementById('delete-batch-btn').onclick = deleteBatch;

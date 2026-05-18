@@ -72,6 +72,7 @@ let currentWorkflowId = null;
 let uiConfig = null;
 let originalWorkflowValues = {};
 const mediaStore = {};
+const cancelledRuns = new Set();
 
 async function getFreestInstance() {
     const instances = COMFYUI_URLS;
@@ -882,6 +883,10 @@ const processSegmentedHandler = async (req, res) => {
         console.log(`[Segmented] Starting processing of ${segments.length} segments on ${target}`);
 
         for (let i = 0; i < segments.length; i++) {
+            if (activeRunId && cancelledRuns.has(activeRunId)) {
+                cancelledRuns.delete(activeRunId);
+                throw new Error('Processing cancelled by user');
+            }
             const progressPercent = Math.round(((i + 1) / segments.length) * 100);
             sendUpdate({
                 status: `Processing segment ${i + 1}/${segments.length}...`,
@@ -1029,8 +1034,33 @@ const processSegmentedHandler = async (req, res) => {
 
 adminApp.post('/api/video/pre-segment', preSegmentHandler);
 adminApp.post('/api/video/process-segmented', processSegmentedHandler);
+adminApp.post('/api/video/cancel-segmented', (req, res) => {
+    const { runId } = req.body;
+    if (runId) cancelledRuns.add(runId);
+    res.json({ success: true });
+});
+adminApp.post('/api/workflow/interrupt', async (req, res) => {
+    try {
+        const target = await getFreestInstance();
+        await fetch(`${target}/interrupt`, { method: 'POST' });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 publicApp.post('/api/video/pre-segment', preSegmentHandler);
 publicApp.post('/api/video/process-segmented', processSegmentedHandler);
+publicApp.post('/api/video/cancel-segmented', (req, res) => {
+    const { runId } = req.body;
+    if (runId) cancelledRuns.add(runId);
+    res.json({ success: true });
+});
+publicApp.post('/api/workflow/interrupt', async (req, res) => {
+    try {
+        const target = await getFreestInstance();
+        await fetch(`${target}/interrupt`, { method: 'POST' });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 adminApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
 adminApp.post('/api/settings', (req, res) => { COMFYUI_URLS = req.body.comfyuiUrls; CONFIG.COMFYUI_URLS = COMFYUI_URLS; fs.writeFileSync(CONFIG_FILE, JSON.stringify(CONFIG, null, 2)); res.json({ success: true }); });

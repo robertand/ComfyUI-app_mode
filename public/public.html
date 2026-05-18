@@ -105,6 +105,11 @@
                         <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden border border-slate-700">
                             <div id="overlay-progress-bar" class="bg-blue-500 h-full transition-all duration-500" style="width: 0%"></div>
                         </div>
+
+                    <button id="cancel-processing-btn" class="mt-8 px-6 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold rounded-lg transition-all flex items-center justify-center gap-2 mx-auto">
+                        <i data-lucide="square" class="w-4 h-4"></i>
+                        <span data-i18n="cancel_processing">Cancel Processing</span>
+                    </button>
                     </div>
                 </div>
             </div>
@@ -752,12 +757,32 @@
         }
 
         function showModal(url, type) { const m = document.getElementById('media-modal'); const c = document.getElementById('modal-content'); c.innerHTML = type === 'video' ? `<video src="${url}" controls autoplay class="max-w-full max-h-full rounded-lg"></video>` : `<img src="${url}" class="max-w-full max-h-full object-contain rounded-lg">`; m.classList.remove('hidden'); }
+        async function cancelProcessing() {
+            if (!confirm(getTranslation('confirm_cancel') || 'Cancel current process?')) return;
+            try {
+                await fetch('/api/workflow/interrupt', { method: 'POST' });
+                const runId = lastPreSegmentRunId || (Object.values(segmentedRuns)[0]?.runId);
+                if (runId) {
+                    await fetch('/api/video/cancel-segmented', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ runId })
+                    });
+                }
+                alert(getTranslation('processing_cancelled') || 'Processing cancelled.');
+            } catch (e) { console.error('Cancel error:', e); }
+            finally {
+                document.getElementById('loading-overlay').classList.add('hidden');
+                document.getElementById('generate-btn').disabled = false;
+            }
+        }
         function toggleCollapse(id) { const el = document.getElementById(id); const ch = document.getElementById(id.replace('container', 'chevron')); if (el.style.maxHeight === '0px') { el.style.maxHeight = '2000px'; if (ch) ch.style.transform = 'rotate(0deg)'; } else { el.style.maxHeight = '0px'; if (ch) ch.style.transform = 'rotate(-90deg)'; } }
 
         document.addEventListener('DOMContentLoaded', () => {
             if (window.lucide) window.lucide.createIcons(); loadWorkflows(); refreshOutputs();
             document.getElementById('workflow-select').onchange = (e) => loadWorkflow(e.target.value);
             document.getElementById('generate-btn').onclick = runWorkflow;
+            document.getElementById('cancel-processing-btn').onclick = cancelProcessing;
             document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
             document.getElementById('close-modal').onclick = () => document.getElementById('media-modal').classList.add('hidden');
             const ls = document.getElementById('language-select'); ls.value = localStorage.getItem('preferredLanguage') || 'en'; ls.onchange = (e) => translatePage(e.target.value);
