@@ -640,24 +640,34 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
     const qData = await qRes.json();
     if (qData.error) throw new Error(qData.error.message || JSON.stringify(qData.error));
 
-    let result = null;
-    while (!result) {
+    let result = null, attempts = 0;
+    while (!result && attempts < 300) { // 10 min timeout
         await new Promise(r => setTimeout(r, 2000));
         const h = await (await fetch(`${targetInstance}/history`)).json();
         if (h[qData.prompt_id]) result = h[qData.prompt_id];
+        attempts++;
     }
+
+    if (!result) throw new Error(`Segment timeout after 10 minutes (ID: ${qData.prompt_id})`);
 
     // Download result
     let outputFn = null;
     for (const [nodeId, output] of Object.entries(result.outputs || {})) {
-        const item = (output.videos || output.images || [])[0];
+        const item = (output.videos || output.images || output.gifs || [])[0];
         if (item) {
             const fileRes = await fetch(`${targetInstance}/view?filename=${encodeURIComponent(item.filename)}&type=${item.type}&subfolder=${item.subfolder || ''}`);
+            if (!fileRes.ok) throw new Error(`Failed to download result for segment: ${fileRes.status}`);
             outputFn = path.join('temp_segments', `processed_${generateId()}.mp4`);
             fs.writeFileSync(outputFn, await fileRes.buffer());
             break;
         }
     }
+
+    if (!outputFn) {
+        console.error(`[Segmented] Node outputs missing for ${qData.prompt_id}:`, JSON.stringify(result.outputs));
+        throw new Error(`Segment produced no output files (Prompt ID: ${qData.prompt_id})`);
+    }
+
     return outputFn;
 }
 
@@ -890,12 +900,24 @@ const processSegmentedHandler = async (req, res) => {
             }
 
             console.log(`[Segmented] Processing segment ${i + 1}/${segments.length}: ${segments[i]}`);
-            const processed = await runSingleSegment(segments[i], currentId, parameters, bypassedNodes, target, extraSegments);
-            processedSegments.push(processed);
-            console.log(`[Segmented] Finished segment ${i + 1}: ${processed}`);
+            try {
+                const processed = await runSingleSegment(segments[i], currentId, parameters, bypassedNodes, target, extraSegments);
+                if (processed) {
+                    processedSegments.push(processed);
+                    console.log(`[Segmented] Finished segment ${i + 1}: ${processed}`);
+                }
+            } catch (segErr) {
+                console.error(`[Segmented] Segment ${i + 1} failed:`, segErr.message);
+                sendUpdate({ status: `Segment ${i + 1} failed, skipping...`, error: segErr.message });
+            }
         }
 
         sendUpdate({ status: 'Reassembling with cross-fades...' });
+
+        if (processedSegments.length === 0) {
+            throw new Error('All segments failed to process. Cannot reassemble.');
+        }
+
         const finalName = `upscaled_${generateId()}.mp4`;
         const finalPath = path.join('output', finalName);
         console.log(`[Segmented] Reassembling ${processedSegments.length} segments into ${finalPath}`);
