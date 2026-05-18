@@ -65,7 +65,7 @@ async function findFreePort(startPort) {
 
 const upload = multer({ dest: 'uploads/', limits: { fileSize: 10 * 1024 * 1024 * 1024 } }); // 10GB Limit
 
-['uploads', 'output', 'workflows', 'workflows/saved', 'temp_segments', 'uploads/chunks'].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
+['uploads', 'output', 'workflows', 'workflows/saved', 'temp_segments', 'uploads/chunks', 'uploads/media'].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
 let currentWorkflowData = null;
 let currentWorkflowId = null;
@@ -313,9 +313,9 @@ apps.forEach(app => {
 
 // ============ ROUTES ============
 
-adminApp.use(express.static('public')); adminApp.use('/output', express.static('output'));
+adminApp.use(express.static('public')); adminApp.use('/output', express.static('output')); adminApp.use('/uploads', express.static('uploads'));
 publicApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'public.html')));
-publicApp.use(express.static('public')); publicApp.use('/output', express.static('output'));
+publicApp.use(express.static('public')); publicApp.use('/output', express.static('output')); publicApp.use('/uploads', express.static('uploads'));
 
 function reconcileUIConfig(analysis, existingConfig) {
     const config = {
@@ -404,7 +404,7 @@ const handleChunkUpload = async (req, res) => {
         const receivedChunks = fs.readdirSync(chunkDir).length;
         if (receivedChunks === parseInt(totalChunks)) {
             const finalFn = `${generateId()}${path.extname(filename)}`;
-            const finalPath = path.join('output', finalFn);
+            const finalPath = path.join('uploads', 'media', finalFn);
             const writeStream = fs.createWriteStream(finalPath);
 
             const sortedChunks = fs.readdirSync(chunkDir).sort((a, b) => {
@@ -432,7 +432,7 @@ const handleChunkUpload = async (req, res) => {
             // Cleanup
             fs.rmSync(chunkDir, { recursive: true, force: true });
 
-            return res.json({ success: true, filename: finalFn, type: finalFn.endsWith('.mp4') ? 'video' : 'image', completed: true });
+            return res.json({ success: true, filename: finalFn, type: finalFn.endsWith('.mp4') ? 'video' : 'image', completed: true, url: `/uploads/media/${finalFn}` });
         }
 
         res.json({ success: true, chunkIndex, completed: false });
@@ -448,16 +448,15 @@ publicApp.post('/api/upload/chunk', upload.single('chunk'), handleChunkUpload);
 adminApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file' });
-        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn);
+        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('uploads', 'media', fn);
         try {
             fs.renameSync(req.file.path, p);
         } catch (e) {
-            // Fallback for cross-device move
             fs.copyFileSync(req.file.path, p);
             fs.unlinkSync(req.file.path);
         }
         mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
-        res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+        res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image', url: `/uploads/media/${fn}` });
     } catch (e) {
         console.error('Upload API error:', e);
         res.status(500).json({ error: e.message });
@@ -665,7 +664,10 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
 const preSegmentHandler = async (req, res) => {
     try {
         const { filename, advancedConfig } = req.body;
-        const inputVideo = path.join('output', filename);
+        let inputVideo = path.join('uploads', 'media', filename);
+        if (!fs.existsSync(inputVideo)) {
+            inputVideo = path.join('output', filename);
+        }
         if (!fs.existsSync(inputVideo)) throw new Error('File not found');
 
         const runId = generateId();
@@ -719,11 +721,14 @@ const preSegmentHandler = async (req, res) => {
         const overlappingSegments = [];
         if (videoDuration > maxSegmentDuration) {
             let start = 0;
+            const safeOverlap = Math.max(0, Math.min(segmentOverlap, maxSegmentDuration - 0.5));
             while (start < videoDuration) {
                 let end = Math.min(start + maxSegmentDuration, videoDuration);
                 overlappingSegments.push({ start, duration: end - start });
                 if (end >= videoDuration) break;
-                start = end - segmentOverlap;
+                let nextStart = end - safeOverlap;
+                if (nextStart <= start) nextStart = start + 1; // absolute progress safety
+                start = nextStart;
             }
         } else {
             overlappingSegments.push({ start: 0, duration: videoDuration });
@@ -788,7 +793,10 @@ const processSegmentedHandler = async (req, res) => {
             const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
             if (!videoKey) throw new Error('No video input found for segmented processing');
 
-            let inputVideo = path.join('output', mediaFiles[videoKey]);
+            let inputVideo = path.join('uploads', 'media', mediaFiles[videoKey]);
+            if (!fs.existsSync(inputVideo)) {
+                inputVideo = path.join('output', mediaFiles[videoKey]);
+            }
             if (!fs.existsSync(inputVideo)) {
                 const fn = mediaFiles[videoKey];
                 if (mediaStore[fn]) inputVideo = mediaStore[fn].path;
@@ -823,11 +831,14 @@ const processSegmentedHandler = async (req, res) => {
 
             if (videoDuration > maxSegmentDuration) {
                 let start = 0;
+                const safeOverlap = Math.max(0, Math.min(segmentOverlap, maxSegmentDuration - 0.5));
                 while (start < videoDuration) {
                     let end = Math.min(start + maxSegmentDuration, videoDuration);
                     overlappingSegments.push({ start, duration: end - start });
                     if (end >= videoDuration) break;
-                    start = end - segmentOverlap;
+                    let nextStart = end - safeOverlap;
+                    if (nextStart <= start) nextStart = start + 1; // absolute progress safety
+                    start = nextStart;
                 }
             } else {
                 overlappingSegments.push({ start: 0, duration: videoDuration });
@@ -858,6 +869,7 @@ const processSegmentedHandler = async (req, res) => {
         segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
         const processedSegments = [];
         const target = await getFreestInstance();
+        console.log(`[Segmented] Starting processing of ${segments.length} segments on ${target}`);
 
         for (let i = 0; i < segments.length; i++) {
             const progressPercent = Math.round(((i + 1) / segments.length) * 100);
@@ -877,44 +889,56 @@ const processSegmentedHandler = async (req, res) => {
                 });
             }
 
+            console.log(`[Segmented] Processing segment ${i + 1}/${segments.length}: ${segments[i]}`);
             const processed = await runSingleSegment(segments[i], currentId, parameters, bypassedNodes, target, extraSegments);
             processedSegments.push(processed);
+            console.log(`[Segmented] Finished segment ${i + 1}: ${processed}`);
         }
 
         sendUpdate({ status: 'Reassembling with cross-fades...' });
         const finalName = `upscaled_${generateId()}.mp4`;
         const finalPath = path.join('output', finalName);
+        console.log(`[Segmented] Reassembling ${processedSegments.length} segments into ${finalPath}`);
 
         if (processedSegments.length > 1 && segmentOverlap > 0) {
             const cmd = ffmpeg();
             processedSegments.forEach(p => cmd.input(p));
 
             let filterGraph = '';
-            let lastAudio = '0:a';
             let offset = 0;
 
-            // Get actual durations of processed segments to be precise
+            // Get actual durations and resolutions of processed segments to be precise
             const durations = [];
+            const resolutions = [];
             for (const p of processedSegments) {
-                durations.push(await new Promise((res) => {
-                    ffmpeg.ffprobe(p, (err, m) => res(m?.format?.duration || maxSegmentDuration));
-                }));
+                const metadata = await new Promise((res) => {
+                    ffmpeg.ffprobe(p, (err, m) => res(m));
+                });
+                durations.push(metadata?.format?.duration || maxSegmentDuration);
+                const stream = metadata?.streams?.find(s => s.codec_type === 'video');
+                resolutions.push({ width: stream?.width || 0, height: stream?.height || 0 });
             }
 
-            // [0:v][1:v]xfade=transition=fade:duration=2:offset=3[v1];
-            // [v1][2:v]xfade=transition=fade:duration=2:offset=6[v2]
+            // Target resolution is the maximum found among segments
+            const targetWidth = Math.max(...resolutions.map(r => r.width));
+            const targetHeight = Math.max(...resolutions.map(r => r.height));
+
+            // Pre-process all inputs to the same resolution and pixel format
+            processedSegments.forEach((p, i) => {
+                filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p[pv${i}]; `;
+            });
+
+            // [pv0][pv1]xfade=transition=fade:duration=2:offset=3[v1];
+            // [v1][pv2]xfade=transition=fade:duration=2:offset=6[v2]
             for (let i = 0; i < processedSegments.length - 1; i++) {
                 const fadeDuration = segmentOverlap;
-                // Offset is: (Duration of current segment) - overlap + (cumulative previous offsets)
-                // But xfade works on the ALREADY merged stream for the next offset.
-                // The offset for segment i+1 is the timestamp in the output where it starts merging.
                 if (i === 0) {
                     offset = durations[0] - fadeDuration;
-                    filterGraph += `[0:v][1:v]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
-                    filterGraph += `[0:a][1:a]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
+                    filterGraph += `[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]; `;
+                    filterGraph += `[0:a][1:a]acrossfade=d=${fadeDuration}[a1]; `;
                 } else {
                     offset = offset + durations[i] - fadeDuration;
-                    filterGraph += `[v${i}][${i + 1}:v]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
+                    filterGraph += `[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
                     filterGraph += `[a${i}][${i + 1}:a]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
                 }
             }
@@ -926,7 +950,7 @@ const processSegmentedHandler = async (req, res) => {
                     .map(`[a${lastIdx}]`)
                     .videoCodec('libx264')
                     .audioCodec('aac')
-                    .outputOptions('-pix_fmt yuv420p')
+                    .outputOptions(['-pix_fmt yuv420p', '-crf 18'])
                     .save(finalPath)
                     .on('end', resolve)
                     .on('error', (err) => {
@@ -961,6 +985,7 @@ const processSegmentedHandler = async (req, res) => {
             });
         }
 
+        console.log(`[Segmented] Successfully created final video: ${finalPath}`);
         sendUpdate({
             success: true,
             files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }],
@@ -973,6 +998,7 @@ const processSegmentedHandler = async (req, res) => {
         // Cleanup
         setTimeout(() => fs.rmSync(segmentDir, { recursive: true, force: true }), 60000);
     } catch (e) {
+        console.error('[Segmented] Error during processing:', e);
         clearInterval(heartbeat);
         sendUpdate({ error: e.message });
         res.end();
@@ -1098,16 +1124,15 @@ publicApp.post('/api/workflows/load/:id', (req, res) => {
 publicApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file' });
-        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn);
+        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('uploads', 'media', fn);
         try {
             fs.renameSync(req.file.path, p);
         } catch (e) {
-            // Fallback for cross-device move
             fs.copyFileSync(req.file.path, p);
             fs.unlinkSync(req.file.path);
         }
         mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
-        res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+        res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image', url: `/uploads/media/${fn}` });
     } catch (e) {
         console.error('Public Upload API error:', e);
         res.status(500).json({ error: e.message });

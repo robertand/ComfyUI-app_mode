@@ -400,7 +400,7 @@ async function handleSegmentedUpload(file, key) {
             stext.textContent = 'READY';
             stext.className = 'text-[10px] font-bold text-emerald-400 mb-1';
             ssub.textContent = `${segData.segments.length} segments`;
-            p.innerHTML = `<video src="/output/${upData.filename}" class="w-full h-full object-cover"></video>`;
+            p.innerHTML = `<video src="${upData.url || `/output/${upData.filename}`}" class="w-full h-full object-cover"></video>`;
         } else throw new Error(segData.error);
     } catch (e) {
         console.error(e);
@@ -448,8 +448,9 @@ async function handleMediaUpload(file, key) {
 
         if (data.success) {
             window.mediaFiles[key] = data.filename;
+            const mediaUrl = data.url || `/output/${data.filename}`;
             if (data.type === 'video') {
-                p.innerHTML = `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>
+                p.innerHTML = `<video src="${mediaUrl}" class="w-full h-full object-cover"></video>
                 <div class="absolute bottom-2 right-2 flex gap-2">
                     <button onclick="preSegmentVideo('${data.filename}', '${key}', event)" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[8px] font-bold rounded shadow-lg transition-all flex items-center gap-1">
                         <i data-lucide="split" class="w-3 h-3"></i>
@@ -457,7 +458,7 @@ async function handleMediaUpload(file, key) {
                     </button>
                 </div>`;
             } else {
-                p.innerHTML = `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
+                p.innerHTML = `<img src="${mediaUrl}" class="w-full h-full object-cover">`;
             }
         } else {
             throw new Error(data.error || 'Upload failed');

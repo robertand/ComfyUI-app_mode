@@ -539,7 +539,7 @@
                     stext.textContent = 'READY';
                     stext.className = 'text-[10px] font-bold text-emerald-400 mb-1';
                     ssub.textContent = `${segData.segments.length} segments`;
-                    p.innerHTML = `<video src="/output/${upData.filename}" class="w-full h-full object-cover"></video>`;
+                    p.innerHTML = `<video src="${upData.url || `/output/${upData.filename}`}" class="w-full h-full object-cover"></video>`;
                 } else throw new Error(segData.error);
             } catch (e) {
                 console.error(e);
@@ -575,7 +575,8 @@
 
                 if (data.success) {
                     window.mediaFiles[key] = data.filename;
-                    p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
+                    const mediaUrl = data.url || `/output/${data.filename}`;
+                    p.innerHTML = data.type === 'video' ? `<video src="${mediaUrl}" class="max-w-full max-h-full object-cover"></video>` : `<img src="${mediaUrl}" class="max-w-full max-h-full object-cover">`;
                 } else {
                     throw new Error(data.error || 'Upload failed');
                 }
