@@ -817,7 +817,10 @@ const processSegmentedHandler = async (req, res) => {
                     if (videoMetadata) {
                         videoDuration = videoMetadata.format?.duration || 0;
                         const vstream = videoMetadata.streams?.find(s => s.codec_type === 'video');
-                        if (vstream) videoFps = eval(vstream.r_frame_rate || '24');
+                        if (vstream) {
+                            videoFpsStr = vstream.r_frame_rate || '24/1';
+                            videoFps = eval(videoFpsStr);
+                        }
                     }
                 } catch (e) { console.error('Metadata probe error:', e); }
             }
@@ -891,30 +894,20 @@ const processSegmentedHandler = async (req, res) => {
         const allSegmentsRaw = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
         segments = allSegmentsRaw;
 
-        // If we still don't have videoDuration (manual segment run), probe segments to estimate
-        if (videoDuration === 0 && segments.length > 0) {
-            try {
-                const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(segments[0], (err, m) => res(m)); });
-                if (probeMeta?.format?.duration) videoDuration = probeMeta.format.duration * segments.length;
-            } catch (e) {}
-        }
-
-        // We need to keep track of segment metadata for reassembly alignment
-        // The split points are calculated based on max duration and overlap
+        // Probing split segments individually ensures accurate slot-based alignment even with keyframe snaps
         const segmentMetadata = [];
         const safeOverlap = Math.max(0, Math.min(segmentOverlap, maxSegmentDuration - 0.5));
-        if (videoDuration > maxSegmentDuration) {
-            let start = 0;
-            while (start < videoDuration) {
-                let end = Math.min(start + maxSegmentDuration, videoDuration);
-                segmentMetadata.push({ start, duration: end - start });
-                if (end >= videoDuration) break;
-                let nextStart = end - safeOverlap;
-                if (nextStart <= start) nextStart = start + 1;
-                start = nextStart;
-            }
-        } else {
-            segmentMetadata.push({ start: 0, duration: videoDuration });
+        let segmentStart = 0;
+
+        for (let i = 0; i < allSegmentsRaw.length; i++) {
+            const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(allSegmentsRaw[i], (err, m) => res(m)); });
+            const dur = probeMeta?.format?.duration || 0;
+            segmentMetadata.push({
+                path: allSegmentsRaw[i],
+                start: segmentStart,
+                duration: dur
+            });
+            segmentStart += (dur - safeOverlap);
         }
 
         const processedSegments = [];
@@ -998,14 +991,17 @@ const processSegmentedHandler = async (req, res) => {
 
             processedSegments.forEach((p, i) => {
                 const idur = segmentMetadata[i].duration;
-                // Scale, Pad, Force FPS, then TPAD and TRIM to exactly match intended duration slot.
-                filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${videoFps || 24},setpts=PTS-STARTPTS,tpad=stop_mode=clone:overall_duration=${idur},trim=duration=${idur},setpts=PTS-STARTPTS[pv${i}]; `;
+                const fpsVal = videoFpsStr || '24/1';
+                // Scale, Pad, Force FPS and normalize timestamps.
+                // Pad with last frame and then TRIM to EXACT intended duration slot to prevent alignment drift.
+                filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},setpts=PTS-STARTPTS,tpad=stop_mode=clone:overall_duration=${idur},trim=duration=${idur},setpts=PTS-STARTPTS[pv${i}]; `;
                 filterGraph += `[${i}:a]asetpts=PTS-STARTPTS,apad=whole_dur=${idur},atrim=duration=${idur},asetpts=PTS-STARTPTS[pa${i}]; `;
             });
 
             for (let i = 0; i < processedSegments.length - 1; i++) {
-                const fadeDuration = segmentOverlap;
-                const offset = segmentMetadata[i+1].start; // Use fixed intended start as offset
+                const fadeDuration = safeOverlap;
+                const offset = segmentMetadata[i+1].start; // Use FIXED intended offsets from probed splitting results
+
                 if (i === 0) {
                     filterGraph += `[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]; `;
                     filterGraph += `[pa0][pa1]acrossfade=d=${fadeDuration}[a1]; `;
