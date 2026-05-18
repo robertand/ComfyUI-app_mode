@@ -799,6 +799,7 @@ const processSegmentedHandler = async (req, res) => {
     const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
     const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 5;
     const segmentOverlap = advancedConfig?.segmentOverlap ?? 2;
+    let videoFps = 24;
 
     try {
         let activeRunId = runId || (segmentedInputs ? Object.values(segmentedInputs)[0] : null);
@@ -836,7 +837,7 @@ const processSegmentedHandler = async (req, res) => {
             if (fs.existsSync(sceneChangeFile)) { segmentTimes = fs.readFileSync(sceneChangeFile, 'utf8').split(',').filter(t => t.trim()).map(t => parseFloat(t)); }
             const videoMetadata = await new Promise((res, rej) => { ffmpeg.ffprobe(inputVideo, (err, m) => err ? rej(err) : res(m)); });
             const videoDuration = videoMetadata.format.duration;
-            const videoFps = eval(videoMetadata.streams.find(s => s.codec_type === 'video')?.r_frame_rate || '24');
+            videoFps = eval(videoMetadata.streams.find(s => s.codec_type === 'video')?.r_frame_rate || '24');
 
             const refinedTimes = []; let lastTime = 0;
             const allSplits = [...new Set([...segmentTimes, videoDuration])].sort((a, b) => a - b);
@@ -888,7 +889,14 @@ const processSegmentedHandler = async (req, res) => {
         }
 
         const allSegmentsRaw = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
-        segments = allSegmentsRaw; // Fix: Assign to segments variable for the loop
+        segments = allSegmentsRaw;
+
+        if (activeRunId && allSegmentsRaw.length > 0) {
+            try {
+                const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(allSegmentsRaw[0], (err, m) => res(m)); });
+                videoFps = eval(probeMeta?.streams?.find(s => s.codec_type === 'video')?.r_frame_rate || '24');
+            } catch (e) {}
+        }
 
         // We need to keep track of segment metadata for reassembly alignment
         const segmentMetadata = [];
