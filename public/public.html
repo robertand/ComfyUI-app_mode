@@ -213,7 +213,7 @@
         let segmentedRuns = {};
         let parameters = {};
         let bypassedNodes = {};
-        let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2 } };
+        let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2, manualFrameOffset: 0 } };
         let currentOutputPath = '';
         let lastPreSegmentRunId = null;
 
@@ -278,7 +278,7 @@
                     currentWorkflowId = id;
                     currentWorkflow = { ...data.analysis, originalValues: data.originalValues };
                     uiConfig = data.uiConfig || uiConfig;
-                    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2 };
+                    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2, manualFrameOffset: 0 };
 
                     // POPULATE SHIM WITH SAVED DATA
                     if (window._pixaroma_node_data && data.originalValues) {

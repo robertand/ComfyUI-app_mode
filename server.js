@@ -102,6 +102,19 @@ async function uploadFileToInstance(instanceUrl, filePath, originalName, mimetyp
 const generateId = () => Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
 const generateRandomSeed = () => Math.floor(Math.random() * 1000000000000);
 
+function getLTXSafeDuration(requestedDuration, fps) {
+    if (!fps || fps <= 0) fps = 24;
+    // LTX requirement: frames = 1 + 8 * N
+    const totalFrames = Math.round(requestedDuration * fps);
+    if (totalFrames <= 1) return 1 / fps;
+
+    // Find nearest lower 1 + 8 * N
+    const N = Math.floor((totalFrames - 1) / 8);
+    const safeFrames = 1 + (8 * N);
+
+    return safeFrames / fps;
+}
+
 function shouldGenerateRandomSeed(paramKey, paramValue, autoRandomFlags) {
     if (autoRandomFlags?.[paramKey] === true || autoRandomFlags?.['_global'] === true) return true;
     return paramValue === 'random' || paramValue === '' || paramValue === null;
@@ -557,10 +570,9 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
     try {
         const { workflowId, parameters } = req.body;
         if (!workflowId) return res.status(400).json({ error: 'ID missing' });
-        const savedDir = path.join('workflows', 'saved');
-        const file = fs.readdirSync(savedDir).find(f => f.includes(workflowId));
+        const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
         if (!file) return res.status(404).json({ error: 'Not found' });
-        const filePath = path.join(savedDir, file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const filePath = path.join(savedDir = path.join('workflows', 'saved'), file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         if (data.analysis?.workflowApi) {
             const workflow = data.analysis.workflowApi;
             Object.entries(parameters || {}).forEach(([key, value]) => {
@@ -658,7 +670,6 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
     for (const [nodeId, output] of Object.entries(result.outputs || {})) {
         const item = (output.videos || output.images || output.gifs || [])[0];
         if (item) {
-            console.log(`[Segmented] Found output in node ${nodeId}: ${item.filename} (${item.type})`);
             const fileRes = await fetch(`${targetInstance}/view?filename=${encodeURIComponent(item.filename)}&type=${item.type}&subfolder=${item.subfolder || ''}`);
             if (!fileRes.ok) throw new Error(`Failed to download result for segment: ${fileRes.status}`);
             outputFn = path.join('temp_segments', `processed_${generateId()}.mp4`);
@@ -689,14 +700,15 @@ const preSegmentHandler = async (req, res) => {
         const segmentDir = path.join('temp_segments', runId);
         fs.mkdirSync(segmentDir, { recursive: true });
 
-        const maxSegmentDuration = parseFloat(advancedConfig?.maxSegmentDuration ?? 10);
         const segmentOverlap = parseFloat(advancedConfig?.segmentOverlap ?? 2);
 
-        const videoDuration = await new Promise((resolve, reject) => {
-            ffmpeg.ffprobe(inputVideo, (err, metadata) => {
-                if (err) reject(err); else resolve(parseFloat(metadata.format.duration));
-            });
-        });
+        const videoMetadata = await new Promise((res, rej) => { ffmpeg.ffprobe(inputVideo, (err, m) => err ? rej(err) : res(m)); });
+        const videoDuration = parseFloat(videoMetadata.format.duration);
+        const vstream = videoMetadata.streams?.find(s => s.codec_type === 'video');
+        const videoFps = vstream ? eval(vstream.r_frame_rate) : 24;
+
+        const maxSegmentDurationRaw = parseFloat(advancedConfig?.maxSegmentDuration ?? 10);
+        const maxSegmentDuration = getLTXSafeDuration(maxSegmentDurationRaw, videoFps);
 
         const overlappingSegments = [];
         if (videoDuration > maxSegmentDuration) {
@@ -704,12 +716,12 @@ const preSegmentHandler = async (req, res) => {
             const safeOverlap = Math.max(0, Math.min(segmentOverlap, maxSegmentDuration - 0.5));
             while (start < videoDuration) {
                 let end = Math.min(start + maxSegmentDuration, videoDuration);
-                overlappingSegments.push({ start, duration: end - start, intendedEnd: end });
+                overlappingSegments.push({ start, duration: end - start, intendedStart: start });
                 if (end >= videoDuration) break;
                 start = end - safeOverlap;
             }
         } else {
-            overlappingSegments.push({ start: 0, duration: videoDuration, intendedEnd: videoDuration });
+            overlappingSegments.push({ start: 0, duration: videoDuration, intendedStart: 0 });
         }
 
         for (let i = 0; i < overlappingSegments.length; i++) {
@@ -725,7 +737,7 @@ const preSegmentHandler = async (req, res) => {
                         '-crf 18',
                         '-c:a aac',
                         '-avoid_negative_ts make_zero',
-                        `-force_key_frames 0` // Ensure we have a keyframe at the start
+                        '-force_key_frames 0'
                     ])
                     .output(path.join(segmentDir, `seg_${String(i).padStart(3, '0')}.mp4`))
                     .on('end', resolve)
@@ -738,7 +750,6 @@ const preSegmentHandler = async (req, res) => {
         res.json({ success: true, runId, segments });
     } catch (e) { res.status(500).json({ error: e.message }); }
 };
-
 const processSegmentedHandler = async (req, res) => {
     const { mediaFiles, parameters, bypassedNodes, workflowId, advancedConfig, runId, segmentedInputs } = req.body;
     const currentId = workflowId || currentWorkflowId;
@@ -759,9 +770,7 @@ const processSegmentedHandler = async (req, res) => {
     // Heartbeat to keep connection alive
     const heartbeat = setInterval(() => sendUpdate({ type: 'heartbeat' }), 15000);
 
-    const sceneThreshold = advancedConfig?.sceneThreshold ?? 0.2;
-    const maxSegmentDuration = advancedConfig?.maxSegmentDuration ?? 5;
-    const segmentOverlap = advancedConfig?.segmentOverlap ?? 2;
+    const segmentOverlap = parseFloat(advancedConfig?.segmentOverlap ?? 2);
     let videoDuration = 0;
     let videoFps = 24;
     let videoFpsStr = '24/1';
@@ -792,6 +801,9 @@ const processSegmentedHandler = async (req, res) => {
                 } catch (e) { console.error('Metadata probe error:', e); }
             }
         }
+
+        const maxSegmentDurationRaw = parseFloat(advancedConfig?.maxSegmentDuration ?? 10);
+        const maxSegmentDuration = getLTXSafeDuration(maxSegmentDurationRaw, videoFps);
 
         if (!activeRunId) {
             if (!primaryInputVideo || !fs.existsSync(primaryInputVideo)) throw new Error('No video input found for segmented processing');
@@ -829,7 +841,7 @@ const processSegmentedHandler = async (req, res) => {
                             '-crf 18',
                             '-c:a aac',
                             '-avoid_negative_ts make_zero',
-                            `-force_key_frames 0`
+                            '-force_key_frames 0'
                         ])
                         .output(path.join(segmentDir, `seg_${String(i).padStart(3, '0')}.mp4`))
                         .on('end', resolve)
@@ -842,7 +854,7 @@ const processSegmentedHandler = async (req, res) => {
         const allSegmentsRaw = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
         segments = allSegmentsRaw;
 
-        // Probing split segments individually ensures accurate slot-based alignment even with keyframe snaps
+        // Probing split segments individually ensures accurate slot-based alignment
         const segmentMetadata = [];
         const safeOverlap = Math.max(0, Math.min(segmentOverlap, maxSegmentDuration - 0.5));
         let segmentStart = 0;
@@ -925,20 +937,17 @@ const processSegmentedHandler = async (req, res) => {
 
             let filterGraph = '';
             const resolutions = [];
-            const durations = [];
             for (const p of processedSegments) {
                 const metadata = await new Promise((res) => {
                     ffmpeg.ffprobe(p.path, (err, m) => res(m));
                 });
                 const stream = metadata?.streams?.find(s => s.codec_type === 'video');
                 resolutions.push({ width: stream?.width || 0, height: stream?.height || 0 });
-                durations.push(metadata?.format?.duration || 0);
             }
 
             const targetWidth = Math.max(...resolutions.map(r => r.width));
             const targetHeight = Math.max(...resolutions.map(r => r.height));
 
-            // Check if audio exists in all segments
             let hasAudio = true;
             for (const p of processedSegments) {
                 const meta = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
@@ -951,8 +960,6 @@ const processSegmentedHandler = async (req, res) => {
             processedSegments.forEach((p, i) => {
                 const fpsVal = videoFpsStr || '24/1';
                 const intendedDur = p.intendedDuration;
-
-                // Slot-based alignment: trim/pad segment to its intended duration
                 filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},tpad=stop_mode=clone:stop_duration=${intendedDur},trim=duration=${intendedDur},setpts=PTS-STARTPTS[pv${i}]; `;
                 if (hasAudio) {
                     filterGraph += `[${i}:a]atrim=duration=${intendedDur},apad=pad_dur=${intendedDur},atrim=duration=${intendedDur},asetpts=PTS-STARTPTS[pa${i}]; `;
@@ -1037,7 +1044,6 @@ const processSegmentedHandler = async (req, res) => {
         res.end();
     }
 };
-
 adminApp.post('/api/video/pre-segment', preSegmentHandler);
 adminApp.post('/api/video/process-segmented', processSegmentedHandler);
 adminApp.post('/api/video/cancel-segmented', (req, res) => {
