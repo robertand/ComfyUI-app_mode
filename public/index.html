@@ -125,6 +125,44 @@
                         <div id="parameters-container" class="space-y-6 px-1"></div>
                     </div>
 
+                    <!-- Advanced Customization -->
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest px-2">
+                            <span data-i18n="advanced_customization">Advanced Workflow Customization</span>
+                            <i data-lucide="sliders" class="w-3 h-3"></i>
+                        </div>
+                        <div class="p-3 bg-slate-800/30 rounded border border-slate-700/50 space-y-4">
+                            <label class="flex items-center justify-between cursor-pointer group">
+                                <span class="text-[10px] font-bold text-slate-400" data-i18n="segmented_video">Segmented Processing</span>
+                                <div class="relative">
+                                    <input type="checkbox" id="sidebar-segmented-toggle" class="sr-only peer" onchange="syncSegmentedToggles(this.checked)">
+                                    <div class="w-8 h-4 bg-slate-700 rounded-full peer peer-checked:bg-blue-600 transition-all"></div>
+                                    <div class="absolute left-1 top-1 w-2 h-2 bg-white rounded-full peer-checked:translate-x-4 transition-all"></div>
+                                </div>
+                            </label>
+
+                            <div class="space-y-2">
+                                <label class="block text-[8px] font-bold text-slate-500 uppercase" data-i18n="scene_threshold">Scene Change Threshold</label>
+                                <input type="number" id="scene-threshold" step="0.05" min="0" max="1" value="0.2" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none">
+                            </div>
+
+                            <div class="space-y-2">
+                                <label class="block text-[8px] font-bold text-slate-500 uppercase" data-i18n="fallback_duration">Fallback Segment Duration (s)</label>
+                                <input type="number" id="fallback-duration" step="1" min="1" value="10" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none">
+                            </div>
+
+                            <div class="space-y-2">
+                                <label class="block text-[8px] font-bold text-slate-500 uppercase" data-i18n="max_segment_duration">Max Segment Duration (s)</label>
+                                <input type="number" id="max-segment-duration" step="1" min="1" value="5" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none">
+                            </div>
+
+                            <div class="space-y-2">
+                                <label class="block text-[8px] font-bold text-slate-500 uppercase" data-i18n="segment_overlap">Segment Overlap (s)</label>
+                                <input type="number" id="segment-overlap" step="0.5" min="0" value="2" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none">
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Presets List (In Sidebar after all nodes) -->
                     <div class="space-y-4">
                         <div class="flex items-center justify-between text-xs font-bold text-slate-500 uppercase tracking-widest px-2">
@@ -170,7 +208,22 @@
                         </div>
                     </div>
                     <p class="text-2xl font-bold text-white mb-2 processing-pulse" data-i18n="processing">Processing...</p>
-                    <p class="text-slate-400 text-sm max-w-xs mx-auto" data-i18n="processing_hint">Please wait while the AI magic happens</p>
+                    <p class="text-slate-400 text-sm max-w-xs mx-auto mb-6" data-i18n="processing_hint">Please wait while the AI magic happens</p>
+
+                    <div id="overlay-progress-container" class="hidden w-64 mx-auto">
+                        <div class="flex items-center justify-between mb-2">
+                            <span id="overlay-progress-text" class="text-[10px] font-bold text-blue-400 uppercase tracking-widest">0%</span>
+                            <span id="overlay-progress-sub" class="text-[10px] text-slate-500 uppercase"><span data-i18n="step">Step</span> 0/0</span>
+                        </div>
+                        <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden border border-slate-700">
+                            <div id="overlay-progress-bar" class="bg-blue-500 h-full transition-all duration-500" style="width: 0%"></div>
+                        </div>
+
+                    <button id="cancel-processing-btn" class="mt-8 px-6 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold rounded-lg transition-all flex items-center justify-center gap-2 mx-auto">
+                        <i data-lucide="square" class="w-4 h-4"></i>
+                        <span data-i18n="cancel_processing">Cancel Processing</span>
+                    </button>
+                    </div>
                 </div>
             </div>
 
@@ -215,16 +268,32 @@
             <!-- Output Browser -->
             <div class="slate-card rounded-xl p-6 shadow-xl mt-8">
                 <div class="flex items-center justify-between mb-6">
-                    <div class="flex items-center gap-4">
-                        <h3 class="text-lg font-bold flex items-center gap-2 cursor-pointer" onclick="toggleCollapse('outputs-gallery-container')">
-                            <i data-lucide="gallery-thumbnails" class="w-5 h-5 text-pink-500"></i>
-                            <span data-i18n="output_browser">Output History</span>
-                            <i data-lucide="chevron-down" id="outputs-gallery-chevron" class="w-4 h-4 ml-2 transition-transform"></i>
-                        </h3>
+                    <div class="flex flex-col gap-4 w-full">
+                        <div class="flex items-center justify-between">
+                            <h3 class="text-lg font-bold flex items-center gap-2 cursor-pointer" onclick="toggleCollapse('outputs-gallery-container')">
+                                <i data-lucide="gallery-thumbnails" class="w-5 h-5 text-pink-500"></i>
+                                <span data-i18n="output_browser">Output History</span>
+                                <i data-lucide="chevron-down" id="outputs-gallery-chevron" class="w-4 h-4 ml-2 transition-transform"></i>
+                            </h3>
+                            <div class="flex items-center gap-2">
+                                <button id="mkdir-btn" class="p-2 hover:bg-slate-700 rounded-lg transition-all text-slate-400 hover:text-white" title="New Folder" data-i18n="new_folder">
+                                    <i data-lucide="folder-plus" class="w-5 h-5"></i>
+                                </button>
+                                <button id="move-batch-btn" class="p-2 hover:bg-blue-900/30 rounded-lg transition-all text-slate-400 hover:text-blue-400 hidden" title="Move Selected" data-i18n="move_selected">
+                                    <i data-lucide="external-link" class="w-5 h-5"></i>
+                                </button>
+                                <button id="delete-batch-btn" class="p-2 hover:bg-red-900/30 rounded-lg transition-all text-slate-400 hover:text-red-400 hidden" title="Delete Selected" data-i18n="delete_selected">
+                                    <i data-lucide="trash-2" class="w-5 h-5"></i>
+                                </button>
+                                <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all">
+                                    <i data-lucide="refresh-cw" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="gallery-nav" class="flex items-center gap-2 text-xs text-slate-400 bg-slate-900/50 p-2 rounded-lg">
+                            <!-- Breadcrumbs -->
+                        </div>
                     </div>
-                    <button id="refresh-outputs-btn" class="p-2 hover:bg-slate-700 rounded-full transition-all">
-                        <i data-lucide="refresh-cw" class="w-5 h-5"></i>
-                    </button>
                 </div>
                 <div id="outputs-gallery-container" class="transition-all duration-300 overflow-hidden">
                     <div id="outputs-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4 pb-4"></div>
@@ -233,11 +302,24 @@
         </main>
     </div>
 
-    <!-- Floating Generate Button -->
-    <button id="generate-btn" class="generate-fab px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-full transition-all transform hover:scale-105 active:scale-95 flex items-center gap-2">
-        <i data-lucide="zap" class="w-5 h-5"></i>
-        <span data-i18n="generate">Generate</span>
-    </button>
+    <!-- Floating Generate Button Group -->
+    <div class="generate-fab flex flex-col items-end gap-3">
+        <div id="video-processing-options" class="hidden flex flex-col gap-2 p-3 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-xl shadow-2xl mb-2 min-w-[200px]">
+            <label class="flex items-center gap-3 cursor-pointer group">
+                <div class="relative">
+                    <input type="checkbox" id="segmented-processing-toggle" class="sr-only peer" onchange="syncSegmentedToggles(this.checked)">
+                    <div class="w-10 h-5 bg-slate-700 rounded-full peer peer-checked:bg-blue-600 transition-all"></div>
+                    <div class="absolute left-1 top-1 w-3 h-3 bg-white rounded-full peer-checked:translate-x-5 transition-all"></div>
+                </div>
+                <span class="text-xs font-bold text-slate-400 group-hover:text-white transition-colors" data-i18n="segmented_video">Segmented Processing</span>
+            </label>
+            <div id="segment-status-mini" class="hidden text-[10px] text-blue-400 font-mono animate-pulse mt-1 text-right"></div>
+        </div>
+        <button id="generate-btn" class="px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-full transition-all transform hover:scale-105 active:scale-95 flex items-center gap-2 shadow-2xl">
+            <i data-lucide="zap" class="w-5 h-5"></i>
+            <span data-i18n="generate">Generate</span>
+        </button>
+    </div>
 
     <!-- Settings Sidebar -->
     <div id="settings-sidebar" class="fixed inset-y-0 left-0 w-80 bg-slate-900 border-r border-slate-800 shadow-2xl z-[60] sidebar-transition -translate-x-full">
