@@ -544,7 +544,8 @@ async function runWorkflowLogic(req, res, isPublic = false) {
             for (const item of [...(output.images || []), ...(output.videos || [])]) {
                 const fileRes = await fetch(`${target}/view?filename=${encodeURIComponent(item.filename)}&type=${item.type}&subfolder=${item.subfolder || ''}`);
                 const localFn = `${generateId()}${path.extname(item.filename) || (item.type === 'video' ? '.mp4' : '.png')}`;
-                fs.writeFileSync(path.join('output', localFn), await fileRes.buffer());
+                const buffer = await fileRes.arrayBuffer();
+                fs.writeFileSync(path.join('output', localFn), Buffer.from(buffer));
                 outputFiles.push({ filename: localFn, url: `/output/${localFn}`, type: item.type === 'video' || localFn.endsWith('.mp4') ? 'video' : 'image' });
             }
         }
@@ -556,9 +557,10 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
     try {
         const { workflowId, parameters } = req.body;
         if (!workflowId) return res.status(400).json({ error: 'ID missing' });
-        const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
+        const savedDir = path.join('workflows', 'saved');
+        const file = fs.readdirSync(savedDir).find(f => f.includes(workflowId));
         if (!file) return res.status(404).json({ error: 'Not found' });
-        const filePath = path.join(savedDir = path.join('workflows', 'saved'), file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const filePath = path.join(savedDir, file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         if (data.analysis?.workflowApi) {
             const workflow = data.analysis.workflowApi;
             Object.entries(parameters || {}).forEach(([key, value]) => {
@@ -660,7 +662,8 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
             const fileRes = await fetch(`${targetInstance}/view?filename=${encodeURIComponent(item.filename)}&type=${item.type}&subfolder=${item.subfolder || ''}`);
             if (!fileRes.ok) throw new Error(`Failed to download result for segment: ${fileRes.status}`);
             outputFn = path.join('temp_segments', `processed_${generateId()}.mp4`);
-            fs.writeFileSync(outputFn, await fileRes.buffer());
+            const buffer = await fileRes.arrayBuffer();
+            fs.writeFileSync(outputFn, Buffer.from(buffer));
             break;
         }
     }
@@ -983,30 +986,29 @@ const processSegmentedHandler = async (req, res) => {
 
             const actualDurations = [];
             for (const p of processedSegments) {
-                const metadata = await new Promise((res) => {
-                    ffmpeg.ffprobe(p.path, (err, m) => res(m));
-                });
+                const metadata = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
                 actualDurations.push(metadata?.format?.duration || 0);
             }
 
             processedSegments.forEach((p, i) => {
-                const idur = segmentMetadata[i].duration;
                 const fpsVal = videoFpsStr || '24/1';
-                // Scale, Pad, Force FPS and normalize timestamps.
-                // Pad with last frame and then TRIM to EXACT intended duration slot to prevent alignment drift.
-                filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},setpts=PTS-STARTPTS,tpad=stop_mode=clone:overall_duration=${idur},trim=duration=${idur},setpts=PTS-STARTPTS[pv${i}]; `;
-                filterGraph += `[${i}:a]asetpts=PTS-STARTPTS,apad=whole_dur=${idur},atrim=duration=${idur},asetpts=PTS-STARTPTS[pa${i}]; `;
+                filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},setpts=PTS-STARTPTS[pv${i}]; `;
+                filterGraph += `[${i}:a]asetpts=PTS-STARTPTS[pa${i}]; `;
             });
 
-            for (let i = 0; i < processedSegments.length - 1; i++) {
-                const fadeDuration = safeOverlap;
-                const offset = segmentMetadata[i+1].start; // Use FIXED intended offsets from probed splitting results
+            const manualFrameOffset = parseFloat(advancedConfig?.manualFrameOffset ?? 0);
+            const timeOffset = manualFrameOffset / videoFps;
 
+            let currentOffset = 0;
+            for (let i = 0; i < processedSegments.length - 1; i++) {
+                const fadeDuration = Math.min(segmentOverlap, actualDurations[i] - 0.1, actualDurations[i+1] - 0.1);
                 if (i === 0) {
-                    filterGraph += `[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]; `;
+                    currentOffset = actualDurations[0] - fadeDuration + timeOffset;
+                    filterGraph += `[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${currentOffset}[v1]; `;
                     filterGraph += `[pa0][pa1]acrossfade=d=${fadeDuration}[a1]; `;
                 } else {
-                    filterGraph += `[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
+                    currentOffset = currentOffset + actualDurations[i] - fadeDuration + timeOffset;
+                    filterGraph += `[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${currentOffset}[v${i + 1}]; `;
                     filterGraph += `[a${i}][pa${i + 1}]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
                 }
             }
