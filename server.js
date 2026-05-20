@@ -328,10 +328,9 @@ function reconcileUIConfig(analysis, existingConfig) {
         advancedConfig: {
             segmented: existingConfig?.advancedConfig?.segmented || false,
             sceneThreshold: existingConfig?.advancedConfig?.sceneThreshold ?? 0.2,
-            fallbackFrames: parseInt(existingConfig?.advancedConfig?.fallbackFrames || existingConfig?.advancedConfig?.fallbackDuration) || 169,
-            maxSegmentFrames: parseInt(existingConfig?.advancedConfig?.maxSegmentFrames || existingConfig?.advancedConfig?.maxSegmentDuration) || 169,
-            overlapFrames: (existingConfig?.advancedConfig?.overlapFrames !== undefined) ? parseInt(existingConfig.advancedConfig.overlapFrames) :
-                           ((existingConfig?.advancedConfig?.segmentOverlap !== undefined) ? parseInt(existingConfig.advancedConfig.segmentOverlap) : 50),
+            fallbackFrames: existingConfig?.advancedConfig?.fallbackFrames !== undefined ? parseInt(existingConfig.advancedConfig.fallbackFrames) : (existingConfig?.advancedConfig?.fallbackDuration ? Math.round(existingConfig.advancedConfig.fallbackDuration * 24) : 169),
+            maxSegmentFrames: existingConfig?.advancedConfig?.maxSegmentFrames !== undefined ? parseInt(existingConfig.advancedConfig.maxSegmentFrames) : (existingConfig?.advancedConfig?.maxSegmentDuration ? Math.round(existingConfig.advancedConfig.maxSegmentDuration * 24) : 169),
+            overlapFrames: existingConfig?.advancedConfig?.overlapFrames !== undefined ? parseInt(existingConfig.advancedConfig.overlapFrames) : (existingConfig?.advancedConfig?.overlapDuration ? Math.round(existingConfig.advancedConfig.overlapDuration * 24) : ((existingConfig?.advancedConfig?.segmentOverlap !== undefined) ? Math.round(parseFloat(existingConfig.advancedConfig.segmentOverlap) * 24) : 50)),
             manualFrameOffset: parseInt(existingConfig?.advancedConfig?.manualFrameOffset) || 0
         }
     };
@@ -706,9 +705,9 @@ const preSegmentHandler = async (req, res) => {
         const videoFps = eval(videoFpsStr);
 
         const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
-        const overlapFrames = (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50;
+        const overlapFrames = Math.min(segmentFrames - 1, (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50);
         const actualOverlapDuration = overlapFrames / videoFps;
-        const stepFrames = segmentFrames - overlapFrames;
+        const stepFrames = Math.max(1, segmentFrames - overlapFrames);
         const totalVideoFrames = Math.round(videoDuration * videoFps);
 
         const overlappingSegments = [];
@@ -828,9 +827,9 @@ const processSegmentedHandler = async (req, res) => {
         }
 
         const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
-        const overlapFrames = (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50;
+        const overlapFrames = Math.min(segmentFrames - 1, (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50);
         const actualOverlapDuration = overlapFrames / videoFps;
-        const stepFrames = segmentFrames - overlapFrames;
+        const stepFrames = Math.max(1, segmentFrames - overlapFrames);
         const totalVideoFrames = Math.round(videoDuration * videoFps);
 
         if (!activeRunId) {
@@ -945,7 +944,7 @@ const processSegmentedHandler = async (req, res) => {
                 if (processed) {
                     processedSegments.push({
                         path: processed,
-                        intendedDuration: segmentMetadata[i].duration,
+                        intendedDuration: segmentMetadata[i].intendedDuration,
                         intendedStart: segmentMetadata[i].start
                     });
                     console.log(`[Segmented] Finished segment ${i + 1}: ${processed}`);
@@ -957,7 +956,7 @@ const processSegmentedHandler = async (req, res) => {
                 sendUpdate({ status: `Segment ${i + 1} failed, using original...`, error: segErr.message });
                 processedSegments.push({
                     path: allSegmentsRaw[i],
-                    intendedDuration: segmentMetadata[i].duration,
+                    intendedDuration: segmentMetadata[i].intendedDuration,
                     intendedStart: segmentMetadata[i].start,
                     isOriginal: true
                 });
@@ -972,7 +971,7 @@ const processSegmentedHandler = async (req, res) => {
 
         const finalName = `upscaled_${generateId()}.mp4`;
         const finalPath = path.join('output', finalName);
-        console.log(`[Segmented] Reassembling ${processedSegments.length} segments into ${finalPath}`);
+        console.log(`[Segmented] Reassembling ${processedSegments.length} segments into ${finalPath}. Overlap: ${overlapFrames} frames, Step: ${stepFrames} frames.`);
 
         if (processedSegments.length > 1 && overlapFrames > 0) {
             const cmd = ffmpeg();
@@ -1011,7 +1010,9 @@ const processSegmentedHandler = async (req, res) => {
                 // But for cross-fading and slot-alignment, we use the full 169-frame duration
                 // until the final step.
 
-                filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},tpad=stop_mode=clone:stop_duration=${intendedDur},trim=duration=${intendedDur},setpts=PTS-STARTPTS[pv${i}]; `;
+                // Add a small safety buffer to tpad to ensure trim always has enough frames
+                const tpadDur = intendedDur + 1.0;
+                filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},tpad=stop_mode=clone:stop_duration=${tpadDur},trim=duration=${intendedDur},setpts=PTS-STARTPTS[pv${i}]; `;
                 if (hasAudio) {
                     filterGraph += `[${i}:a]atrim=duration=${intendedDur},apad=pad_dur=${intendedDur},atrim=duration=${intendedDur},asetpts=PTS-STARTPTS[pa${i}]; `;
                 }
