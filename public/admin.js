@@ -137,7 +137,7 @@ function refreshUI() {
     const maxDurationInput = document.getElementById('max-segment-duration');
     if (maxDurationInput) maxDurationInput.onchange = (e) => uiConfig.advancedConfig.maxSegmentDuration = parseInt(e.target.value);
     const overlapInput = document.getElementById('segment-overlap');
-    if (overlapInput) overlapInput.onchange = (e) => uiConfig.advancedConfig.segmentOverlap = parseFloat(e.target.value);
+    if (overlapInput) overlapInput.onchange = (e) => uiConfig.advancedConfig.segmentOverlap = parseInt(e.target.value);
     const offsetInput = document.getElementById('manual-frame-offset');
     if (offsetInput) offsetInput.onchange = (e) => uiConfig.advancedConfig.manualFrameOffset = parseInt(e.target.value);
 

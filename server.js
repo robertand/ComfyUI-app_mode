@@ -688,8 +688,6 @@ const preSegmentHandler = async (req, res) => {
         const segmentDir = path.join('temp_segments', runId);
         fs.mkdirSync(segmentDir, { recursive: true });
 
-        const segmentOverlap = parseFloat(advancedConfig?.segmentOverlap ?? 2);
-
         const videoMetadata = await new Promise((res, rej) => { ffmpeg.ffprobe(inputVideo, (err, m) => err ? rej(err) : res(m)); });
         const videoDuration = parseFloat(videoMetadata.format.duration);
         const vstream = videoMetadata.streams?.find(s => s.codec_type === 'video');
@@ -781,7 +779,6 @@ const processSegmentedHandler = async (req, res) => {
     // Heartbeat to keep connection alive
     const heartbeat = setInterval(() => sendUpdate({ type: 'heartbeat' }), 15000);
 
-    const segmentOverlap = parseFloat(advancedConfig?.segmentOverlap ?? 2);
     let videoDuration = 0;
     let videoFps = 24;
     let videoFpsStr = '24/1';
@@ -945,7 +942,7 @@ const processSegmentedHandler = async (req, res) => {
         const finalPath = path.join('output', finalName);
         console.log(`[Segmented] Reassembling ${processedSegments.length} segments into ${finalPath}`);
 
-        if (processedSegments.length > 1 && segmentOverlap > 0) {
+        if (processedSegments.length > 1 && overlapFrames > 0) {
             const cmd = ffmpeg();
             processedSegments.forEach(p => cmd.input(p.path));
 
