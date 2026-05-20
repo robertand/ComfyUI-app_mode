@@ -99,6 +99,230 @@ async function uploadFileToInstance(instanceUrl, filePath, originalName, mimetyp
     return await res.json();
 }
 
+async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
+    const videoMetadata = await new Promise((res, rej) => { ffmpeg.ffprobe(inputVideo, (err, m) => err ? rej(err) : res(m)); });
+    const videoDuration = parseFloat(videoMetadata.format.duration);
+    const vstream = videoMetadata.streams?.find(s => s.codec_type === 'video');
+    const videoFpsStr = vstream?.r_frame_rate || '24/1';
+    const videoFps = eval(videoFpsStr);
+
+    const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
+    const overlapFrames = Math.min(segmentFrames - 1, (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50);
+    const totalVideoFrames = Math.round(videoDuration * videoFps);
+
+    // 1. Detect Scenes
+    const sceneThreshold = parseFloat(advancedConfig?.sceneThreshold ?? 0.2);
+    const sceneFrames = [];
+    if (sceneThreshold > 0) {
+        console.log(`[Segmented] Detecting scenes (threshold: ${sceneThreshold})...`);
+        await new Promise((resolve) => {
+            ffmpeg(inputVideo)
+                .outputOptions(['-f null'])
+                .videoFilters([`select='gt(scene,${sceneThreshold})',showinfo`])
+                .on('stderr', (line) => {
+                    const match = line.match(/n:\s*(\d+)/);
+                    if (match) sceneFrames.push(parseInt(match[1]));
+                })
+                .on('end', resolve)
+                .on('error', resolve)
+                .output('-')
+                .run();
+        });
+        console.log(`[Segmented] Found ${sceneFrames.length} scene changes.`);
+    }
+
+    // 2. Partition with scene snapping
+    const segments = [];
+    let currentStart = 0;
+    while (currentStart < totalVideoFrames) {
+        let idealEnd = currentStart + segmentFrames;
+
+        // Find if there's a scene change near the ideal end
+        // We prefer to cut AT the scene change if it's within [80%, 100%] of segmentFrames
+        const sceneChange = sceneFrames.find(f => f > currentStart + (segmentFrames * 0.7) && f <= currentStart + segmentFrames);
+
+        let actualEnd = Math.min(idealEnd, totalVideoFrames);
+        if (sceneChange && actualEnd < totalVideoFrames) {
+            // Adjust actualEnd to be a 1+8N boundary near the sceneChange
+            // For simplicity, let's just use the sceneChange and pad it later to 1+8N
+            actualEnd = sceneChange;
+        }
+
+        let frameCount = actualEnd - currentStart;
+        // Snap to nearest 1+8N (below segmentFrames)
+        let n = Math.floor((frameCount - 1) / 8);
+        if (n < 0) n = 0;
+        let snappedFrameCount = 1 + (8 * n);
+        // If we snapped too low, try to reach the next one if it fits in segmentFrames
+        if (snappedFrameCount + 8 <= segmentFrames && currentStart + snappedFrameCount + 8 <= totalVideoFrames) {
+            snappedFrameCount += 8;
+        }
+
+        actualEnd = currentStart + snappedFrameCount;
+        if (actualEnd > totalVideoFrames) actualEnd = totalVideoFrames;
+
+        segments.push({
+            startFrame: currentStart,
+            endFrame: actualEnd,
+            start: currentStart / videoFps,
+            duration: (actualEnd - currentStart) / videoFps,
+            intendedStart: currentStart / videoFps,
+            actualFrames: actualEnd - currentStart,
+            targetFrames: segmentFrames,
+            isLast: actualEnd >= totalVideoFrames
+        });
+
+        if (actualEnd >= totalVideoFrames) break;
+        currentStart = actualEnd - overlapFrames;
+        if (currentStart < 0) currentStart = 0;
+        // Prevent infinite loop if overlap is somehow broken
+        if (currentStart >= actualEnd) currentStart = actualEnd - 1;
+    }
+
+    const filePaths = [];
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const outputIdx = String(i).padStart(3, '0');
+        const outputPath = path.join(segmentDir, `seg_${outputIdx}.mp4`);
+        filePaths.push(outputPath);
+
+        await new Promise((resolve, reject) => {
+            const cmd = ffmpeg(inputVideo)
+                .setStartTime(seg.start)
+                .setDuration(seg.duration);
+
+            const fpsVal = videoFpsStr || '24/1';
+            const vf = [`fps=${fpsVal}`];
+            const af = [];
+
+            // Pad with CLONED frames if shorter than targetFrames
+            if (seg.actualFrames < seg.targetFrames) {
+                const padFrames = seg.targetFrames - seg.actualFrames;
+                const padDur = padFrames / videoFps;
+                vf.push(`tpad=stop_mode=clone:stop_duration=${padDur}`);
+                af.push(`apad=pad_dur=${padDur}`);
+            }
+
+            cmd.outputOptions([
+                '-map 0',
+                '-c:v libx264',
+                '-preset superfast',
+                '-crf 18',
+                '-c:a aac',
+                '-avoid_negative_ts make_zero',
+                '-force_key_frames 0',
+                `-frames:v ${seg.targetFrames}`
+            ]);
+
+            if (vf.length > 0) cmd.videoFilters(vf);
+            if (af.length > 0) cmd.audioFilters(af);
+
+            cmd.output(outputPath).on('end', resolve).on('error', reject).run();
+        });
+    }
+
+    const metadata = {
+        videoDuration,
+        videoFpsStr,
+        videoFps,
+        segmentFrames,
+        overlapFrames,
+        segments
+    };
+    fs.writeFileSync(path.join(segmentDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+
+    return { segmentDir, segments, filePaths, metadata };
+}
+
+async function reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig) {
+    const metaPath = path.join(segmentDir, 'metadata.json');
+    if (!fs.existsSync(metaPath)) throw new Error('Segmentation metadata not found');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+
+    const cmd = ffmpeg();
+    processedSegments.forEach(p => cmd.input(p.path));
+
+    let filterGraph = '';
+    const resolutions = [];
+    for (const p of processedSegments) {
+        const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
+        const stream = probeMeta?.streams?.find(s => s.codec_type === 'video');
+        resolutions.push({ width: stream?.width || 0, height: stream?.height || 0 });
+    }
+
+    const targetWidth = Math.max(...resolutions.map(r => r.width));
+    const targetHeight = Math.max(...resolutions.map(r => r.height));
+
+    let hasAudio = true;
+    for (const p of processedSegments) {
+        const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
+        if (!probeMeta?.streams?.some(s => s.codec_type === 'audio')) { hasAudio = false; break; }
+    }
+
+    const manualFrameOffset = parseFloat(advancedConfig?.manualFrameOffset ?? 0);
+    const timeOffset = manualFrameOffset / meta.videoFps;
+
+    processedSegments.forEach((p, i) => {
+        const fpsVal = meta.videoFpsStr || '24/1';
+        const intendedDur = meta.segmentFrames / meta.videoFps;
+        const tpadDur = intendedDur + 1.0;
+
+        filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},tpad=stop_mode=clone:stop_duration=${tpadDur},trim=duration=${intendedDur},setpts=PTS-STARTPTS[pv${i}]; `;
+        if (hasAudio) {
+            filterGraph += `[${i}:a]atrim=duration=${intendedDur},apad=pad_dur=${intendedDur},atrim=duration=${intendedDur},asetpts=PTS-STARTPTS[pa${i}]; `;
+        }
+    });
+
+    for (let i = 0; i < processedSegments.length - 1; i++) {
+        // Calculate the actual overlap in seconds for THIS specific transition
+        const currentSegEnd = meta.segments[i].endFrame;
+        const nextSegStart = meta.segments[i + 1].startFrame;
+        const overlapFrames = currentSegEnd - nextSegStart;
+        const fadeDuration = overlapFrames / meta.videoFps;
+
+        const nextSegIntendedStart = meta.segments[i + 1].intendedStart;
+        const currentOffset = nextSegIntendedStart + timeOffset;
+
+        const leftV = (i === 0) ? 'pv0' : `v${i}`;
+        filterGraph += `[${leftV}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${currentOffset}[v${i + 1}]; `;
+
+        if (hasAudio) {
+            const leftA = (i === 0) ? 'pa0' : `a${i}`;
+            filterGraph += `[${leftA}][pa${i + 1}]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
+        }
+    }
+
+    const lastIdx = processedSegments.length - 1;
+    let finalV = lastIdx === 0 ? 'pv0' : `v${lastIdx}`;
+    let finalA = hasAudio ? (lastIdx === 0 ? 'pa0' : `a${lastIdx}`) : null;
+
+    const finalTrimDur = meta.videoDuration;
+    filterGraph += `[${finalV}]trim=duration=${finalTrimDur}[fv]; `;
+    finalV = 'fv';
+    if (hasAudio) {
+        filterGraph += `[${finalA}]atrim=duration=${finalTrimDur}[fa]; `;
+        finalA = 'fa';
+    }
+
+    await new Promise((resolve, reject) => {
+        const finalCmd = cmd.complexFilter(filterGraph.trim()).map(`[${finalV}]`);
+        if (hasAudio) finalCmd.map(`[${finalA}]`);
+
+        finalCmd
+            .videoCodec('libx264')
+            .audioCodec('aac')
+            .outputOptions(['-pix_fmt yuv420p', '-crf 15', `-r ${meta.videoFpsStr || '24/1'}`])
+            .save(finalPath)
+            .on('end', resolve)
+            .on('error', (err) => {
+                console.error('Xfade failed, falling back to basic concat:', err);
+                const listFile = path.join(segmentDir, 'list_fallback.txt');
+                fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p.path)}'`).join('\n'));
+                ffmpeg().input(listFile).inputOptions(['-f concat', '-safe 0']).videoCodec('libx264').audioCodec('aac').save(finalPath).on('end', resolve).on('error', reject);
+            });
+    });
+}
+
 const generateId = () => Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
 const generateRandomSeed = () => Math.floor(Math.random() * 1000000000000);
 
@@ -698,111 +922,27 @@ const preSegmentHandler = async (req, res) => {
         const segmentDir = path.join('temp_segments', runId);
         fs.mkdirSync(segmentDir, { recursive: true });
 
-        const videoMetadata = await new Promise((res, rej) => { ffmpeg.ffprobe(inputVideo, (err, m) => err ? rej(err) : res(m)); });
-        const videoDuration = parseFloat(videoMetadata.format.duration);
-        const vstream = videoMetadata.streams?.find(s => s.codec_type === 'video');
-        const videoFpsStr = vstream?.r_frame_rate || '24/1';
-        const videoFps = eval(videoFpsStr);
-
-        const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
-        const overlapFrames = Math.min(segmentFrames - 1, (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50);
-        const actualOverlapDuration = overlapFrames / videoFps;
-        const stepFrames = Math.max(1, segmentFrames - overlapFrames);
-        const totalVideoFrames = Math.round(videoDuration * videoFps);
-
-        const overlappingSegments = [];
-        let currentFrameStart = 0;
-
-        while (currentFrameStart < totalVideoFrames) {
-            let currentFrameEnd = Math.min(currentFrameStart + segmentFrames, totalVideoFrames);
-            let actualFrames = currentFrameEnd - currentFrameStart;
-
-            overlappingSegments.push({
-                start: currentFrameStart / videoFps,
-                duration: actualFrames / videoFps,
-                intendedStart: currentFrameStart / videoFps,
-                actualFrames: actualFrames,
-                isLast: currentFrameEnd >= totalVideoFrames
-            });
-
-            if (currentFrameEnd >= totalVideoFrames) break;
-            currentFrameStart += stepFrames;
-            if (currentFrameStart >= totalVideoFrames) break;
-        }
-
-        for (let i = 0; i < overlappingSegments.length; i++) {
-            const seg = overlappingSegments[i];
-            const outputIdx = String(i).padStart(3, '0');
-            const outputPath = path.join(segmentDir, `seg_${outputIdx}.mp4`);
-
-            await new Promise((resolve, reject) => {
-                const cmd = ffmpeg(inputVideo)
-                    .setStartTime(seg.start)
-                    .setDuration(seg.duration);
-
-                const fpsVal = videoFpsStr || '24/1';
-                const vf = [`fps=${fpsVal}`];
-                const af = [];
-
-                // Pad with black frames if shorter than segmentFrames
-                if (seg.actualFrames < segmentFrames) {
-                    vf.push(`tpad=stop_mode=add:stop_duration=${(segmentFrames - seg.actualFrames) / videoFps}:color=black`);
-                    af.push(`apad=pad_dur=${(segmentFrames - seg.actualFrames) / videoFps}`);
-                }
-
-                cmd.outputOptions([
-                    '-map 0',
-                    '-c:v libx264',
-                    '-preset superfast',
-                    '-crf 18',
-                    '-c:a aac',
-                    '-avoid_negative_ts make_zero',
-                    '-force_key_frames 0',
-                    `-frames:v ${segmentFrames}` // Strict frame count enforcement
-                ]);
-
-                if (vf.length > 0) cmd.videoFilters(vf);
-                if (af.length > 0) cmd.audioFilters(af);
-
-                cmd.output(outputPath)
-                    .on('end', resolve)
-                    .on('error', reject)
-                    .run();
-            });
-        }
-
-        const segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort();
-        res.json({ success: true, runId, segments });
+        const { segments } = await segmentVideo(inputVideo, segmentDir, advancedConfig);
+        res.json({ success: true, runId, segments: segments.map((_, i) => `seg_${String(i).padStart(3, '0')}.mp4`) });
     } catch (e) { res.status(500).json({ error: e.message }); }
 };
 const processSegmentedHandler = async (req, res) => {
     const { mediaFiles, parameters, bypassedNodes, workflowId, advancedConfig, runId, segmentedInputs } = req.body;
     const currentId = workflowId || currentWorkflowId;
 
-    // Ensure we have some workflow reference
     if (!currentId && !currentWorkflowData) return res.status(400).json({ error: 'No workflow' });
 
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
 
-    const sendUpdate = (data) => {
-        if (!res.writableEnded) {
-            res.write(JSON.stringify(data) + '\n');
-        }
-    };
-
-    // Heartbeat to keep connection alive
+    const sendUpdate = (data) => { if (!res.writableEnded) res.write(JSON.stringify(data) + '\n'); };
     const heartbeat = setInterval(() => sendUpdate({ type: 'heartbeat' }), 15000);
-
-    let videoDuration = 0;
-    let videoFps = 24;
-    let videoFpsStr = '24/1';
 
     try {
         let activeRunId = runId || (segmentedInputs ? Object.values(segmentedInputs)[0] : null);
         let segmentDir = activeRunId ? path.join('temp_segments', activeRunId) : null;
-        let segments = [];
+        let segmentsMetadata = [];
 
         const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
         let primaryInputVideo = null;
@@ -810,298 +950,63 @@ const processSegmentedHandler = async (req, res) => {
             primaryInputVideo = path.join('uploads', 'media', mediaFiles[videoKey]);
             if (!fs.existsSync(primaryInputVideo)) primaryInputVideo = path.join('output', mediaFiles[videoKey]);
             if (!fs.existsSync(primaryInputVideo) && mediaStore[mediaFiles[videoKey]]) primaryInputVideo = mediaStore[mediaFiles[videoKey]].path;
-
-            if (primaryInputVideo && fs.existsSync(primaryInputVideo)) {
-                try {
-                    const videoMetadata = await new Promise((res) => { ffmpeg.ffprobe(primaryInputVideo, (err, m) => res(m)); });
-                    if (videoMetadata) {
-                        videoDuration = videoMetadata.format?.duration || 0;
-                        const vstream = videoMetadata.streams?.find(s => s.codec_type === 'video');
-                        if (vstream) {
-                            videoFpsStr = vstream.r_frame_rate || '24/1';
-                            videoFps = eval(videoFpsStr);
-                        }
-                    }
-                } catch (e) { console.error('Metadata probe error:', e); }
-            }
         }
 
-        const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
-        const overlapFrames = Math.min(segmentFrames - 1, (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50);
-        const actualOverlapDuration = overlapFrames / videoFps;
-        const stepFrames = Math.max(1, segmentFrames - overlapFrames);
-        const totalVideoFrames = Math.round(videoDuration * videoFps);
-
         if (!activeRunId) {
-            if (!primaryInputVideo || !fs.existsSync(primaryInputVideo)) throw new Error('No video input found for segmented processing');
-
+            if (!primaryInputVideo || !fs.existsSync(primaryInputVideo)) throw new Error('No video input found');
             activeRunId = generateId();
             segmentDir = path.join('temp_segments', activeRunId);
             fs.mkdirSync(segmentDir, { recursive: true });
-
             sendUpdate({ status: 'Segmenting...' });
-
-            const overlappingSegments = [];
-            let currentFrameStart = 0;
-            while (currentFrameStart < totalVideoFrames) {
-                let currentFrameEnd = Math.min(currentFrameStart + segmentFrames, totalVideoFrames);
-                let actualFrames = currentFrameEnd - currentFrameStart;
-                overlappingSegments.push({
-                    start: currentFrameStart / videoFps,
-                    duration: actualFrames / videoFps,
-                    actualFrames: actualFrames
-                });
-                if (currentFrameEnd >= totalVideoFrames) break;
-                currentFrameStart += stepFrames;
-                if (currentFrameStart >= totalVideoFrames) break;
-            }
-
-            for (let i = 0; i < overlappingSegments.length; i++) {
-                const seg = overlappingSegments[i];
-                const outputPath = path.join(segmentDir, `seg_${String(i).padStart(3, '0')}.mp4`);
-                await new Promise((resolve, reject) => {
-                    const cmd = ffmpeg(primaryInputVideo)
-                        .setStartTime(seg.start)
-                        .setDuration(seg.duration);
-
-                    const fpsVal = videoFpsStr || '24/1';
-                    const vf = [`fps=${fpsVal}`];
-                    const af = [];
-
-                    if (seg.actualFrames < segmentFrames) {
-                        vf.push(`tpad=stop_mode=add:stop_duration=${(segmentFrames - seg.actualFrames) / videoFps}:color=black`);
-                        af.push(`apad=pad_dur=${(segmentFrames - seg.actualFrames) / videoFps}`);
-                    }
-
-                    cmd.outputOptions([
-                        '-map 0',
-                        '-c:v libx264',
-                        '-preset superfast',
-                        '-crf 18',
-                        '-c:a aac',
-                        '-avoid_negative_ts make_zero',
-                        '-force_key_frames 0',
-                        `-frames:v ${segmentFrames}` // Strict frame count enforcement
-                    ]);
-
-                    if (vf.length > 0) cmd.videoFilters(vf);
-                    if (af.length > 0) cmd.audioFilters(af);
-
-                    cmd.output(outputPath).on('end', resolve).on('error', reject).run();
-                });
+            const { metadata } = await segmentVideo(primaryInputVideo, segmentDir, advancedConfig);
+            segmentsMetadata = metadata.segments;
+        } else {
+            const metaPath = path.join(segmentDir, 'metadata.json');
+            if (fs.existsSync(metaPath)) {
+                const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+                segmentsMetadata = meta.segments;
+            } else {
+                throw new Error('Segmentation metadata missing for active run');
             }
         }
 
         const allSegmentsRaw = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
-        segments = allSegmentsRaw;
-
-        // Probing split segments individually ensures accurate slot-based alignment
-        const segmentMetadata = [];
-        let currentSegFrameStart = 0;
-
-        for (let i = 0; i < allSegmentsRaw.length; i++) {
-            const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(allSegmentsRaw[i], (err, m) => res(m)); });
-            const dur = parseFloat(probeMeta?.format?.duration || 0);
-
-            segmentMetadata.push({
-                path: allSegmentsRaw[i],
-                start: currentSegFrameStart / videoFps,
-                duration: dur,
-                intendedDuration: segmentFrames / videoFps
-            });
-            currentSegFrameStart += stepFrames;
-        }
-
         const processedSegments = [];
         const target = await getFreestInstance();
-        console.log(`[Segmented] Starting processing of ${segments.length} segments on ${target}`);
 
-        for (let i = 0; i < segments.length; i++) {
-            if (activeRunId && cancelledRuns.has(activeRunId)) {
-                cancelledRuns.delete(activeRunId);
-                throw new Error('Processing cancelled by user');
-            }
-            const progressPercent = Math.round(((i + 1) / segments.length) * 100);
-            sendUpdate({
-                status: `Processing segment ${i + 1}/${segments.length}...`,
-                progress: { current: i + 1, total: segments.length, percent: progressPercent }
-            });
+        for (let i = 0; i < allSegmentsRaw.length; i++) {
+            if (activeRunId && cancelledRuns.has(activeRunId)) { cancelledRuns.delete(activeRunId); throw new Error('Cancelled'); }
+            sendUpdate({ status: `Processing segment ${i + 1}/${allSegmentsRaw.length}...`, progress: { current: i + 1, total: allSegmentsRaw.length, percent: Math.round(((i + 1) / allSegmentsRaw.length) * 100) } });
 
             const extraSegments = {};
             if (segmentedInputs) {
                 Object.entries(segmentedInputs).forEach(([inputKey, rId]) => {
                     const otherDir = path.join('temp_segments', rId);
                     const otherSegments = fs.readdirSync(otherDir).filter(f => f.startsWith('seg_')).sort();
-                    if (otherSegments[i]) {
-                        extraSegments[inputKey] = path.join(otherDir, otherSegments[i]);
-                    }
+                    if (otherSegments[i]) extraSegments[inputKey] = path.join(otherDir, otherSegments[i]);
                 });
             }
 
-            console.log(`[Segmented] Processing segment ${i + 1}/${segments.length}: ${segments[i]}`);
             try {
                 const processed = await runSingleSegment(allSegmentsRaw[i], currentId, parameters, bypassedNodes, target, extraSegments);
-                if (processed) {
-                    processedSegments.push({
-                        path: processed,
-                        intendedDuration: segmentMetadata[i].intendedDuration,
-                        intendedStart: segmentMetadata[i].start
-                    });
-                    console.log(`[Segmented] Finished segment ${i + 1}: ${processed}`);
-                } else {
-                    throw new Error('No output from segment');
-                }
-            } catch (segErr) {
-                console.error(`[Segmented] Segment ${i + 1} failed, using original:`, segErr.message);
-                sendUpdate({ status: `Segment ${i + 1} failed, using original...`, error: segErr.message });
-                processedSegments.push({
-                    path: allSegmentsRaw[i],
-                    intendedDuration: segmentMetadata[i].intendedDuration,
-                    intendedStart: segmentMetadata[i].start,
-                    isOriginal: true
-                });
+                processedSegments.push({ path: processed || allSegmentsRaw[i] });
+            } catch (e) {
+                console.error(`Segment ${i} failed:`, e);
+                processedSegments.push({ path: allSegmentsRaw[i], isOriginal: true });
             }
         }
 
-        sendUpdate({ status: 'Reassembling with cross-fades...' });
-
-        if (processedSegments.length === 0) {
-            throw new Error('All segments failed to process. Cannot reassemble.');
-        }
-
+        sendUpdate({ status: 'Reassembling...' });
         const finalName = `upscaled_${generateId()}.mp4`;
         const finalPath = path.join('output', finalName);
-        console.log(`[Segmented] Reassembling ${processedSegments.length} segments into ${finalPath}. Overlap: ${overlapFrames} frames, Step: ${stepFrames} frames.`);
 
-        if (processedSegments.length > 1 && overlapFrames > 0) {
-            const cmd = ffmpeg();
-            processedSegments.forEach(p => cmd.input(p.path));
+        await reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig);
 
-            let filterGraph = '';
-            const resolutions = [];
-            for (const p of processedSegments) {
-                const metadata = await new Promise((res) => {
-                    ffmpeg.ffprobe(p.path, (err, m) => res(m));
-                });
-                const stream = metadata?.streams?.find(s => s.codec_type === 'video');
-                resolutions.push({ width: stream?.width || 0, height: stream?.height || 0 });
-            }
-
-            const targetWidth = Math.max(...resolutions.map(r => r.width));
-            const targetHeight = Math.max(...resolutions.map(r => r.height));
-
-            let hasAudio = true;
-            for (const p of processedSegments) {
-                const meta = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
-                if (!meta?.streams?.some(s => s.codec_type === 'audio')) { hasAudio = false; break; }
-            }
-
-            const manualFrameOffset = parseFloat(advancedConfig?.manualFrameOffset ?? 0);
-            const timeOffset = manualFrameOffset / videoFps;
-
-            processedSegments.forEach((p, i) => {
-                const fpsVal = videoFpsStr || '24/1';
-                // For reassembly, we treat every segment as a fixed frame slot
-                // However, the very last segment might contain black padding we want to EXCLUDE
-                // from the FINAL output.
-                let intendedDur = p.intendedDuration;
-
-                // If it's the last segment, and it was padded, we might want to trim the black.
-                // But for cross-fading and slot-alignment, we use the full 169-frame duration
-                // until the final step.
-
-                // Add a small safety buffer to tpad to ensure trim always has enough frames
-                const tpadDur = intendedDur + 1.0;
-                filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},tpad=stop_mode=clone:stop_duration=${tpadDur},trim=duration=${intendedDur},setpts=PTS-STARTPTS[pv${i}]; `;
-                if (hasAudio) {
-                    filterGraph += `[${i}:a]atrim=duration=${intendedDur},apad=pad_dur=${intendedDur},atrim=duration=${intendedDur},asetpts=PTS-STARTPTS[pa${i}]; `;
-                }
-            });
-
-            for (let i = 0; i < processedSegments.length - 1; i++) {
-                const fadeDuration = actualOverlapDuration;
-                // Use the mathematical start times we calculated during splitting
-                const nextSegStart = processedSegments[i+1].intendedStart;
-                const currentOffset = nextSegStart + timeOffset;
-
-                const leftV = (i === 0) ? 'pv0' : `v${i}`;
-                filterGraph += `[${leftV}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${currentOffset}[v${i + 1}]; `;
-
-                if (hasAudio) {
-                    const leftA = (i === 0) ? 'pa0' : `a${i}`;
-                    filterGraph += `[${leftA}][pa${i + 1}]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
-                }
-            }
-
-            const lastIdx = processedSegments.length - 1;
-            let finalV = lastIdx === 0 ? 'pv0' : `v${lastIdx}`;
-            let finalA = hasAudio ? (lastIdx === 0 ? 'pa0' : `a${lastIdx}`) : null;
-
-            // CRITICAL: Trim the black padding from the final assembled video
-            // The total "real" duration is videoDuration (the original video length)
-            const finalTrimDur = videoDuration;
-            filterGraph += `[${finalV}]trim=duration=${finalTrimDur}[fv]; `;
-            finalV = 'fv';
-            if (hasAudio) {
-                filterGraph += `[${finalA}]atrim=duration=${finalTrimDur}[fa]; `;
-                finalA = 'fa';
-            }
-
-            await new Promise((resolve, reject) => {
-                const finalCmd = cmd.complexFilter(filterGraph.trim()).map(`[${finalV}]`);
-                if (hasAudio) finalCmd.map(`[${finalA}]`);
-
-                finalCmd
-                    .videoCodec('libx264')
-                    .audioCodec('aac')
-                    .outputOptions(['-pix_fmt yuv420p', '-crf 15', `-r ${videoFpsStr || '24/1'}`])
-                    .save(finalPath)
-                    .on('end', resolve)
-                    .on('error', (err) => {
-                        console.error('Xfade failed, falling back to basic concat:', err);
-                        const listFile = path.join(segmentDir, 'list_fallback.txt');
-                        fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p.path)}'`).join('\n'));
-                        ffmpeg().input(listFile).inputOptions(['-f concat', '-safe 0']).videoCodec('libx264').audioCodec('aac').save(finalPath).on('end', resolve).on('error', reject);
-                    });
-            });
-        } else {
-            const listFile = path.join(segmentDir, 'list.txt');
-            fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p.path)}'`).join('\n'));
-            await new Promise((resolve, reject) => {
-                ffmpeg()
-                    .input(listFile)
-                    .inputOptions(['-f concat', '-safe 0'])
-                    .outputOptions('-c copy')
-                    .save(finalPath)
-                    .on('end', resolve)
-                    .on('error', (err) => {
-                        ffmpeg()
-                            .input(listFile)
-                            .inputOptions(['-f concat', '-safe 0'])
-                            .videoCodec('libx264')
-                            .audioCodec('aac')
-                            .outputOptions('-pix_fmt yuv420p')
-                            .save(finalPath)
-                            .on('end', resolve)
-                            .on('error', reject);
-                    });
-            });
-        }
-
-        console.log(`[Segmented] Successfully created final video: ${finalPath}`);
-        sendUpdate({
-            success: true,
-            files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }],
-            progress: { current: segments.length, total: segments.length, percent: 100 }
-        });
-
+        sendUpdate({ success: true, files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }], progress: { current: allSegmentsRaw.length, total: allSegmentsRaw.length, percent: 100 } });
         clearInterval(heartbeat);
         res.end();
-
-        // Cleanup
         setTimeout(() => fs.rmSync(segmentDir, { recursive: true, force: true }), 60000);
     } catch (e) {
-        console.error('[Segmented] Error during processing:', e);
         clearInterval(heartbeat);
         sendUpdate({ error: e.message });
         res.end();
