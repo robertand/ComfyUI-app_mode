@@ -1,6 +1,6 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
-let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 10 } };
+let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 169, maxSegmentDuration: 169, segmentOverlap: 50 } };
 window._pixaroma_session_previews = {};
 window.mediaFiles = {};
 let mediaFiles = window.mediaFiles;
@@ -75,7 +75,7 @@ async function loadWorkflow(id) {
 function setupWorkflow(data) {
     currentWorkflow = data.analysis;
     uiConfig = data.uiConfig || uiConfig;
-    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2 };
+    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 169, maxSegmentDuration: 169, segmentOverlap: 50 };
 
     // Sync UI with advancedConfig
     const segToggles = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];

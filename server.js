@@ -102,12 +102,6 @@ async function uploadFileToInstance(instanceUrl, filePath, originalName, mimetyp
 const generateId = () => Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
 const generateRandomSeed = () => Math.floor(Math.random() * 1000000000000);
 
-function getLTXSafeDuration(requestedDuration, fps) {
-    // Force 169 frames if requestedDuration is close to default (approx 7s at 24fps)
-    // or if specifically requested by user logic.
-    if (!fps || fps <= 0) fps = 24;
-    return 169 / fps;
-}
 
 function shouldGenerateRandomSeed(paramKey, paramValue, autoRandomFlags) {
     if (autoRandomFlags?.[paramKey] === true || autoRandomFlags?.['_global'] === true) return true;
@@ -331,7 +325,7 @@ function reconcileUIConfig(analysis, existingConfig) {
         visibleParams: existingConfig?.visibleParams || {},
         inputOrder: existingConfig?.inputOrder || [],
         inputNames: existingConfig?.inputNames || {},
-        advancedConfig: existingConfig?.advancedConfig || { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 10 }
+        advancedConfig: existingConfig?.advancedConfig || { segmented: false, sceneThreshold: 0.2, fallbackDuration: 169, maxSegmentDuration: 169, segmentOverlap: 50 }
     };
     const allKeys = [];
     analysis.inputs?.forEach(g => g.inputs.forEach(i => { allKeys.push(i.key); if (config.visibleInputs[i.key] === undefined) config.visibleInputs[i.key] = true; }));
@@ -702,8 +696,8 @@ const preSegmentHandler = async (req, res) => {
         const videoFpsStr = vstream?.r_frame_rate || '24/1';
         const videoFps = eval(videoFpsStr);
 
-        const segmentFrames = 169;
-        const overlapFrames = Math.round(segmentOverlap * videoFps);
+        const segmentFrames = parseInt(advancedConfig?.maxSegmentDuration ?? 169);
+        const overlapFrames = parseInt(advancedConfig?.segmentOverlap ?? 50);
         const actualOverlapDuration = overlapFrames / videoFps;
         const stepFrames = segmentFrames - overlapFrames;
         const totalVideoFrames = Math.round(videoDuration * videoFps);
@@ -739,9 +733,9 @@ const preSegmentHandler = async (req, res) => {
                     .setDuration(seg.duration);
 
                 const vf = [];
-                // Pad with black frames if shorter than 169
-                if (seg.actualFrames < 169) {
-                    vf.push(`tpad=stop_mode=add:stop_duration=${(169 - seg.actualFrames) / videoFps}:color=black`);
+                // Pad with black frames if shorter than segmentFrames
+                if (seg.actualFrames < segmentFrames) {
+                    vf.push(`tpad=stop_mode=add:stop_duration=${(segmentFrames - seg.actualFrames) / videoFps}:color=black`);
                 }
 
                 cmd.outputOptions([
@@ -819,8 +813,8 @@ const processSegmentedHandler = async (req, res) => {
             }
         }
 
-        const segmentFrames = 169;
-        const overlapFrames = Math.round(segmentOverlap * videoFps);
+        const segmentFrames = parseInt(advancedConfig?.maxSegmentDuration ?? 169);
+        const overlapFrames = parseInt(advancedConfig?.segmentOverlap ?? 50);
         const actualOverlapDuration = overlapFrames / videoFps;
         const stepFrames = segmentFrames - overlapFrames;
         const totalVideoFrames = Math.round(videoDuration * videoFps);
@@ -858,8 +852,8 @@ const processSegmentedHandler = async (req, res) => {
                         .setDuration(seg.duration);
 
                     const vf = [];
-                    if (seg.actualFrames < 169) {
-                        vf.push(`tpad=stop_mode=add:stop_duration=${(169 - seg.actualFrames) / videoFps}:color=black`);
+                    if (seg.actualFrames < segmentFrames) {
+                        vf.push(`tpad=stop_mode=add:stop_duration=${(segmentFrames - seg.actualFrames) / videoFps}:color=black`);
                     }
 
                     cmd.outputOptions(['-map 0', '-c:v libx264', '-preset superfast', '-crf 18', '-c:a aac', '-avoid_negative_ts make_zero', '-force_key_frames 0']);
@@ -884,7 +878,8 @@ const processSegmentedHandler = async (req, res) => {
             segmentMetadata.push({
                 path: allSegmentsRaw[i],
                 start: currentSegFrameStart / videoFps,
-                duration: dur
+                duration: dur,
+                intendedDuration: segmentFrames / videoFps
             });
             currentSegFrameStart += stepFrames;
         }
@@ -978,11 +973,10 @@ const processSegmentedHandler = async (req, res) => {
 
             processedSegments.forEach((p, i) => {
                 const fpsVal = videoFpsStr || '24/1';
-                // For reassembly, we treat every segment as a fixed 169-frame slot (approx 169/fps)
+                // For reassembly, we treat every segment as a fixed frame slot
                 // However, the very last segment might contain black padding we want to EXCLUDE
                 // from the FINAL output.
                 let intendedDur = p.intendedDuration;
-                const isLast = (i === processedSegments.length - 1);
 
                 // If it's the last segment, and it was padded, we might want to trim the black.
                 // But for cross-fading and slot-alignment, we use the full 169-frame duration
