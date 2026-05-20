@@ -211,12 +211,12 @@
         <div id="modal-content" class="max-w-7xl max-h-[90vh] w-full h-full flex items-center justify-center"></div>
     </div>
 
-    <script src="/translations.js?v=1.0.6"></script>
+    <script src="/translations.js?v=1.1.0"></script>
     <script type="module">
         import { openPixaromaEditor } from '/pixaroma_shim.js';
         window.openPixaromaEditor = openPixaromaEditor;
     </script>
-    <script src="/qwen3d.js?v=1.0.6"></script>
+    <script src="/qwen3d.js?v=1.1.0"></script>
     <script>
         let currentWorkflow = null;
         let currentWorkflowId = null;
@@ -226,7 +226,7 @@
         let segmentedRuns = {};
         let parameters = {};
         let bypassedNodes = {};
-        let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 169, maxSegmentDuration: 169, segmentOverlap: 50, manualFrameOffset: 0 } };
+        let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackFrames: 169, maxSegmentFrames: 169, overlapFrames: 50, manualFrameOffset: 0 } };
         let currentOutputPath = '';
         let lastPreSegmentRunId = null;
 
@@ -298,7 +298,7 @@
                     currentWorkflowId = id;
                     currentWorkflow = { ...data.analysis, originalValues: data.originalValues };
                     uiConfig = data.uiConfig || uiConfig;
-                    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 169, maxSegmentDuration: 169, segmentOverlap: 50, manualFrameOffset: 0 };
+                    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackFrames: 169, maxSegmentFrames: 169, overlapFrames: 50, manualFrameOffset: 0 };
 
                     // POPULATE SHIM WITH SAVED DATA
                     if (window._pixaroma_node_data && data.originalValues) {

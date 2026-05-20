@@ -1,8 +1,4 @@
-
-> comfy-remote@2.0.0 start
-> node server.js
-
-(node:3498716) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(node:3788387) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
 (Use `node --trace-deprecation ...` to show where the warning was created)
-🔧 ADMIN http://localhost:3001
-🌐 PUBLIC http://localhost:3002
+🔧 ADMIN http://localhost:3015
+🌐 PUBLIC http://localhost:3016

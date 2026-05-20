@@ -325,8 +325,19 @@ function reconcileUIConfig(analysis, existingConfig) {
         visibleParams: existingConfig?.visibleParams || {},
         inputOrder: existingConfig?.inputOrder || [],
         inputNames: existingConfig?.inputNames || {},
-        advancedConfig: existingConfig?.advancedConfig || { segmented: false, sceneThreshold: 0.2, fallbackDuration: 169, maxSegmentDuration: 169, segmentOverlap: 50 }
+        advancedConfig: {
+            segmented: existingConfig?.advancedConfig?.segmented || false,
+            sceneThreshold: existingConfig?.advancedConfig?.sceneThreshold ?? 0.2,
+            fallbackFrames: parseInt(existingConfig?.advancedConfig?.fallbackFrames || existingConfig?.advancedConfig?.fallbackDuration) || 169,
+            maxSegmentFrames: parseInt(existingConfig?.advancedConfig?.maxSegmentFrames || existingConfig?.advancedConfig?.maxSegmentDuration) || 169,
+            overlapFrames: (existingConfig?.advancedConfig?.overlapFrames !== undefined) ? parseInt(existingConfig.advancedConfig.overlapFrames) :
+                           ((existingConfig?.advancedConfig?.segmentOverlap !== undefined) ? parseInt(existingConfig.advancedConfig.segmentOverlap) : 50),
+            manualFrameOffset: parseInt(existingConfig?.advancedConfig?.manualFrameOffset) || 0
+        }
     };
+    // Migration: If values are too low (likely were seconds), reset to frames
+    if (config.advancedConfig.maxSegmentFrames < 16) config.advancedConfig.maxSegmentFrames = 169;
+    if (config.advancedConfig.fallbackFrames < 16) config.advancedConfig.fallbackFrames = 169;
     const allKeys = [];
     analysis.inputs?.forEach(g => g.inputs.forEach(i => { allKeys.push(i.key); if (config.visibleInputs[i.key] === undefined) config.visibleInputs[i.key] = true; }));
     analysis.advancedInputs?.forEach(g => g.inputs.forEach(p => { allKeys.push(p.key); if (config.visibleParams[p.key] === undefined) config.visibleParams[p.key] = true; }));
@@ -694,8 +705,8 @@ const preSegmentHandler = async (req, res) => {
         const videoFpsStr = vstream?.r_frame_rate || '24/1';
         const videoFps = eval(videoFpsStr);
 
-        const segmentFrames = parseInt(advancedConfig?.maxSegmentDuration ?? 169);
-        const overlapFrames = parseInt(advancedConfig?.segmentOverlap ?? 50);
+        const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
+        const overlapFrames = (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50;
         const actualOverlapDuration = overlapFrames / videoFps;
         const stepFrames = segmentFrames - overlapFrames;
         const totalVideoFrames = Math.round(videoDuration * videoFps);
@@ -730,10 +741,14 @@ const preSegmentHandler = async (req, res) => {
                     .setStartTime(seg.start)
                     .setDuration(seg.duration);
 
-                const vf = [];
+                const fpsVal = videoFpsStr || '24/1';
+                const vf = [`fps=${fpsVal}`];
+                const af = [];
+
                 // Pad with black frames if shorter than segmentFrames
                 if (seg.actualFrames < segmentFrames) {
                     vf.push(`tpad=stop_mode=add:stop_duration=${(segmentFrames - seg.actualFrames) / videoFps}:color=black`);
+                    af.push(`apad=pad_dur=${(segmentFrames - seg.actualFrames) / videoFps}`);
                 }
 
                 cmd.outputOptions([
@@ -743,10 +758,12 @@ const preSegmentHandler = async (req, res) => {
                     '-crf 18',
                     '-c:a aac',
                     '-avoid_negative_ts make_zero',
-                    '-force_key_frames 0'
+                    '-force_key_frames 0',
+                    `-frames:v ${segmentFrames}` // Strict frame count enforcement
                 ]);
 
                 if (vf.length > 0) cmd.videoFilters(vf);
+                if (af.length > 0) cmd.audioFilters(af);
 
                 cmd.output(outputPath)
                     .on('end', resolve)
@@ -810,8 +827,8 @@ const processSegmentedHandler = async (req, res) => {
             }
         }
 
-        const segmentFrames = parseInt(advancedConfig?.maxSegmentDuration ?? 169);
-        const overlapFrames = parseInt(advancedConfig?.segmentOverlap ?? 50);
+        const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
+        const overlapFrames = (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50;
         const actualOverlapDuration = overlapFrames / videoFps;
         const stepFrames = segmentFrames - overlapFrames;
         const totalVideoFrames = Math.round(videoDuration * videoFps);
@@ -848,13 +865,28 @@ const processSegmentedHandler = async (req, res) => {
                         .setStartTime(seg.start)
                         .setDuration(seg.duration);
 
-                    const vf = [];
+                    const fpsVal = videoFpsStr || '24/1';
+                    const vf = [`fps=${fpsVal}`];
+                    const af = [];
+
                     if (seg.actualFrames < segmentFrames) {
                         vf.push(`tpad=stop_mode=add:stop_duration=${(segmentFrames - seg.actualFrames) / videoFps}:color=black`);
+                        af.push(`apad=pad_dur=${(segmentFrames - seg.actualFrames) / videoFps}`);
                     }
 
-                    cmd.outputOptions(['-map 0', '-c:v libx264', '-preset superfast', '-crf 18', '-c:a aac', '-avoid_negative_ts make_zero', '-force_key_frames 0']);
+                    cmd.outputOptions([
+                        '-map 0',
+                        '-c:v libx264',
+                        '-preset superfast',
+                        '-crf 18',
+                        '-c:a aac',
+                        '-avoid_negative_ts make_zero',
+                        '-force_key_frames 0',
+                        `-frames:v ${segmentFrames}` // Strict frame count enforcement
+                    ]);
+
                     if (vf.length > 0) cmd.videoFilters(vf);
+                    if (af.length > 0) cmd.audioFilters(af);
 
                     cmd.output(outputPath).on('end', resolve).on('error', reject).run();
                 });
