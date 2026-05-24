@@ -244,51 +244,55 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
 
     let filterGraph = '';
     const resolutions = [];
-    for (const p of processedSegments) {
-        const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
-        const stream = probeMeta?.streams?.find(s => s.codec_type === 'video');
-        resolutions.push({ width: stream?.width || 0, height: stream?.height || 0 });
-    }
-
-    const targetWidth = Math.max(...resolutions.map(r => r.width));
-    const targetHeight = Math.max(...resolutions.map(r => r.height));
-
     let hasAudio = true;
     for (const p of processedSegments) {
         const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
-        if (!probeMeta?.streams?.some(s => s.codec_type === 'audio')) { hasAudio = false; break; }
+        const vstream = probeMeta?.streams?.find(s => s.codec_type === 'video');
+        resolutions.push({ width: vstream?.width || 0, height: vstream?.height || 0 });
+        if (!probeMeta?.streams?.some(s => s.codec_type === 'audio')) hasAudio = false;
     }
+
+    const targetWidth = Math.ceil(Math.max(...resolutions.map(r => r.width)) / 2) * 2;
+    const targetHeight = Math.ceil(Math.max(...resolutions.map(r => r.height)) / 2) * 2;
 
     const manualFrameOffset = parseFloat(advancedConfig?.manualFrameOffset ?? 0);
     const timeOffset = manualFrameOffset / meta.videoFps;
 
+    // To prevent repetition, we must treat inputs as a continuous sequence where junctions
+    // are defined by the NEXT segment's start point.
     processedSegments.forEach((p, i) => {
         const fpsVal = meta.videoFpsStr || '24/1';
-        const intendedDur = meta.segmentFrames / meta.videoFps;
-        const tpadDur = intendedDur + 1.0;
+        const segMeta = meta.segments[i];
 
-        filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},tpad=stop_mode=clone:stop_duration=${tpadDur},trim=duration=${intendedDur},setpts=PTS-STARTPTS[pv${i}]; `;
+        // Video: Massive padding to ensure xfade always has source frames
+        filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=${fpsVal},tpad=stop_mode=clone:stop_duration=${meta.videoDuration},setpts=PTS-STARTPTS[pv${i}]; `;
+
         if (hasAudio) {
-            filterGraph += `[${i}:a]atrim=duration=${intendedDur},apad=pad_dur=${intendedDur},atrim=duration=${intendedDur},asetpts=PTS-STARTPTS[pa${i}]; `;
+            // Audio: Trim to the mathematical junction point.
+            // The junction is where the NEXT segment starts its intended content.
+            const nextStart = (i < processedSegments.length - 1) ? meta.segments[i+1].intendedStart : meta.videoDuration;
+            const currentStart = segMeta.intendedStart;
+            const junctionDur = nextStart - currentStart;
+            // Add a tiny overlap buffer for acrossfade (0.1s)
+            const trimDur = Math.max(0.1, junctionDur + 0.1);
+            filterGraph += `[${i}:a]atrim=0:${trimDur},asetpts=PTS-STARTPTS[pa${i}]; `;
         }
     });
 
     for (let i = 0; i < processedSegments.length - 1; i++) {
-        // Calculate the actual overlap in seconds for THIS specific transition
-        const currentSegEnd = meta.segments[i].endFrame;
-        const nextSegStart = meta.segments[i + 1].startFrame;
-        const overlapFrames = currentSegEnd - nextSegStart;
-        const fadeDuration = overlapFrames / meta.videoFps;
+        const nextSegStart = meta.segments[i + 1].intendedStart;
+        const currentSegEnd = meta.segments[i].endFrame / meta.videoFps;
+        const fadeDuration = Math.max(0.01, currentSegEnd - nextSegStart);
 
-        const nextSegIntendedStart = meta.segments[i + 1].intendedStart;
-        const currentOffset = nextSegIntendedStart + timeOffset;
+        console.log(`[Reassemble] Transition ${i} -> ${i+1}: Offset=${nextSegStart.toFixed(3)}s, Fade=${fadeDuration.toFixed(3)}s`);
 
         const leftV = (i === 0) ? 'pv0' : `v${i}`;
-        filterGraph += `[${leftV}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${currentOffset}[v${i + 1}]; `;
+        filterGraph += `[${leftV}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${nextSegStart}[v${i + 1}]; `;
 
         if (hasAudio) {
             const leftA = (i === 0) ? 'pa0' : `a${i}`;
-            filterGraph += `[${leftA}][pa${i + 1}]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
+            // Use a constant small acrossfade to blend the junctions we trimmed above
+            filterGraph += `[${leftA}][pa${i + 1}]acrossfade=d=0.1[a${i + 1}]; `;
         }
     }
 
@@ -297,10 +301,15 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     let finalA = hasAudio ? (lastIdx === 0 ? 'pa0' : `a${lastIdx}`) : null;
 
     const finalTrimDur = meta.videoDuration;
-    filterGraph += `[${finalV}]trim=duration=${finalTrimDur}[fv]; `;
+    filterGraph += `[${finalV}]trim=duration=${finalTrimDur},setpts=PTS-STARTPTS[fv]; `;
     finalV = 'fv';
+
     if (hasAudio) {
-        filterGraph += `[${finalA}]atrim=duration=${finalTrimDur}[fa]; `;
+        let audioFilters = `atrim=duration=${finalTrimDur},asetpts=PTS-STARTPTS`;
+        // Apply manual AV-sync offset to the final audio track
+        if (timeOffset > 0) audioFilters = `adelay=${Math.round(timeOffset * 1000)}|${Math.round(timeOffset * 1000)},${audioFilters}`;
+        else if (timeOffset < 0) audioFilters = `atrim=start=${Math.abs(timeOffset)},${audioFilters}`;
+        filterGraph += `[${finalA}]${audioFilters}[fa]; `;
         finalA = 'fa';
     }
 
