@@ -1,15 +1,43 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
-let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
+let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 10 } };
 window._pixaroma_session_previews = {};
 window.mediaFiles = {};
 let mediaFiles = window.mediaFiles;
+let segmentedRuns = {};
 let parameters = {};
 let bypassedNodes = {};
 let originalValues = {};
 let currentPresets = [];
+let currentOutputPath = '';
+let selectedItems = new Set();
 
 function initIcons() { if (window.lucide) window.lucide.createIcons(); }
+
+async function chunkedUpload(file, key, onProgress) {
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const uploadId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+    let result = null;
+
+    for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+        const formData = new FormData();
+        formData.append('chunk', chunk);
+        formData.append('uploadId', uploadId);
+        formData.append('chunkIndex', i);
+        formData.append('totalChunks', totalChunks);
+        formData.append('filename', file.name);
+
+        const res = await fetch('/api/upload/chunk', { method: 'POST', body: formData });
+        result = await res.json();
+        if (!result.success) throw new Error(result.error || 'Chunk upload failed');
+        if (onProgress) onProgress(Math.round(((i + 1) / totalChunks) * 100));
+    }
+    return result;
+}
 
 async function loadWorkflows() {
     try {
@@ -46,7 +74,24 @@ async function loadWorkflow(id) {
 
 function setupWorkflow(data) {
     currentWorkflow = data.analysis;
-    uiConfig = data.uiConfig;
+    uiConfig = data.uiConfig || uiConfig;
+    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2 };
+
+    // Sync UI with advancedConfig
+    const segToggles = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];
+    segToggles.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = uiConfig.advancedConfig.segmented;
+    });
+    const thresholdInput = document.getElementById('scene-threshold');
+    if (thresholdInput) thresholdInput.value = uiConfig.advancedConfig.sceneThreshold;
+    const durationInput = document.getElementById('fallback-duration');
+    if (durationInput) durationInput.value = uiConfig.advancedConfig.fallbackDuration;
+    const maxDurationInput = document.getElementById('max-segment-duration');
+    if (maxDurationInput) maxDurationInput.value = uiConfig.advancedConfig.maxSegmentDuration;
+    const overlapInput = document.getElementById('segment-overlap');
+    if (overlapInput) overlapInput.value = uiConfig.advancedConfig.segmentOverlap;
+
     originalValues = data.originalValues || {};
 
     // POPULATE SHIM WITH SAVED DATA IMMEDIATELY
@@ -78,8 +123,29 @@ function setupWorkflow(data) {
 
 function refreshUI() {
     renderMediaConfig(); renderParametersConfig(); renderLiveUI(); renderPresets(currentPresets);
+
+    // Sync threshold and duration inputs to uiConfig
+    const thresholdInput = document.getElementById('scene-threshold');
+    if (thresholdInput) thresholdInput.onchange = (e) => uiConfig.advancedConfig.sceneThreshold = parseFloat(e.target.value);
+    const durationInput = document.getElementById('fallback-duration');
+    if (durationInput) durationInput.onchange = (e) => uiConfig.advancedConfig.fallbackDuration = parseInt(e.target.value);
+    const maxDurationInput = document.getElementById('max-segment-duration');
+    if (maxDurationInput) maxDurationInput.onchange = (e) => uiConfig.advancedConfig.maxSegmentDuration = parseInt(e.target.value);
+    const overlapInput = document.getElementById('segment-overlap');
+    if (overlapInput) overlapInput.onchange = (e) => uiConfig.advancedConfig.segmentOverlap = parseFloat(e.target.value);
+
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }
+
+function syncSegmentedToggles(checked) {
+    uiConfig.advancedConfig.segmented = checked;
+    const ids = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = checked;
+    });
+}
+window.syncSegmentedToggles = syncSegmentedToggles;
 
 function moveNode(key, direction) {
     const idx = uiConfig.inputOrder.indexOf(key);
@@ -231,7 +297,34 @@ function renderLiveUI() {
         div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
 
         if (obj.type === 'media') {
-            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div><div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"><input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')"><div id="preview-${key}" class="text-center p-4"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p></div></div>`;
+            const isSegmented = uiConfig.advancedConfig?.segmented && obj.data.valueType === 'video';
+            const runInfo = segmentedRuns[key];
+            const segmentedHtml = isSegmented ? `
+                <div class="mt-4 pt-4 border-t border-slate-700/50">
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="flex-1">
+                            <label class="block text-[8px] font-bold text-slate-500 uppercase mb-1">Segmented Upload</label>
+                            <div class="relative group aspect-video bg-slate-800 rounded-lg border border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer">
+                                <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleSegmentedUpload(this.files[0], '${key}')">
+                                <div id="segmented-preview-${key}" class="text-center p-2">
+                                    <i data-lucide="split" class="w-6 h-6 mb-1 mx-auto text-slate-600"></i>
+                                    <p class="text-[8px] text-slate-500">Click to Upload & Segment</p>
+                                </div>
+                                <div id="segmented-progress-container-${key}" class="hidden absolute inset-x-0 bottom-0 p-2 bg-slate-900/80">
+                                    <div class="w-full bg-slate-700 h-1 rounded-full overflow-hidden">
+                                        <div id="segmented-progress-bar-${key}" class="bg-blue-500 h-full transition-all" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="status-card-${key}" class="hidden flex-1 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                             <div class="text-[10px] font-bold text-blue-400 mb-1" id="status-text-${key}">Ready</div>
+                             <div class="text-[8px] text-slate-500" id="status-sub-${key}">0 segments</div>
+                        </div>
+                    </div>
+                </div>` : '';
+
+            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div><div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"><input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')"><div id="preview-${key}" class="text-center p-4"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p></div><div id="media-progress-container-${key}" class="hidden absolute inset-x-0 bottom-0 p-4 bg-slate-900/80"><div class="w-full bg-slate-700 h-1.5 rounded-full overflow-hidden"><div id="media-progress-bar-${key}" class="bg-blue-500 h-full transition-all" style="width: 0%"></div></div></div></div>${segmentedHtml}`;
         } else {
             const cur = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
             const isRandom = parameters['_autoRandomSeed']?.[key] === true;
@@ -266,17 +359,115 @@ function renderLiveUI() {
     initIcons();
 }
 
+async function handleSegmentedUpload(file, key) {
+    if (!file) return;
+    const p = document.getElementById(`segmented-preview-${key}`);
+    const card = document.getElementById(`status-card-${key}`);
+    const stext = document.getElementById(`status-text-${key}`);
+    const ssub = document.getElementById(`status-sub-${key}`);
+    const progCont = document.getElementById(`segmented-progress-container-${key}`);
+    const progBar = document.getElementById(`segmented-progress-bar-${key}`);
+
+    p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-4 w-4 mx-auto"></div>';
+
+    try {
+        let upData;
+        if (file.size > 10 * 1024 * 1024) {
+            progCont.classList.remove('hidden');
+            upData = await chunkedUpload(file, key, (percent) => {
+                progBar.style.width = percent + '%';
+            });
+            progCont.classList.add('hidden');
+        } else {
+            const fd = new FormData(); fd.append('media', file);
+            const upRes = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
+            if (!upRes.ok) throw new Error('Upload failed');
+            upData = await upRes.json();
+        }
+
+        stext.textContent = 'Segmenting...';
+        card.classList.remove('hidden');
+
+        const segRes = await fetch('/api/video/pre-segment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: upData.filename, advancedConfig: uiConfig.advancedConfig })
+        });
+        const segData = await segRes.json();
+        if (segData.success) {
+            window.mediaFiles[key] = upData.filename;
+            segmentedRuns[key] = { runId: segData.runId, segments: segData.segments };
+            stext.textContent = 'READY';
+            stext.className = 'text-[10px] font-bold text-emerald-400 mb-1';
+            ssub.textContent = `${segData.segments.length} segments`;
+            p.innerHTML = `<video src="${upData.url || `/output/${upData.filename}`}" class="w-full h-full object-cover"></video>`;
+        } else throw new Error(segData.error);
+    } catch (e) {
+        console.error(e);
+        stext.textContent = 'FAILED';
+        stext.className = 'text-[10px] font-bold text-red-400 mb-1';
+        ssub.textContent = e.message;
+        p.innerHTML = '<i data-lucide="alert-circle" class="w-6 h-6 text-red-500 mx-auto"></i>';
+        initIcons();
+    }
+}
+
 async function handleMediaUpload(file, key) {
     if (!file) return;
+
+    // Show video processing options if a large video is uploaded
+    const isVideo = file.type.startsWith('video/');
+    const options = document.getElementById('video-processing-options');
+    if (options) {
+        if (isVideo && file.size > 50 * 1024 * 1024) { // > 50MB
+            options.classList.remove('hidden');
+        } else if (!window.mediaFiles || !Object.values(window.mediaFiles).some(v => v.endsWith('.mp4') || v.endsWith('.webm'))) {
+            options.classList.add('hidden');
+        }
+    }
+
     const p = document.getElementById(`preview-${key}`);
+    const progCont = document.getElementById(`media-progress-container-${key}`);
+    const progBar = document.getElementById(`media-progress-bar-${key}`);
+
     p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-6 w-6 mx-auto"></div>';
-    const fd = new FormData(); fd.append('media', file);
+
     try {
-        const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
-        const data = await res.json();
-        window.mediaFiles[key] = data.filename;
-        p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
-    } catch (e) { p.innerHTML = '<i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i>'; initIcons(); }
+        let data;
+        if (file.size > 10 * 1024 * 1024) {
+            progCont.classList.remove('hidden');
+            data = await chunkedUpload(file, key, (percent) => {
+                progBar.style.width = percent + '%';
+            });
+            progCont.classList.add('hidden');
+        } else {
+            const fd = new FormData(); fd.append('media', file);
+            const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
+            data = await res.json();
+        }
+
+        if (data.success) {
+            window.mediaFiles[key] = data.filename;
+            const mediaUrl = data.url || `/output/${data.filename}`;
+            if (data.type === 'video') {
+                p.innerHTML = `<video src="${mediaUrl}" class="w-full h-full object-cover"></video>
+                <div class="absolute bottom-2 right-2 flex gap-2">
+                    <button onclick="preSegmentVideo('${data.filename}', '${key}', event)" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[8px] font-bold rounded shadow-lg transition-all flex items-center gap-1">
+                        <i data-lucide="split" class="w-3 h-3"></i>
+                        <span>PROCESS & SEGMENT</span>
+                    </button>
+                </div>`;
+            } else {
+                p.innerHTML = `<img src="${mediaUrl}" class="w-full h-full object-cover">`;
+            }
+        } else {
+            throw new Error(data.error || 'Upload failed');
+        }
+    } catch (e) {
+        console.error('Upload error:', e);
+        p.innerHTML = `<div class="text-center"><i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i><p class="text-[8px] text-red-500 mt-1">${e.message}</p></div>`;
+        initIcons();
+    }
 }
 
 function toggleBypass(id, src) {
@@ -291,18 +482,148 @@ function toggleRandom(key) {
     renderLiveUI();
 }
 
-async function runWorkflow() {
-    const btn = document.getElementById('generate-btn'); const ov = document.getElementById('loading-overlay');
-    btn.disabled = true; ov.classList.remove('hidden');
+let lastPreSegmentRunId = null;
+
+async function preSegmentVideo(filename, key, ev) {
+    const btn = ev.currentTarget;
+    const originalContent = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader" class="w-3 h-3 animate-spin"></i><span>ANALYZING...</span>';
+    initIcons();
+
+    const statusMini = document.getElementById('segment-status-mini');
+    if (statusMini) { statusMini.classList.remove('hidden'); statusMini.textContent = 'Analyzing & Segmenting...'; }
+
     try {
-        const res = await fetch('/api/workflow/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mediaFiles, parameters, bypassedNodes }) });
+        const res = await fetch('/api/video/pre-segment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename, advancedConfig: uiConfig.advancedConfig })
+        });
         const data = await res.json();
-        if (data.success && data.files.length > 0) {
-            const f = data.files[0]; const c = document.getElementById('output-media-container'); const ph = document.getElementById('output-placeholder');
-            ph.classList.add('hidden'); c.classList.remove('hidden'); c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer rounded" onclick="showModal('${f.url}', 'image')">`;
-            refreshOutputs();
-        } else if (data.error) alert('Error: ' + data.error);
-    } catch (e) { alert('Connection error'); } finally { btn.disabled = false; ov.classList.add('hidden'); }
+        if (data.success) {
+            lastPreSegmentRunId = data.runId;
+            segmentedRuns[key] = { runId: data.runId, segments: data.segments };
+            alert(`Video split into ${data.segments.length} segments.`);
+            if (statusMini) statusMini.textContent = `Ready: ${data.segments.length} segments`;
+            btn.innerHTML = `<i data-lucide="check" class="w-3 h-3"></i><span>${data.segments.length} SEGMENTS</span>`;
+        } else {
+            alert('Segmentation failed: ' + data.error);
+            btn.innerHTML = originalContent;
+            btn.disabled = false;
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+        btn.innerHTML = originalContent;
+        btn.disabled = false;
+    }
+    initIcons();
+}
+window.preSegmentVideo = preSegmentVideo;
+
+async function runWorkflow() {
+    const btn = document.getElementById('generate-btn');
+    const ov = document.getElementById('loading-overlay');
+    const isSegmented = uiConfig.advancedConfig?.segmented;
+
+    btn.disabled = true;
+    ov.classList.remove('hidden');
+
+    const endpoint = isSegmented ? '/api/video/process-segmented' : '/api/workflow/run';
+
+    try {
+        if (isSegmented) {
+            // Check for per-input segments first
+            const segmentedInputs = {};
+            Object.entries(segmentedRuns).forEach(([k, v]) => {
+                if (window.mediaFiles[k]) segmentedInputs[k] = v.runId;
+            });
+
+            const statusMini = document.getElementById('segment-status-mini');
+            statusMini.classList.remove('hidden');
+            statusMini.textContent = 'Segmenting...';
+
+            // For segmented, we use a different progress tracking
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ workflowId: currentWorkflowId, mediaFiles, parameters, bypassedNodes, advancedConfig: uiConfig.advancedConfig, runId: lastPreSegmentRunId, segmentedInputs })
+            });
+
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.error || 'Server error');
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                const lines = decoder.decode(value).split('\n');
+                for (const line of lines) {
+                    if (!line.trim()) continue;
+                    try {
+                        const update = JSON.parse(line);
+                        if (update.status) {
+                            statusMini.textContent = update.status;
+                            const hint = document.querySelector('[data-i18n="processing_hint"]');
+                            if (hint) hint.textContent = update.status;
+                        }
+                        if (update.progress) {
+                            const pCont = document.getElementById('overlay-progress-container');
+                            const pBar = document.getElementById('overlay-progress-bar');
+                            const pText = document.getElementById('overlay-progress-text');
+                            const pSub = document.getElementById('overlay-progress-sub');
+                            if (pCont) {
+                                pCont.classList.remove('hidden');
+                                pBar.style.width = update.progress.percent + '%';
+                                pText.textContent = update.progress.percent + '%';
+                                pSub.innerHTML = `<span data-i18n="step">${getTranslation('step')}</span> ${update.progress.current}/${update.progress.total}`;
+                            }
+                        }
+                        if (update.success && update.files) {
+                            const f = update.files[0];
+                            const c = document.getElementById('output-media-container');
+                            const ph = document.getElementById('output-placeholder');
+                            ph.classList.add('hidden');
+                            c.classList.remove('hidden');
+                            c.innerHTML = `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>`;
+                            refreshOutputs();
+                        }
+                    } catch (e) {}
+                }
+            }
+            statusMini.classList.add('hidden');
+        } else {
+            const res = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes })
+            });
+            const data = await res.json();
+            if (data.success && data.files.length > 0) {
+                const f = data.files[0];
+                const c = document.getElementById('output-media-container');
+                const ph = document.getElementById('output-placeholder');
+                ph.classList.add('hidden');
+                c.classList.remove('hidden');
+                c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer rounded" onclick="showModal('${f.url}', 'image')">`;
+                refreshOutputs();
+            } else if (data.error) alert('Error: ' + data.error);
+        }
+    } catch (e) {
+        alert('Connection error');
+    } finally {
+        btn.disabled = false;
+        ov.classList.add('hidden');
+        const pCont = document.getElementById('overlay-progress-container');
+        if (pCont) pCont.classList.add('hidden');
+        const hint = document.querySelector('[data-i18n="processing_hint"]');
+        if (hint) hint.setAttribute('data-i18n', 'processing_hint');
+    }
 }
 
 async function saveUIConfig() {
@@ -318,9 +639,17 @@ async function saveWorkflow() {
     const desc = document.getElementById('save-description').value;
     if (!name) return alert('Name is required');
     try {
-        const res = await fetch('/api/workflows/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, description: desc, presets: currentPresets }) });
+        const res = await fetch('/api/workflows/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, description: desc, presets: currentPresets, config: uiConfig })
+        });
         const data = await res.json();
-        if (data.success) { loadWorkflows(); alert(getTranslation('saved_msg')); }
+        if (data.success) {
+            currentWorkflowId = data.id;
+            loadWorkflows();
+            alert(getTranslation('saved_msg'));
+        }
     } catch (e) { console.error(e); }
 }
 
@@ -358,23 +687,201 @@ async function deleteWorkflow(id) {
     try { await fetch(`/api/workflows/delete/${id}`, { method: 'DELETE' }); loadWorkflows(); } catch (e) { console.error(e); }
 }
 
+let lastOutputPath = null;
+
 async function refreshOutputs() {
     try {
-        const res = await fetch('/api/outputs');
+        const res = await fetch(`/api/outputs?path=${encodeURIComponent(currentOutputPath)}`);
         const data = await res.json();
         const gallery = document.getElementById('outputs-gallery');
         gallery.innerHTML = '';
-        if (data.files.length === 0) { gallery.innerHTML = '<div class="col-span-full text-center py-12 text-slate-600 italic" data-i18n="no_outputs">No items found</div>'; translatePage(localStorage.getItem('preferredLanguage') || 'en'); return; }
+
+        if (lastOutputPath !== currentOutputPath) {
+            selectedItems.clear();
+            lastOutputPath = currentOutputPath;
+        }
+
+        updateBatchBtn();
+        renderGalleryNav();
+
+        if (data.files.length === 0) {
+            gallery.innerHTML = '<div class="col-span-full text-center py-12 text-slate-600 italic" data-i18n="no_outputs">No items found</div>';
+            translatePage(localStorage.getItem('preferredLanguage') || 'en');
+            return;
+        }
+
         data.files.forEach(f => {
-            const card = document.createElement('div'); card.className = 'slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square';
-            card.innerHTML = `${f.type === 'video' ? `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>` : `<img src="${f.url}" class="w-full h-full object-cover">`}<button onclick="event.stopPropagation(); deleteOutput('${f.name}')" class="absolute top-2 right-2 p-1.5 bg-red-600 rounded-full text-white opacity-0 group-hover:opacity-100 transition-all shadow-lg"><i data-lucide="trash-2" class="w-3 h-3"></i></button>`;
-            card.onclick = () => showModal(f.url, f.type); gallery.appendChild(card);
+            const isSelected = selectedItems.has(f.name);
+            const card = document.createElement('div');
+            card.className = `slate-card rounded-lg overflow-hidden group cursor-pointer relative aspect-square transition-all ${f.isFolder ? 'bg-slate-800/50' : ''} ${isSelected ? 'ring-2 ring-blue-500' : ''}`;
+
+            let content = '';
+            if (f.isFolder) {
+                content = `<div class="w-full h-full flex flex-col items-center justify-center gap-2 p-4">
+                    <i data-lucide="folder" class="w-12 h-12 text-blue-500"></i>
+                    <span class="text-[10px] font-medium text-slate-300 truncate w-full text-center">${f.name}</span>
+                </div>`;
+            } else if (f.type === 'video') {
+                content = `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>`;
+            } else {
+                content = `<img src="${f.url}" class="w-full h-full object-cover">`;
+            }
+
+            card.innerHTML = `
+                ${content}
+                <div id="check-container-${f.name.replace(/[^a-z0-9]/gi, '_')}" class="absolute top-2 left-2 transition-all z-20 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}">
+                    <input type="checkbox" class="w-4 h-4 rounded border-slate-700 bg-slate-900 text-blue-600 item-select" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation()" onchange="toggleItemSelection('${f.name}', this.checked)">
+                </div>
+                <div class="absolute top-2 right-2 flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-all z-20">
+                    <button onclick="event.stopPropagation(); deleteOutput('${f.name}')" class="p-1.5 bg-red-600 rounded-lg text-white shadow-lg hover:bg-red-700"><i data-lucide="trash-2" class="w-3 h-3"></i></button>
+                    <button onclick="event.stopPropagation(); renameOutput('${f.name}')" class="p-1.5 bg-slate-700 rounded-lg text-white shadow-lg hover:bg-slate-600"><i data-lucide="edit-3" class="w-3 h-3"></i></button>
+                    <button onclick="event.stopPropagation(); moveOutput('${f.name}')" class="p-1.5 bg-slate-700 rounded-lg text-white shadow-lg hover:bg-slate-600"><i data-lucide="external-link" class="w-3 h-3"></i></button>
+                </div>
+            `;
+
+            card.onclick = () => {
+                if (f.isFolder) {
+                    currentOutputPath = currentOutputPath ? `${currentOutputPath}/${f.name}` : f.name;
+                    refreshOutputs();
+                } else {
+                    showModal(f.url, f.type);
+                }
+            };
+            gallery.appendChild(card);
         });
         initIcons();
+        translatePage(localStorage.getItem('preferredLanguage') || 'en');
     } catch (e) { console.error(e); }
 }
 
-async function deleteOutput(fn) { if (!confirm('Delete file?')) return; try { await fetch(`/api/outputs/${fn}`, { method: 'DELETE' }); refreshOutputs(); } catch (e) { console.error(e); } }
+function renderGalleryNav() {
+    const nav = document.getElementById('gallery-nav');
+    if (!nav) return;
+    nav.innerHTML = '';
+
+    const parts = currentOutputPath ? currentOutputPath.split('/') : [];
+
+    const rootBtn = document.createElement('button');
+    rootBtn.className = 'hover:text-white transition-colors flex items-center gap-1';
+    rootBtn.innerHTML = `<i data-lucide="home" class="w-3 h-3"></i> <span data-i18n="root">Root</span>`;
+    rootBtn.onclick = () => { currentOutputPath = ''; refreshOutputs(); };
+    nav.appendChild(rootBtn);
+
+    let pathAcc = '';
+    parts.forEach((p, idx) => {
+        pathAcc = pathAcc ? `${pathAcc}/${p}` : p;
+        const currentPath = pathAcc;
+
+        const sep = document.createElement('span');
+        sep.innerHTML = '<i data-lucide="chevron-right" class="w-3 h-3"></i>';
+        nav.appendChild(sep);
+
+        const btn = document.createElement('button');
+        btn.className = 'hover:text-white transition-colors';
+        btn.textContent = p;
+        btn.onclick = () => { currentOutputPath = currentPath; refreshOutputs(); };
+        nav.appendChild(btn);
+    });
+    initIcons();
+    translatePage(localStorage.getItem('preferredLanguage') || 'en');
+}
+
+function toggleItemSelection(name, selected) {
+    if (selected) selectedItems.add(name);
+    else selectedItems.delete(name);
+
+    // Update visibility immediately
+    const container = document.getElementById(`check-container-${name.replace(/[^a-z0-9]/gi, '_')}`);
+    if (container) {
+        if (selected) container.classList.replace('opacity-0', 'opacity-100');
+        else container.classList.replace('opacity-100', 'opacity-0');
+    }
+
+    updateBatchBtn();
+}
+
+function updateBatchBtn() {
+    const dBtn = document.getElementById('delete-batch-btn');
+    const mBtn = document.getElementById('move-batch-btn');
+    const hasSelection = selectedItems.size > 0;
+    if (dBtn) dBtn.classList.toggle('hidden', !hasSelection);
+    if (mBtn) mBtn.classList.toggle('hidden', !hasSelection);
+}
+
+async function deleteOutput(name) {
+    if (!confirm(getTranslation('confirm_delete_items'))) return;
+    try {
+        const fullFn = currentOutputPath ? `${currentOutputPath}/${name}` : name;
+        await fetch(`/api/outputs?filename=${encodeURIComponent(fullFn)}`, { method: 'DELETE' });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function moveOutput(name) {
+    const targetPath = prompt(getTranslation('move_to'), currentOutputPath);
+    if (targetPath === null) return;
+    try {
+        await fetch('/api/outputs/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourcePath: currentOutputPath, items: [name], targetPath })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function moveBatch() {
+    if (selectedItems.size === 0) return;
+    const targetPath = prompt(getTranslation('move_to'), currentOutputPath);
+    if (targetPath === null) return;
+    try {
+        await fetch('/api/outputs/move', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sourcePath: currentOutputPath, items: Array.from(selectedItems), targetPath })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function renameOutput(oldName) {
+    const newName = prompt(getTranslation('new_name'), oldName);
+    if (!newName || newName === oldName) return;
+    try {
+        await fetch('/api/outputs/rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentOutputPath, oldName, newName })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function createFolder() {
+    const name = prompt(getTranslation('folder_name'));
+    if (!name) return;
+    try {
+        await fetch('/api/outputs/mkdir', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentOutputPath, name })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
+
+async function deleteBatch() {
+    if (selectedItems.size === 0) return;
+    if (!confirm(getTranslation('confirm_delete_items'))) return;
+    try {
+        await fetch('/api/outputs/delete-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentOutputPath, items: Array.from(selectedItems) })
+        });
+        refreshOutputs();
+    } catch (e) { console.error(e); }
+}
 
 function showModal(url, type) {
     const m = document.getElementById('media-modal'); const c = document.getElementById('modal-content');
@@ -405,6 +912,9 @@ function initAdmin() {
     if (document.getElementById('save-ui-config')) document.getElementById('save-ui-config').onclick = saveUIConfig;
     if (document.getElementById('generate-btn')) document.getElementById('generate-btn').onclick = runWorkflow;
     if (document.getElementById('refresh-outputs-btn')) document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
+    if (document.getElementById('mkdir-btn')) document.getElementById('mkdir-btn').onclick = createFolder;
+    if (document.getElementById('move-batch-btn')) document.getElementById('move-batch-btn').onclick = moveBatch;
+    if (document.getElementById('delete-batch-btn')) document.getElementById('delete-batch-btn').onclick = deleteBatch;
     if (document.getElementById('close-modal')) document.getElementById('close-modal').onclick = () => document.getElementById('media-modal').classList.add('hidden');
 
     const addUrlBtn = document.getElementById('add-url-btn');
