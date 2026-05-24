@@ -99,198 +99,6 @@ async function uploadFileToInstance(instanceUrl, filePath, originalName, mimetyp
     return await res.json();
 }
 
-async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
-    const videoMetadata = await new Promise((res, rej) => { ffmpeg.ffprobe(inputVideo, (err, m) => err ? rej(err) : res(m)); });
-    const videoDuration = parseFloat(videoMetadata.format.duration);
-    const vstream = videoMetadata.streams?.find(s => s.codec_type === 'video');
-    const videoFpsStr = vstream?.r_frame_rate || '24/1';
-    const videoFps = eval(videoFpsStr);
-
-    const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
-    const overlapFrames = Math.min(segmentFrames - 1, (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50);
-    const maxSegmentDuration = segmentFrames / videoFps;
-    const segmentOverlap = overlapFrames / videoFps;
-
-    // Detect scenes
-    const sceneThreshold = parseFloat(advancedConfig?.sceneThreshold ?? 0.2);
-    const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
-    await new Promise((resolve, reject) => {
-        ffmpeg(inputVideo).outputOptions(['-vf', `select='gt(scene,${sceneThreshold})',showinfo`, '-f', 'null']).output('-')
-            .on('stderr', line => { const m = line.match(/pts_time:([\d.]+)/); if (m) fs.appendFileSync(sceneChangeFile, m[1] + ','); })
-            .on('end', resolve).on('error', reject).run();
-    });
-
-    let segmentTimes = [];
-    if (fs.existsSync(sceneChangeFile)) {
-        segmentTimes = fs.readFileSync(sceneChangeFile, 'utf8').split(',').filter(t => t.trim()).map(t => parseFloat(t));
-    }
-
-    const refinedTimes = [];
-    let lastTime = 0;
-    const allSplits = [...new Set([...segmentTimes, videoDuration])].sort((a, b) => a - b);
-    for (const st of allSplits) {
-        while (st - lastTime > maxSegmentDuration + 0.1) {
-            lastTime += maxSegmentDuration;
-            refinedTimes.push(lastTime);
-        }
-        if (st < videoDuration && st > lastTime + 0.1) {
-            lastTime = st;
-            refinedTimes.push(lastTime);
-        }
-    }
-
-    const segments = [];
-    if (videoDuration > maxSegmentDuration) {
-        let start = 0;
-        const safeOverlap = Math.max(0, Math.min(segmentOverlap, maxSegmentDuration - 0.5));
-        while (start < videoDuration) {
-            let end = Math.min(start + maxSegmentDuration, videoDuration);
-            segments.push({ start, duration: end - start, targetFrames: segmentFrames });
-            if (end >= videoDuration) break;
-            let nextStart = end - safeOverlap;
-            if (nextStart <= start) nextStart = start + 1;
-            start = nextStart;
-        }
-    } else {
-        segments.push({ start: 0, duration: videoDuration, targetFrames: segmentFrames });
-    }
-
-    const filePaths = [];
-    for (let i = 0; i < segments.length; i++) {
-        const seg = segments[i];
-        const outputIdx = String(i).padStart(3, '0');
-        const outputPath = path.join(segmentDir, `seg_${outputIdx}.mp4`);
-        filePaths.push(outputPath);
-
-        await new Promise((resolve, reject) => {
-            const actualFrames = Math.round(seg.duration * videoFps);
-            const cmd = ffmpeg(inputVideo)
-                .setStartTime(seg.start)
-                .setDuration(seg.duration);
-
-            const vf = [`fps=${videoFpsStr}`];
-            const af = [];
-
-            if (actualFrames < seg.targetFrames) {
-                const padDur = (seg.targetFrames - actualFrames) / videoFps;
-                vf.push(`tpad=stop_mode=clone:stop_duration=${padDur}`);
-                af.push(`apad=pad_dur=${padDur}`);
-            }
-
-            cmd.outputOptions([
-                '-map 0',
-                '-c:v libx264',
-                '-preset superfast',
-                '-crf 18',
-                '-c:a aac',
-                '-avoid_negative_ts make_zero',
-                `-frames:v ${seg.targetFrames}`
-            ]);
-
-            if (vf.length > 0) cmd.videoFilters(vf);
-            if (af.length > 0) cmd.audioFilters(af);
-
-            cmd.output(outputPath).on('end', resolve).on('error', reject).run();
-        });
-    }
-
-    const metadata = { videoDuration, videoFpsStr, videoFps, segmentFrames, overlapFrames, segments };
-    fs.writeFileSync(path.join(segmentDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
-    return { segmentDir, segments, filePaths, metadata };
-}
-
-async function reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig) {
-    const metaPath = path.join(segmentDir, 'metadata.json');
-    if (!fs.existsSync(metaPath)) throw new Error('Segmentation metadata not found');
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-
-    const cmd = ffmpeg();
-    processedSegments.forEach(p => cmd.input(p.path));
-
-    let filterGraph = '';
-    const resolutions = [], durations = [];
-    let hasAudio = true;
-    for (const p of processedSegments) {
-        const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
-        durations.push(parseFloat(probeMeta?.format?.duration || 0));
-        const vstream = probeMeta?.streams?.find(s => s.codec_type === 'video');
-        resolutions.push({ width: vstream?.width || 0, height: vstream?.height || 0 });
-        if (!probeMeta?.streams?.some(s => s.codec_type === 'audio')) hasAudio = false;
-    }
-
-    const targetWidth = Math.ceil(Math.max(...resolutions.map(r => r.width)) / 2) * 2;
-    const targetHeight = Math.ceil(Math.max(...resolutions.map(r => r.height)) / 2) * 2;
-
-    const manualFrameOffset = parseFloat(advancedConfig?.manualFrameOffset ?? 0);
-    const userTimeOffset = manualFrameOffset / meta.videoFps;
-    const segmentOverlap = meta.overlapFrames / meta.videoFps;
-
-    processedSegments.forEach((p, i) => {
-        filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p[pv${i}]; `;
-    });
-
-    let offset = 0;
-    for (let i = 0; i < processedSegments.length - 1; i++) {
-        const fadeDuration = segmentOverlap;
-        if (i === 0) {
-            offset = durations[0] - fadeDuration + userTimeOffset;
-            filterGraph += `[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]; `;
-            if (hasAudio) filterGraph += `[0:a][1:a]acrossfade=d=${fadeDuration}[a1]; `;
-        } else {
-            offset = offset + durations[i] - fadeDuration + userTimeOffset;
-            filterGraph += `[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
-            if (hasAudio) filterGraph += `[a${i}][${i + 1}:a]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
-        }
-    }
-
-    const lastIdx = processedSegments.length - 1;
-    await new Promise((resolve, reject) => {
-        const finalCmd = cmd.complexFilter(filterGraph.trim()).map(`[v${lastIdx}]`);
-        if (hasAudio) finalCmd.map(`[a${lastIdx}]`);
-        finalCmd.videoCodec('libx264').audioCodec('aac').outputOptions(['-pix_fmt yuv420p', '-crf 18'])
-            .save(finalPath).on('end', resolve).on('error', (err) => {
-                console.error('Xfade failed, falling back to concat:', err);
-                const listFile = path.join(segmentDir, 'list_fallback.txt');
-                fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p.path)}'`).join('\n'));
-                ffmpeg().input(listFile).inputOptions(['-f concat', '-safe 0']).videoCodec('libx264').audioCodec('aac').save(finalPath).on('end', resolve).on('error', reject);
-            });
-    });
-}
-
-const generateId = () => Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
-const generateRandomSeed = () => Math.floor(Math.random() * 1000000000000);
-
-
-function shouldGenerateRandomSeed(paramKey, paramValue, autoRandomFlags) {
-    if (autoRandomFlags?.[paramKey] === true || autoRandomFlags?.['_global'] === true) return true;
-    return paramValue === 'random' || paramValue === '' || paramValue === null;
-}
-
-function extractOriginalWorkflowValues(workflowApi) {
-    const values = {};
-    if (!workflowApi) return values;
-    for (const [nodeId, node] of Object.entries(workflowApi)) {
-        if (node.inputs) {
-            for (const [inputName, inputValue] of Object.entries(node.inputs)) {
-                if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) continue;
-                values[`node_${nodeId}_${inputName}`] = inputValue;
-            }
-        }
-    }
-    return values;
-}
-
-function applyBypass(workflow, bypassedNodes) {
-    if (!bypassedNodes) return workflow;
-    Object.entries(bypassedNodes).forEach(([nodeId, isBypassed]) => {
-        if (!isBypassed || !workflow[nodeId]) return;
-        const node = workflow[nodeId];
-        if (node.class_type?.includes('Save') || node.class_type?.includes('Preview') || node.class_type?.includes('Combine')) {
-            delete workflow[nodeId]; return;
-        }
-        let sourceLink = node.inputs ? Object.values(node.inputs).find(v => Array.isArray(v)) : null;
-        Object.values(workflow).forEach(other => {
-            if (!other.inputs) return;
             Object.entries(other.inputs).forEach(([k, v]) => {
                 if (Array.isArray(v) && String(v[0]) === String(nodeId)) {
                     if (sourceLink) other.inputs[k] = sourceLink; else delete other.inputs[k];
@@ -518,7 +326,7 @@ adminApp.post('/api/workflows/load/:id', (req, res) => {
 
 adminApp.post('/api/workflows/save', (req, res) => {
     if (!currentWorkflowData) return res.status(400).json({ error: 'No workflow loaded' });
-    const id = generateId(), name = req.body.name, fileName = `${name.replace(/[^a-z0-9]/gi, '_')}_\$${id}.json`, filePath = path.join('workflows', 'saved', fileName);
+    const id = generateId(), name = req.body.name, fileName = `${name.replace(/[^a-z0-9]/gi, '_')}_${id}.json`, filePath = path.join('workflows', 'saved', fileName);
     const savedUiConfig = req.body.config || uiConfig;
     fs.writeFileSync(filePath, JSON.stringify({ metadata: { id, name, description: req.body.description || '', createdAt: new Date().toISOString(), presets: req.body.presets || [] }, workflow: currentWorkflowData.raw, analysis: currentWorkflowData.analysis, uiConfig: savedUiConfig }, null, 2));
     currentWorkflowId = id;
@@ -854,15 +662,11 @@ async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
     const maxSegmentDuration = segmentFrames / videoFps;
     const segmentOverlap = overlapFrames / videoFps;
 
-    // Detect scenes
     const sceneThreshold = parseFloat(advancedConfig?.sceneThreshold ?? 0.2);
     const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
     await new Promise((resolve, reject) => {
         ffmpeg(inputVideo).outputOptions(['-vf', `select='gt(scene,${sceneThreshold})',showinfo`, '-f', 'null']).output('-')
-            .on('stderr', (line) => {
-                const match = line.match(/pts_time:([\d.]+)/);
-                if (match) fs.appendFileSync(sceneChangeFile, match[1] + ',');
-            })
+            .on('stderr', line => { const m = line.match(/pts_time:([\d.]+)/); if (m) fs.appendFileSync(sceneChangeFile, m[1] + ','); })
             .on('end', resolve).on('error', reject).run();
     });
 
@@ -888,13 +692,13 @@ async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
     const segments = [];
     if (videoDuration > maxSegmentDuration) {
         let start = 0;
-        const safeOverlap = Math.max(0, Math.min(segmentOverlap, maxSegmentDuration - 0.5));
+        const safeOverlap = Math.max(0.1, Math.min(segmentOverlap, maxSegmentDuration - 0.5));
         while (start < videoDuration) {
             let end = Math.min(start + maxSegmentDuration, videoDuration);
             segments.push({ start, duration: end - start });
             if (end >= videoDuration) break;
             let nextStart = end - safeOverlap;
-            if (nextStart <= start) nextStart = start + 1;
+            if (nextStart <= start) nextStart = start + 0.1;
             start = nextStart;
         }
     } else {
@@ -907,9 +711,19 @@ async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
         const outputIdx = String(i).padStart(3, '0');
         const outputPath = path.join(segmentDir, `seg_${outputIdx}.mp4`);
         filePaths.push(outputPath);
+
         await new Promise((resolve, reject) => {
-            ffmpeg(inputVideo).setStartTime(seg.start).setDuration(seg.duration)
-                .outputOptions(['-map 0', '-c:v libx264', '-preset superfast', '-crf 18', '-c:a aac', '-avoid_negative_ts make_zero'])
+            ffmpeg(inputVideo)
+                .setStartTime(seg.start)
+                .setDuration(seg.duration)
+                .outputOptions([
+                    '-map 0',
+                    '-c:v libx264',
+                    '-preset superfast',
+                    '-crf 18',
+                    '-c:a aac',
+                    '-avoid_negative_ts make_zero'
+                ])
                 .output(outputPath).on('end', resolve).on('error', reject).run();
         });
     }
@@ -919,7 +733,7 @@ async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
     return { segmentDir, segments, filePaths, metadata };
 }
 
-async function reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig) {
+async function reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig, originalAudioSource = null) {
     const metaPath = path.join(segmentDir, 'metadata.json');
     if (!fs.existsSync(metaPath)) throw new Error('Segmentation metadata not found');
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
@@ -929,24 +743,23 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
 
     let filterGraph = '';
     const resolutions = [], durations = [];
-    let hasAudio = true;
     for (const p of processedSegments) {
         const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
         durations.push(parseFloat(probeMeta?.format?.duration || 0));
         const vstream = probeMeta?.streams?.find(s => s.codec_type === 'video');
         resolutions.push({ width: vstream?.width || 0, height: vstream?.height || 0 });
-        if (!probeMeta?.streams?.some(s => s.codec_type === 'audio')) hasAudio = false;
     }
 
-    const targetWidth = Math.max(...resolutions.map(r => r.width));
-    const targetHeight = Math.max(...resolutions.map(r => r.height));
+    const targetWidth = Math.ceil(Math.max(...resolutions.map(r => r.width)) / 2) * 2;
+    const targetHeight = Math.ceil(Math.max(...resolutions.map(r => r.height)) / 2) * 2;
 
     const manualFrameOffset = parseFloat(advancedConfig?.manualFrameOffset ?? 0);
     const userTimeOffset = manualFrameOffset / meta.videoFps;
     const segmentOverlap = meta.overlapFrames / meta.videoFps;
 
+    // Pre-process all inputs to the same resolution and pixel format (EXACTLY AS IN EXEMPLU)
     processedSegments.forEach((p, i) => {
-        // Pre-process to target res and ensure xfade has enough source frames
+        // We add massive tpad duration to ensure we never run out of frames for the fade junction
         filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,tpad=stop_mode=clone:stop_duration=10[pv${i}]; `;
     });
 
@@ -954,27 +767,29 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     for (let i = 0; i < processedSegments.length - 1; i++) {
         const fadeDuration = segmentOverlap;
         if (i === 0) {
+            // formula from exemplify: offset = durations[0] - fadeDuration
             offset = durations[0] - fadeDuration + userTimeOffset;
             filterGraph += `[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]; `;
-            if (hasAudio) filterGraph += `[0:a][1:a]acrossfade=d=${fadeDuration}[a1]; `;
         } else {
+            // i-th transition uses (previous offset + current duration - fadeDuration)
             offset = offset + durations[i] - fadeDuration + userTimeOffset;
             filterGraph += `[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
-            if (hasAudio) filterGraph += `[a${i}][${i + 1}:a]acrossfade=d=${fadeDuration}[a${i + 1}]; `;
         }
     }
 
     const lastIdx = processedSegments.length - 1;
+    const finalV = `v${lastIdx}`;
+
     await new Promise((resolve, reject) => {
-        const finalCmd = cmd.complexFilter(filterGraph.trim()).map(`[v${lastIdx}]`);
-        if (hasAudio) finalCmd.map(`[a${lastIdx}]`);
-        finalCmd.videoCodec('libx264').audioCodec('aac').outputOptions(['-pix_fmt yuv420p', '-crf 18'])
-            .save(finalPath).on('end', resolve).on('error', (err) => {
-                console.error('Xfade failed, falling back to concat:', err);
-                const listFile = path.join(segmentDir, 'list_fallback.txt');
-                fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p.path)}'`).join('\n'));
-                ffmpeg().input(listFile).inputOptions(['-f concat', '-safe 0']).videoCodec('libx264').audioCodec('aac').save(finalPath).on('end', resolve).on('error', reject);
-            });
+        const finalCmd = cmd.complexFilter(filterGraph.trim()).map(`[${finalV}]`);
+
+        if (originalAudioSource && fs.existsSync(originalAudioSource)) {
+            finalCmd.input(originalAudioSource);
+            finalCmd.map(`[${processedSegments.length}:a]`);
+        }
+
+        finalCmd.videoCodec('libx264').audioCodec('aac').outputOptions(['-pix_fmt yuv420p', '-crf 18', '-shortest'])
+            .save(finalPath).on('end', resolve).on('error', reject);
     });
 }
 
@@ -1070,7 +885,7 @@ const processSegmentedHandler = async (req, res) => {
         const finalName = `upscaled_${generateId()}.mp4`;
         const finalPath = path.join('output', finalName);
 
-        await reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig);
+        await reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig, primaryInputVideo);
 
         sendUpdate({ success: true, files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }], progress: { current: allSegmentsRaw.length, total: allSegmentsRaw.length, percent: 100 } });
         clearInterval(heartbeat);
@@ -1227,7 +1042,7 @@ publicApp.post('/api/workflows/load/:id', (req, res) => {
 publicApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file' });
-        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('uploads', 'media', fn);
+        const fn = `${generateId()}\<path.extname(req.file.originalname)}`, p = path.join('uploads', 'media', fn);
         try {
             fs.renameSync(req.file.path, p);
         } catch (e) {
