@@ -341,8 +341,7 @@ function reconcileUIConfig(analysis, existingConfig) {
             sceneThreshold: existingConfig?.advancedConfig?.sceneThreshold ?? 0.2,
             fallbackFrames: existingConfig?.advancedConfig?.fallbackFrames !== undefined ? parseInt(existingConfig.advancedConfig.fallbackFrames) : (existingConfig?.advancedConfig?.fallbackDuration ? Math.round(existingConfig.advancedConfig.fallbackDuration * 24) : 169),
             maxSegmentFrames: existingConfig?.advancedConfig?.maxSegmentFrames !== undefined ? parseInt(existingConfig.advancedConfig.maxSegmentFrames) : (existingConfig?.advancedConfig?.maxSegmentDuration ? Math.round(existingConfig.advancedConfig.maxSegmentDuration * 24) : 169),
-            overlapFrames: existingConfig?.advancedConfig?.overlapFrames !== undefined ? parseInt(existingConfig.advancedConfig.overlapFrames) : (existingConfig?.advancedConfig?.overlapDuration ? Math.round(existingConfig.advancedConfig.overlapDuration * 24) : ((existingConfig?.advancedConfig?.segmentOverlap !== undefined) ? Math.round(parseFloat(existingConfig.advancedConfig.segmentOverlap) * 24) : 50)),
-            manualFrameOffset: parseInt(existingConfig?.advancedConfig?.manualFrameOffset) || 0
+            overlapFrames: existingConfig?.advancedConfig?.overlapFrames !== undefined ? parseInt(existingConfig.advancedConfig.overlapFrames) : (existingConfig?.advancedConfig?.overlapDuration ? Math.round(existingConfig.advancedConfig.overlapDuration * 24) : ((existingConfig?.advancedConfig?.segmentOverlap !== undefined) ? Math.round(parseFloat(existingConfig.advancedConfig.segmentOverlap) * 24) : 50))
         }
     };
     // Migration: If values are too low (likely were seconds), reset to frames
@@ -809,8 +808,6 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
 
     console.log(`[Reassemble] Target Resolution: ${targetWidth}x${targetHeight}`);
 
-    const manualFrameOffset = parseFloat(advancedConfig?.manualFrameOffset ?? 0);
-    const userTimeOffset = manualFrameOffset / meta.videoFps;
     const segmentOverlap = meta.overlapFrames / meta.videoFps;
 
     // Pre-process all inputs to the same resolution and pixel format
@@ -822,16 +819,19 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     for (let i = 0; i < processedSegments.length - 1; i++) {
         const fadeDuration = segmentOverlap;
         if (i === 0) {
-            offset = durations[0] - fadeDuration + userTimeOffset;
+            offset = durations[0] - fadeDuration;
             filters.push(`[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]`);
         } else {
-            offset = offset + durations[i] - fadeDuration + userTimeOffset;
+            offset = offset + durations[i] - fadeDuration;
             filters.push(`[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]`);
         }
     }
 
     const lastIdx = processedSegments.length - 1;
     const finalV = lastIdx > 0 ? `v${lastIdx}` : 'pv0';
+
+    const originalMetadata = originalAudioSource ? await new Promise((res) => { ffmpeg.ffprobe(path.resolve(originalAudioSource), (err, m) => res(m)); }) : null;
+    const originalDuration = originalMetadata ? parseFloat(originalMetadata.format.duration) : null;
 
     await new Promise(async (resolve, reject) => {
         const finalCmd = cmd.complexFilter(filters.join('; ')).map(`[${finalV}]`);
@@ -841,12 +841,15 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
             finalCmd.map(`[${processedSegments.length}:a]`);
         }
 
+        if (originalDuration) {
+            finalCmd.outputOptions('-t', originalDuration);
+        }
+
         finalCmd
             .videoCodec('libx264')
             .audioCodec('aac')
             .outputOptions('-pix_fmt', 'yuv420p')
             .outputOptions('-crf', '18')
-            .outputOptions('-shortest')
             .save(path.resolve(finalPath))
             .on('start', (cmdLine) => console.log('[Reassemble] FFmpeg command:', cmdLine))
             .on('end', resolve)

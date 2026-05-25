@@ -91,11 +91,6 @@ function setupWorkflow(data) {
     if (maxDurationInput) maxDurationInput.value = uiConfig.advancedConfig.maxSegmentFrames;
     const overlapInput = document.getElementById('segment-overlap');
     if (overlapInput) overlapInput.value = uiConfig.advancedConfig.overlapFrames;
-    const offsetInput = document.getElementById('manual-frame-offset');
-    if (offsetInput) {
-        offsetInput.value = uiConfig.advancedConfig.manualFrameOffset || 0;
-        document.getElementById('frame-offset-val').textContent = offsetInput.value;
-    }
 
     originalValues = data.originalValues || {};
 
@@ -138,8 +133,6 @@ function refreshUI() {
     if (maxDurationInput) maxDurationInput.onchange = (e) => uiConfig.advancedConfig.maxSegmentFrames = parseInt(e.target.value);
     const overlapInput = document.getElementById('segment-overlap');
     if (overlapInput) overlapInput.onchange = (e) => uiConfig.advancedConfig.overlapFrames = parseInt(e.target.value);
-    const offsetInput = document.getElementById('manual-frame-offset');
-    if (offsetInput) offsetInput.onchange = (e) => uiConfig.advancedConfig.manualFrameOffset = parseInt(e.target.value);
 
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }
