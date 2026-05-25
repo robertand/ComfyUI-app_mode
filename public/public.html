@@ -676,6 +676,7 @@
                                     ph.classList.add('hidden');
                                     c.classList.remove('hidden');
                                     c.innerHTML = `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>`;
+                                    currentOutputPath = '';
                                     refreshOutputs();
                                 }
                             } catch (e) {}
@@ -688,6 +689,7 @@
                 if (data.success && data.files.length > 0) {
                     const f = data.files[0]; const c = document.getElementById('output-media-container'); const ph = document.getElementById('output-placeholder');
                     ph.classList.add('hidden'); c.classList.remove('hidden'); c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer" onclick="showModal('${f.url}', 'image')">`;
+                    currentOutputPath = '';
                     refreshOutputs();
                 } else if (data.error) { alert('Error: ' + data.error); }
             } catch (e) {
@@ -723,7 +725,7 @@
                             <span class="text-[10px] font-medium text-slate-300 truncate w-full text-center">${f.name}</span>
                         </div>`;
                     } else if (f.type === 'video') {
-                        content = `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40"><i data-lucide="play-circle" class="w-10 h-10 text-white opacity-80"></i></div>`;
+                        content = `<video src="${f.url}#t=0.001" preload="metadata" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40"><i data-lucide="play-circle" class="w-10 h-10 text-white opacity-80"></i></div>`;
                     } else {
                         content = `<img src="${f.url}" class="w-full h-full object-cover group-hover:scale-105 transition-all duration-500">`;
                     }

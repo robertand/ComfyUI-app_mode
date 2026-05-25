@@ -99,6 +99,17 @@ async function uploadFileToInstance(instanceUrl, filePath, originalName, mimetyp
     return await res.json();
 }
 
+async function hasAudio(filePath) {
+    try {
+        const metadata = await new Promise((res, rej) => {
+            ffmpeg.ffprobe(filePath, (err, m) => err ? rej(err) : res(m));
+        });
+        return metadata.streams.some(s => s.codec_type === 'audio');
+    } catch (e) {
+        return false;
+    }
+}
+
 const generateId = () => Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
 const generateRandomSeed = () => Math.floor(Math.random() * 1000000000000);
 
@@ -812,10 +823,10 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     const lastIdx = processedSegments.length - 1;
     const finalV = lastIdx > 0 ? `v${lastIdx}` : 'pv0';
 
-    await new Promise((resolve, reject) => {
+    await new Promise(async (resolve, reject) => {
         const finalCmd = cmd.complexFilter(filterGraph.trim()).map(`[${finalV}]`);
 
-        if (originalAudioSource && fs.existsSync(originalAudioSource)) {
+        if (originalAudioSource && fs.existsSync(originalAudioSource) && await hasAudio(originalAudioSource)) {
             finalCmd.input(originalAudioSource);
             finalCmd.map(`[${processedSegments.length}:a]`);
         }
@@ -918,6 +929,11 @@ const processSegmentedHandler = async (req, res) => {
         const finalPath = path.join('output', finalName);
 
         await reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig, primaryInputVideo);
+
+        if (!fs.existsSync(finalPath)) {
+            throw new Error(`Final upscaled video was not created at ${finalPath}`);
+        }
+        console.log(`[Segmented] Successfully created final video: ${finalName} (${fs.statSync(finalPath).size} bytes)`);
 
         sendUpdate({ success: true, files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }], progress: { current: allSegmentsRaw.length, total: allSegmentsRaw.length, percent: 100 } });
         clearInterval(heartbeat);

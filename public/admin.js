@@ -598,6 +598,7 @@ async function runWorkflow() {
                             ph.classList.add('hidden');
                             c.classList.remove('hidden');
                             c.innerHTML = `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>`;
+                            currentOutputPath = '';
                             refreshOutputs();
                         }
                     } catch (e) {}
@@ -618,6 +619,7 @@ async function runWorkflow() {
                 ph.classList.add('hidden');
                 c.classList.remove('hidden');
                 c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer rounded" onclick="showModal('${f.url}', 'image')">`;
+                currentOutputPath = '';
                 refreshOutputs();
             } else if (data.error) alert('Error: ' + data.error);
         }
@@ -729,7 +731,7 @@ async function refreshOutputs() {
                     <span class="text-[10px] font-medium text-slate-300 truncate w-full text-center">${f.name}</span>
                 </div>`;
             } else if (f.type === 'video') {
-                content = `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>`;
+                content = `<video src="${f.url}#t=0.001" preload="metadata" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>`;
             } else {
                 content = `<img src="${f.url}" class="w-full h-full object-cover">`;
             }
