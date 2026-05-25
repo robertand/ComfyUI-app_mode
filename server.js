@@ -99,6 +99,40 @@ async function uploadFileToInstance(instanceUrl, filePath, originalName, mimetyp
     return await res.json();
 }
 
+const generateId = () => Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
+const generateRandomSeed = () => Math.floor(Math.random() * 1000000000000);
+
+
+function shouldGenerateRandomSeed(paramKey, paramValue, autoRandomFlags) {
+    if (autoRandomFlags?.[paramKey] === true || autoRandomFlags?.['_global'] === true) return true;
+    return paramValue === 'random' || paramValue === '' || paramValue === null;
+}
+
+function extractOriginalWorkflowValues(workflowApi) {
+    const values = {};
+    if (!workflowApi) return values;
+    for (const [nodeId, node] of Object.entries(workflowApi)) {
+        if (node.inputs) {
+            for (const [inputName, inputValue] of Object.entries(node.inputs)) {
+                if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) continue;
+                values[`node_${nodeId}_${inputName}`] = inputValue;
+            }
+        }
+    }
+    return values;
+}
+
+function applyBypass(workflow, bypassedNodes) {
+    if (!bypassedNodes) return workflow;
+    Object.entries(bypassedNodes).forEach(([nodeId, isBypassed]) => {
+        if (!isBypassed || !workflow[nodeId]) return;
+        const node = workflow[nodeId];
+        if (node.class_type?.includes('Save') || node.class_type?.includes('Preview') || node.class_type?.includes('Combine')) {
+            delete workflow[nodeId]; return;
+        }
+        let sourceLink = node.inputs ? Object.values(node.inputs).find(v => Array.isArray(v)) : null;
+        Object.values(workflow).forEach(other => {
+            if (!other.inputs) return;
             Object.entries(other.inputs).forEach(([k, v]) => {
                 if (Array.isArray(v) && String(v[0]) === String(nodeId)) {
                     if (sourceLink) other.inputs[k] = sourceLink; else delete other.inputs[k];
@@ -536,7 +570,7 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
         if (!workflowId) return res.status(400).json({ error: 'ID missing' });
         const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
         if (!file) return res.status(404).json({ error: 'Not found' });
-        const filePath = path.join(savedDir = path.join('workflows', 'saved'), file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const filePath = path.join(path.join('workflows', 'saved'), file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         if (data.analysis?.workflowApi) {
             const workflow = data.analysis.workflowApi;
             Object.entries(parameters || {}).forEach(([key, value]) => {
@@ -757,7 +791,7 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     const userTimeOffset = manualFrameOffset / meta.videoFps;
     const segmentOverlap = meta.overlapFrames / meta.videoFps;
 
-    // Pre-process all inputs to the same resolution and pixel format (EXACTLY AS IN EXEMPLU)
+    // Pre-process all inputs to the same resolution and pixel format
     processedSegments.forEach((p, i) => {
         // We add massive tpad duration to ensure we never run out of frames for the fade junction
         filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,tpad=stop_mode=clone:stop_duration=10[pv${i}]; `;
@@ -767,18 +801,16 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     for (let i = 0; i < processedSegments.length - 1; i++) {
         const fadeDuration = segmentOverlap;
         if (i === 0) {
-            // formula from exemplify: offset = durations[0] - fadeDuration
             offset = durations[0] - fadeDuration + userTimeOffset;
             filterGraph += `[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]; `;
         } else {
-            // i-th transition uses (previous offset + current duration - fadeDuration)
             offset = offset + durations[i] - fadeDuration + userTimeOffset;
             filterGraph += `[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
         }
     }
 
     const lastIdx = processedSegments.length - 1;
-    const finalV = `v${lastIdx}`;
+    const finalV = lastIdx > 0 ? `v${lastIdx}` : 'pv0';
 
     await new Promise((resolve, reject) => {
         const finalCmd = cmd.complexFilter(filterGraph.trim()).map(`[${finalV}]`);
@@ -1042,7 +1074,7 @@ publicApp.post('/api/workflows/load/:id', (req, res) => {
 publicApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file' });
-        const fn = `${generateId()}\<path.extname(req.file.originalname)}`, p = path.join('uploads', 'media', fn);
+        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('uploads', 'media', fn);
         try {
             fs.renameSync(req.file.path, p);
         } catch (e) {
