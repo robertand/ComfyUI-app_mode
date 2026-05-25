@@ -696,11 +696,13 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
 }
 
 async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
-    const videoMetadata = await new Promise((res, rej) => { ffmpeg.ffprobe(inputVideo, (err, m) => err ? rej(err) : res(m)); });
+    const videoMetadata = await new Promise((res, rej) => { ffmpeg.ffprobe(path.resolve(inputVideo), (err, m) => err ? rej(err) : res(m)); });
     const videoDuration = parseFloat(videoMetadata.format.duration);
     const vstream = videoMetadata.streams?.find(s => s.codec_type === 'video');
     const videoFpsStr = vstream?.r_frame_rate || '24/1';
     const videoFps = eval(videoFpsStr);
+
+    console.log(`[Segment] Input: ${inputVideo}, Duration: ${videoDuration}, FPS: ${videoFpsStr}`);
 
     const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
     const overlapFrames = Math.min(segmentFrames - 1, (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50);
@@ -710,7 +712,10 @@ async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
     const sceneThreshold = parseFloat(advancedConfig?.sceneThreshold ?? 0.2);
     const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
     await new Promise((resolve, reject) => {
-        ffmpeg(inputVideo).outputOptions(['-vf', `select='gt(scene,${sceneThreshold})',showinfo`, '-f', 'null']).output('-')
+        ffmpeg(path.resolve(inputVideo))
+            .outputOptions('-vf', `select='gt(scene,${sceneThreshold})',showinfo`)
+            .outputOptions('-f', 'null')
+            .output('-')
             .on('stderr', line => { const m = line.match(/pts_time:([\d.]+)/); if (m) fs.appendFileSync(sceneChangeFile, m[1] + ','); })
             .on('end', resolve).on('error', reject).run();
     });
@@ -758,18 +763,22 @@ async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
         filePaths.push(outputPath);
 
         await new Promise((resolve, reject) => {
-            ffmpeg(inputVideo)
+            ffmpeg(path.resolve(inputVideo))
                 .setStartTime(seg.start)
                 .setDuration(seg.duration)
-                .outputOptions([
-                    '-map 0',
-                    '-c:v libx264',
-                    '-preset superfast',
-                    '-crf 18',
-                    '-c:a aac',
-                    '-avoid_negative_ts make_zero'
-                ])
-                .output(outputPath).on('end', resolve).on('error', reject).run();
+                .outputOptions('-map', '0')
+                .outputOptions('-c:v', 'libx264')
+                .outputOptions('-preset', 'superfast')
+                .outputOptions('-crf', '18')
+                .outputOptions('-c:a', 'aac')
+                .outputOptions('-avoid_negative_ts', 'make_zero')
+                .output(path.resolve(outputPath))
+                .on('end', resolve)
+                .on('error', (err) => {
+                    console.error(`[Segment] Failed segment ${i}:`, err.message);
+                    reject(err);
+                })
+                .run();
         });
     }
 
@@ -784,19 +793,21 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
 
     const cmd = ffmpeg();
-    processedSegments.forEach(p => cmd.input(p.path));
+    processedSegments.forEach(p => cmd.input(path.resolve(p.path)));
 
-    let filterGraph = '';
+    let filters = [];
     const resolutions = [], durations = [];
     for (const p of processedSegments) {
-        const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(p.path, (err, m) => res(m)); });
+        const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(path.resolve(p.path), (err, m) => res(m)); });
         durations.push(parseFloat(probeMeta?.format?.duration || 0));
         const vstream = probeMeta?.streams?.find(s => s.codec_type === 'video');
         resolutions.push({ width: vstream?.width || 0, height: vstream?.height || 0 });
     }
 
-    const targetWidth = Math.ceil(Math.max(...resolutions.map(r => r.width)) / 2) * 2;
-    const targetHeight = Math.ceil(Math.max(...resolutions.map(r => r.height)) / 2) * 2;
+    const targetWidth = Math.ceil(Math.max(...resolutions.map(r => r.width || 0), 128) / 2) * 2;
+    const targetHeight = Math.ceil(Math.max(...resolutions.map(r => r.height || 0), 128) / 2) * 2;
+
+    console.log(`[Reassemble] Target Resolution: ${targetWidth}x${targetHeight}`);
 
     const manualFrameOffset = parseFloat(advancedConfig?.manualFrameOffset ?? 0);
     const userTimeOffset = manualFrameOffset / meta.videoFps;
@@ -804,8 +815,7 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
 
     // Pre-process all inputs to the same resolution and pixel format
     processedSegments.forEach((p, i) => {
-        // We add massive tpad duration to ensure we never run out of frames for the fade junction
-        filterGraph += `[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,tpad=stop_mode=clone:stop_duration=10[pv${i}]; `;
+        filters.push(`[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,tpad=stop_mode=clone:stop_duration=10[pv${i}]`);
     });
 
     let offset = 0;
@@ -813,10 +823,10 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
         const fadeDuration = segmentOverlap;
         if (i === 0) {
             offset = durations[0] - fadeDuration + userTimeOffset;
-            filterGraph += `[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]; `;
+            filters.push(`[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]`);
         } else {
             offset = offset + durations[i] - fadeDuration + userTimeOffset;
-            filterGraph += `[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]; `;
+            filters.push(`[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]`);
         }
     }
 
@@ -824,15 +834,26 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     const finalV = lastIdx > 0 ? `v${lastIdx}` : 'pv0';
 
     await new Promise(async (resolve, reject) => {
-        const finalCmd = cmd.complexFilter(filterGraph.trim()).map(`[${finalV}]`);
+        const finalCmd = cmd.complexFilter(filters.join('; ')).map(`[${finalV}]`);
 
         if (originalAudioSource && fs.existsSync(originalAudioSource) && await hasAudio(originalAudioSource)) {
-            finalCmd.input(originalAudioSource);
+            finalCmd.input(path.resolve(originalAudioSource));
             finalCmd.map(`[${processedSegments.length}:a]`);
         }
 
-        finalCmd.videoCodec('libx264').audioCodec('aac').outputOptions(['-pix_fmt yuv420p', '-crf 18', '-shortest'])
-            .save(finalPath).on('end', resolve).on('error', reject);
+        finalCmd
+            .videoCodec('libx264')
+            .audioCodec('aac')
+            .outputOptions('-pix_fmt', 'yuv420p')
+            .outputOptions('-crf', '18')
+            .outputOptions('-shortest')
+            .save(path.resolve(finalPath))
+            .on('start', (cmdLine) => console.log('[Reassemble] FFmpeg command:', cmdLine))
+            .on('end', resolve)
+            .on('error', (err) => {
+                console.error('[Reassemble] FFmpeg failed:', err.message);
+                reject(err);
+            });
     });
 }
 
