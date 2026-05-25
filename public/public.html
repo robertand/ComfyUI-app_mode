@@ -645,14 +645,24 @@
                     }
                     const reader = res.body.getReader();
                     const decoder = new TextDecoder();
+                    let buffer = '';
+
                     while (true) {
                         const { value, done } = await reader.read();
                         if (done) break;
-                        const lines = decoder.decode(value).split('\n');
+
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split('\n');
+                        buffer = lines.pop();
+
                         for (const line of lines) {
                             if (!line.trim()) continue;
                             try {
                                 const update = JSON.parse(line);
+                                if (update.error) {
+                                    alert('Error: ' + update.error);
+                                    break;
+                                }
                                 if (update.status) {
                                     const hint = document.querySelector('[data-i18n="processing_hint"]');
                                     if (hint) hint.textContent = update.status;
@@ -679,7 +689,7 @@
                                     currentOutputPath = '';
                                     refreshOutputs();
                                 }
-                            } catch (e) {}
+                            } catch (e) { console.error('Stream parse error:', e); }
                         }
                     }
                     return;
@@ -693,7 +703,7 @@
                     refreshOutputs();
                 } else if (data.error) { alert('Error: ' + data.error); }
             } catch (e) {
-                alert('Connection error');
+                alert('Connection error: ' + e.message);
             } finally {
                 btn.disabled = false; overlay.classList.add('hidden');
                 const pCont = document.getElementById('overlay-progress-container');

@@ -564,16 +564,24 @@ async function runWorkflow() {
 
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
+            let buffer = '';
 
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
 
-                const lines = decoder.decode(value).split('\n');
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // Keep the partial last line in the buffer
+
                 for (const line of lines) {
                     if (!line.trim()) continue;
                     try {
                         const update = JSON.parse(line);
+                        if (update.error) {
+                            alert('Error: ' + update.error);
+                            break;
+                        }
                         if (update.status) {
                             statusMini.textContent = update.status;
                             const hint = document.querySelector('[data-i18n="processing_hint"]');
@@ -592,6 +600,7 @@ async function runWorkflow() {
                             }
                         }
                         if (update.success && update.files) {
+                            console.log('[Segmented] Success result:', update.files[0]);
                             const f = update.files[0];
                             const c = document.getElementById('output-media-container');
                             const ph = document.getElementById('output-placeholder');
@@ -601,7 +610,7 @@ async function runWorkflow() {
                             currentOutputPath = '';
                             refreshOutputs();
                         }
-                    } catch (e) {}
+                    } catch (e) { console.error('Stream parse error:', e, line); }
                 }
             }
             statusMini.classList.add('hidden');
@@ -624,7 +633,7 @@ async function runWorkflow() {
             } else if (data.error) alert('Error: ' + data.error);
         }
     } catch (e) {
-        alert('Connection error');
+        alert('Connection error: ' + e.message);
     } finally {
         btn.disabled = false;
         ov.classList.add('hidden');
