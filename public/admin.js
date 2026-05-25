@@ -1,6 +1,6 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
-let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 10 } };
+let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackFrames: 169, maxSegmentFrames: 169, overlapFrames: 50 } };
 window._pixaroma_session_previews = {};
 window.mediaFiles = {};
 let mediaFiles = window.mediaFiles;
@@ -75,7 +75,7 @@ async function loadWorkflow(id) {
 function setupWorkflow(data) {
     currentWorkflow = data.analysis;
     uiConfig = data.uiConfig || uiConfig;
-    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackDuration: 10, maxSegmentDuration: 5, segmentOverlap: 2 };
+    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackFrames: 169, maxSegmentFrames: 169, overlapFrames: 50 };
 
     // Sync UI with advancedConfig
     const segToggles = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];
@@ -86,11 +86,16 @@ function setupWorkflow(data) {
     const thresholdInput = document.getElementById('scene-threshold');
     if (thresholdInput) thresholdInput.value = uiConfig.advancedConfig.sceneThreshold;
     const durationInput = document.getElementById('fallback-duration');
-    if (durationInput) durationInput.value = uiConfig.advancedConfig.fallbackDuration;
+    if (durationInput) durationInput.value = uiConfig.advancedConfig.fallbackFrames;
     const maxDurationInput = document.getElementById('max-segment-duration');
-    if (maxDurationInput) maxDurationInput.value = uiConfig.advancedConfig.maxSegmentDuration;
+    if (maxDurationInput) maxDurationInput.value = uiConfig.advancedConfig.maxSegmentFrames;
     const overlapInput = document.getElementById('segment-overlap');
-    if (overlapInput) overlapInput.value = uiConfig.advancedConfig.segmentOverlap;
+    if (overlapInput) overlapInput.value = uiConfig.advancedConfig.overlapFrames;
+    const offsetInput = document.getElementById('manual-frame-offset');
+    if (offsetInput) {
+        offsetInput.value = uiConfig.advancedConfig.manualFrameOffset || 0;
+        document.getElementById('frame-offset-val').textContent = offsetInput.value;
+    }
 
     originalValues = data.originalValues || {};
 
@@ -128,11 +133,13 @@ function refreshUI() {
     const thresholdInput = document.getElementById('scene-threshold');
     if (thresholdInput) thresholdInput.onchange = (e) => uiConfig.advancedConfig.sceneThreshold = parseFloat(e.target.value);
     const durationInput = document.getElementById('fallback-duration');
-    if (durationInput) durationInput.onchange = (e) => uiConfig.advancedConfig.fallbackDuration = parseInt(e.target.value);
+    if (durationInput) durationInput.onchange = (e) => uiConfig.advancedConfig.fallbackFrames = parseInt(e.target.value);
     const maxDurationInput = document.getElementById('max-segment-duration');
-    if (maxDurationInput) maxDurationInput.onchange = (e) => uiConfig.advancedConfig.maxSegmentDuration = parseInt(e.target.value);
+    if (maxDurationInput) maxDurationInput.onchange = (e) => uiConfig.advancedConfig.maxSegmentFrames = parseInt(e.target.value);
     const overlapInput = document.getElementById('segment-overlap');
-    if (overlapInput) overlapInput.onchange = (e) => uiConfig.advancedConfig.segmentOverlap = parseFloat(e.target.value);
+    if (overlapInput) overlapInput.onchange = (e) => uiConfig.advancedConfig.overlapFrames = parseInt(e.target.value);
+    const offsetInput = document.getElementById('manual-frame-offset');
+    if (offsetInput) offsetInput.onchange = (e) => uiConfig.advancedConfig.manualFrameOffset = parseInt(e.target.value);
 
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }
