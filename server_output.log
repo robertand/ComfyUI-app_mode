@@ -1,4 +1,4 @@
-(node:90447) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(node:176449) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
 (Use `node --trace-deprecation ...` to show where the warning was created)
 🔧 ADMIN http://localhost:3001
 🌐 PUBLIC http://localhost:3002
