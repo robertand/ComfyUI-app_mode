@@ -236,8 +236,19 @@
             uiConfig.advancedConfig.segmented = checked;
             const el = document.getElementById('segmented-processing-toggle');
             if (el) el.checked = checked;
+            renderInterface();
         }
         window.syncSegmentedToggles = syncSegmentedToggles;
+
+        function syncManualOffset(val) {
+            const value = parseInt(val);
+            uiConfig.advancedConfig.manualFrameOffset = value;
+            const liveSlider = document.getElementById('live-manual-frame-offset');
+            const liveVal = document.getElementById('live-frame-offset-val');
+            if (liveSlider) liveSlider.value = value;
+            if (liveVal) liveVal.textContent = value;
+        }
+        window.syncManualOffset = syncManualOffset;
 
         async function chunkedUpload(file, key, onProgress) {
             const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
@@ -519,6 +530,31 @@
                 }
                 container.appendChild(div);
             });
+
+            // Add Manual Frame Offset slider to the main UI if segmented is active
+            if (uiConfig.advancedConfig?.segmented) {
+                const offsetDiv = document.createElement('div');
+                offsetDiv.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
+                const currentOffset = uiConfig.advancedConfig.manualFrameOffset || 0;
+                offsetDiv.innerHTML = `
+                    <div class="flex items-center justify-between mb-2">
+                        <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider" data-i18n="manual_frame_offset">Manual Frame Offset</label>
+                        <span id="live-frame-offset-val" class="text-xs font-bold text-blue-400">${currentOffset}</span>
+                    </div>
+                    <div class="space-y-4">
+                        <input type="range" id="live-manual-frame-offset" min="-48" max="48" step="1" value="${currentOffset}"
+                            class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                            oninput="syncManualOffset(this.value)">
+                        <div class="flex justify-between text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                            <span>-48 frames</span>
+                            <span>0</span>
+                            <span>+48 frames</span>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(offsetDiv);
+            }
+
             if (window.lucide) window.lucide.createIcons();
         }
 
