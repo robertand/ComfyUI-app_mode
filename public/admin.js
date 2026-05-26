@@ -91,6 +91,10 @@ function setupWorkflow(data) {
     if (maxDurationInput) maxDurationInput.value = uiConfig.advancedConfig.maxSegmentFrames;
     const overlapInput = document.getElementById('segment-overlap');
     if (overlapInput) overlapInput.value = uiConfig.advancedConfig.overlapFrames;
+    const offsetSlider = document.getElementById('frame-offset-slider');
+    if (offsetSlider) offsetSlider.value = uiConfig.advancedConfig.manualFrameOffset || 0;
+    const offsetVal = document.getElementById('frame-offset-val');
+    if (offsetVal) offsetVal.textContent = uiConfig.advancedConfig.manualFrameOffset || 0;
 
     originalValues = data.originalValues || {};
 
@@ -136,6 +140,16 @@ function refreshUI() {
 
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }
+
+function updateFrameOffset(val) {
+    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = {};
+    uiConfig.advancedConfig.manualFrameOffset = parseInt(val);
+    const v = document.getElementById('frame-offset-val');
+    if (v) v.textContent = val;
+    const s = document.getElementById('frame-offset-slider');
+    if (s) s.value = val;
+}
+window.updateFrameOffset = updateFrameOffset;
 
 function syncSegmentedToggles(checked) {
     uiConfig.advancedConfig.segmented = checked;

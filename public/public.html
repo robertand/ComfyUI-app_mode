@@ -105,12 +105,12 @@
                         <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden border border-slate-700">
                             <div id="overlay-progress-bar" class="bg-blue-500 h-full transition-all duration-500" style="width: 0%"></div>
                         </div>
+                    </div>
 
                     <button id="cancel-processing-btn" class="mt-8 px-6 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold rounded-lg transition-all flex items-center justify-center gap-2 mx-auto">
                         <i data-lucide="square" class="w-4 h-4"></i>
                         <span data-i18n="cancel_processing">Cancel Processing</span>
                     </button>
-                    </div>
                 </div>
             </div>
 
@@ -186,16 +186,26 @@
 
     <!-- Floating Generate Button Group -->
     <div class="generate-fab flex flex-col items-end gap-3">
-        <div id="video-processing-options" class="hidden flex flex-col gap-2 p-3 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-xl shadow-2xl mb-2 min-w-[200px]">
-            <label class="flex items-center gap-3 cursor-pointer group">
-                <div class="relative">
-                    <input type="checkbox" id="segmented-processing-toggle" class="sr-only peer" onchange="syncSegmentedToggles(this.checked)">
-                    <div class="w-10 h-5 bg-slate-700 rounded-full peer peer-checked:bg-blue-600 transition-all"></div>
-                    <div class="absolute left-1 top-1 w-3 h-3 bg-white rounded-full peer-checked:translate-x-5 transition-all"></div>
+        <div id="video-processing-options" class="hidden flex flex-col gap-4 p-4 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-xl shadow-2xl mb-2 min-w-[240px]">
+            <div class="flex flex-col gap-2">
+                <label class="flex items-center gap-3 cursor-pointer group">
+                    <div class="relative">
+                        <input type="checkbox" id="segmented-processing-toggle" class="sr-only peer" onchange="syncSegmentedToggles(this.checked)">
+                        <div class="w-10 h-5 bg-slate-700 rounded-full peer peer-checked:bg-blue-600 transition-all"></div>
+                        <div class="absolute left-1 top-1 w-3 h-3 bg-white rounded-full peer-checked:translate-x-5 transition-all"></div>
+                    </div>
+                    <span class="text-xs font-bold text-slate-400 group-hover:text-white transition-colors" data-i18n="segmented_video">Segmented Processing</span>
+                </label>
+                <div id="segment-status-mini" class="hidden text-[10px] text-blue-400 font-mono animate-pulse mt-1 text-right"></div>
+            </div>
+
+            <div id="advanced-config-container" class="space-y-3 pt-3 border-t border-slate-800">
+                <div class="flex justify-between items-center">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase" data-i18n="manual_frame_offset">Manual Frame Offset</label>
+                    <span id="frame-offset-val-public" class="text-[10px] font-mono text-blue-400">0</span>
                 </div>
-                <span class="text-xs font-bold text-slate-400 group-hover:text-white transition-colors" data-i18n="segmented_video">Segmented Processing</span>
-            </label>
-            <div id="segment-status-mini" class="hidden text-[10px] text-blue-400 font-mono animate-pulse mt-1 text-right"></div>
+                <input type="range" id="frame-offset-slider-public" min="-120" max="120" step="1" value="0" class="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="updateFrameOffset(this.value)">
+            </div>
         </div>
         <button id="generate-btn" class="px-10 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-bold rounded-full transition-all transform hover:scale-105 active:scale-95 flex items-center gap-2 shadow-2xl">
             <i data-lucide="zap" class="w-5 h-5"></i>
@@ -233,11 +243,22 @@
         function toggleBypass(nodeId) { bypassedNodes[nodeId] = !bypassedNodes[nodeId]; renderInterface(); }
 
         function syncSegmentedToggles(checked) {
+            if (!uiConfig.advancedConfig) uiConfig.advancedConfig = {};
             uiConfig.advancedConfig.segmented = checked;
             const el = document.getElementById('segmented-processing-toggle');
             if (el) el.checked = checked;
         }
         window.syncSegmentedToggles = syncSegmentedToggles;
+
+        function updateFrameOffset(val) {
+            if (!uiConfig.advancedConfig) uiConfig.advancedConfig = {};
+            uiConfig.advancedConfig.manualFrameOffset = parseInt(val);
+            const v = document.getElementById('frame-offset-val-public');
+            if (v) v.textContent = val;
+            const s = document.getElementById('frame-offset-slider-public');
+            if (s) s.value = val;
+        }
+        window.updateFrameOffset = updateFrameOffset;
 
         async function chunkedUpload(file, key, onProgress) {
             const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB

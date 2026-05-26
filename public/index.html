@@ -161,6 +161,13 @@
                                 <input type="number" id="segment-overlap" step="1" min="0" value="50" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none">
                             </div>
 
+                            <div class="space-y-2">
+                                <div class="flex justify-between items-center mb-1">
+                                    <label class="block text-[8px] font-bold text-slate-500 uppercase" data-i18n="manual_frame_offset">Manual Frame Offset</label>
+                                    <span id="frame-offset-val" class="text-[8px] font-mono text-blue-400">0</span>
+                                </div>
+                                <input type="range" id="frame-offset-slider" min="-120" max="120" step="1" value="0" class="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500" oninput="updateFrameOffset(this.value)">
+                            </div>
                         </div>
                     </div>
 
@@ -219,12 +226,12 @@
                         <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden border border-slate-700">
                             <div id="overlay-progress-bar" class="bg-blue-500 h-full transition-all duration-500" style="width: 0%"></div>
                         </div>
+                    </div>
 
                     <button id="cancel-processing-btn" class="mt-8 px-6 py-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 font-bold rounded-lg transition-all flex items-center justify-center gap-2 mx-auto">
                         <i data-lucide="square" class="w-4 h-4"></i>
                         <span data-i18n="cancel_processing">Cancel Processing</span>
                     </button>
-                    </div>
                 </div>
             </div>
 

@@ -341,7 +341,8 @@ function reconcileUIConfig(analysis, existingConfig) {
             sceneThreshold: existingConfig?.advancedConfig?.sceneThreshold ?? 0.2,
             fallbackFrames: existingConfig?.advancedConfig?.fallbackFrames !== undefined ? parseInt(existingConfig.advancedConfig.fallbackFrames) : (existingConfig?.advancedConfig?.fallbackDuration ? Math.round(existingConfig.advancedConfig.fallbackDuration * 24) : 169),
             maxSegmentFrames: existingConfig?.advancedConfig?.maxSegmentFrames !== undefined ? parseInt(existingConfig.advancedConfig.maxSegmentFrames) : (existingConfig?.advancedConfig?.maxSegmentDuration ? Math.round(existingConfig.advancedConfig.maxSegmentDuration * 24) : 169),
-            overlapFrames: existingConfig?.advancedConfig?.overlapFrames !== undefined ? parseInt(existingConfig.advancedConfig.overlapFrames) : (existingConfig?.advancedConfig?.overlapDuration ? Math.round(existingConfig.advancedConfig.overlapDuration * 24) : ((existingConfig?.advancedConfig?.segmentOverlap !== undefined) ? Math.round(parseFloat(existingConfig.advancedConfig.segmentOverlap) * 24) : 50))
+            overlapFrames: existingConfig?.advancedConfig?.overlapFrames !== undefined ? parseInt(existingConfig.advancedConfig.overlapFrames) : (existingConfig?.advancedConfig?.overlapDuration ? Math.round(existingConfig.advancedConfig.overlapDuration * 24) : ((existingConfig?.advancedConfig?.segmentOverlap !== undefined) ? Math.round(parseFloat(existingConfig.advancedConfig.segmentOverlap) * 24) : 50)),
+            manualFrameOffset: parseInt(existingConfig?.advancedConfig?.manualFrameOffset) || 0
         }
     };
     // Migration: If values are too low (likely were seconds), reset to frames
@@ -809,6 +810,7 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     console.log(`[Reassemble] Target Resolution: ${targetWidth}x${targetHeight}`);
 
     const segmentOverlap = meta.overlapFrames / meta.videoFps;
+    const manualOffset = (parseInt(advancedConfig?.manualFrameOffset) || 0) / meta.videoFps;
 
     // Pre-process all inputs to the same resolution and pixel format
     processedSegments.forEach((p, i) => {
@@ -819,11 +821,11 @@ async function reassembleVideo(processedSegments, segmentDir, finalPath, advance
     for (let i = 0; i < processedSegments.length - 1; i++) {
         const fadeDuration = segmentOverlap;
         if (i === 0) {
-            offset = durations[0] - fadeDuration;
-            filters.push(`[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v1]`);
+            offset = durations[0] - fadeDuration + manualOffset;
+            filters.push(`[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${Math.max(0, offset)}[v1]`);
         } else {
             offset = offset + durations[i] - fadeDuration;
-            filters.push(`[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${offset}[v${i + 1}]`);
+            filters.push(`[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${Math.max(0, offset)}[v${i + 1}]`);
         }
     }
 
