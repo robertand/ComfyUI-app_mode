@@ -63,7 +63,18 @@ const translations = {
         root: "Root",
         move: "Move",
         move_selected: "Move Selected",
-        move_to: "Move to (folder path):"
+        move_to: "Move to (folder path):",
+        advanced_customization: "Advanced Workflow Customization",
+        segmented_video: "Segmented Processing",
+        scene_threshold: "Scene Change Threshold",
+        fallback_duration: "Fallback Segment Duration (frames)",
+        max_segment_duration: "Max Segment Duration (frames)",
+        segment_overlap: "Segment Overlap (frames)",
+        manual_frame_offset: "Manual Frame Offset",
+        step: "Step",
+        cancel_processing: "Cancel Processing",
+        processing_cancelled: "Processing cancelled.",
+        confirm_cancel: "Cancel current process?"
     },
     hr: {
         app_title: "ComfyUI Remote Generator",
@@ -327,7 +338,18 @@ const translations = {
         root: "Rădăcină",
         move: "Mută",
         move_selected: "Mută Selecția",
-        move_to: "Mută în (cale dosar):"
+        move_to: "Mută în (cale dosar):",
+        advanced_customization: "Customizare Workflow Avansată",
+        segmented_video: "Procesare Segmentată",
+        scene_threshold: "Prag Detecție Scene",
+        fallback_duration: "Durată Segment Fallback (frame-uri)",
+        max_segment_duration: "Durată Maximă Segment (frame-uri)",
+        segment_overlap: "Suprapunere Segmente (frame-uri)",
+        manual_frame_offset: "Offset Manual Frame-uri",
+        step: "Pas",
+        cancel_processing: "Anulează Procesarea",
+        processing_cancelled: "Procesarea a fost anulată.",
+        confirm_cancel: "Anulezi procesul curent?"
     }
 };
 

@@ -8,8 +8,10 @@ const FormData = require('form-data');
 const net = require('net');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
+const ffprobeStatic = require('ffprobe-static');
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
+ffmpeg.setFfprobePath(ffprobeStatic.path);
 
 // ============ CONFIGURATION ============
 const CONFIG_FILE = path.join('workflows', 'config.json');
@@ -63,13 +65,14 @@ async function findFreePort(startPort) {
 
 const upload = multer({ dest: 'uploads/', limits: { fileSize: 10 * 1024 * 1024 * 1024 } }); // 10GB Limit
 
-['uploads', 'output', 'workflows', 'workflows/saved', 'temp_segments'].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
+['uploads', 'output', 'workflows', 'workflows/saved', 'temp_segments', 'uploads/chunks', 'uploads/media'].forEach(d => { if (!fs.existsSync(d)) fs.mkdirSync(d, { recursive: true }); });
 
 let currentWorkflowData = null;
 let currentWorkflowId = null;
 let uiConfig = null;
 let originalWorkflowValues = {};
 const mediaStore = {};
+const cancelledRuns = new Set();
 
 async function getFreestInstance() {
     const instances = COMFYUI_URLS;
@@ -96,8 +99,20 @@ async function uploadFileToInstance(instanceUrl, filePath, originalName, mimetyp
     return await res.json();
 }
 
+async function hasAudio(filePath) {
+    try {
+        const metadata = await new Promise((res, rej) => {
+            ffmpeg.ffprobe(filePath, (err, m) => err ? rej(err) : res(m));
+        });
+        return metadata.streams.some(s => s.codec_type === 'audio');
+    } catch (e) {
+        return false;
+    }
+}
+
 const generateId = () => Date.now().toString() + '-' + Math.random().toString(36).substr(2, 9);
 const generateRandomSeed = () => Math.floor(Math.random() * 1000000000000);
+
 
 function shouldGenerateRandomSeed(paramKey, paramValue, autoRandomFlags) {
     if (autoRandomFlags?.[paramKey] === true || autoRandomFlags?.['_global'] === true) return true;
@@ -228,7 +243,20 @@ const publicApp = express();
 const apps = [adminApp, publicApp];
 
 apps.forEach(app => {
-    app.use(express.json({ limit: '500mb' }));
+    app.use((req, res, next) => {
+        if (req.path.includes('/api/upload/media/') || req.path.includes('/api/upload/chunk')) {
+            next(); // Let multer handle it
+        } else {
+            express.json({ limit: '500mb' })(req, res, next);
+        }
+    });
+    app.use((req, res, next) => {
+        if (req.path.includes('/api/upload/media/') || req.path.includes('/api/upload/chunk')) {
+            next();
+        } else {
+            express.urlencoded({ limit: '500mb', extended: true })(req, res, next);
+        }
+    });
     app.use((req, res, next) => {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
         res.setHeader('Pragma', 'no-cache');
@@ -260,7 +288,7 @@ async function proxyToComfy(req, res) {
                 const ext = `/extensions/${v}/`;
                 if (targetPath.includes('/assets/')) {
                     const sub = targetPath.split('/assets/')[1];
-                    fallbacks.push(ext + sub, ext + 'js/' + sub, ext + 'assets/' + sub);
+                    fallbacks.push(ext + sub, ext + `js/${sub}`, ext + `assets/${sub}`);
                 }
                 fallbacks.push(targetPath.replace('/pixaroma/assets/', ext), targetPath.replace('/pixaroma/assets/', ext + 'js/'), targetPath.replace('/pixaroma/js/', ext), targetPath.replace('/pixaroma/', ext), targetPath.replace('/pixaroma/', ext + 'js/'));
                 if (targetPath.endsWith('.js') || targetPath.endsWith('.mjs')) {
@@ -298,12 +326,28 @@ apps.forEach(app => {
 
 // ============ ROUTES ============
 
-adminApp.use(express.static('public')); adminApp.use('/output', express.static('output'));
+adminApp.use(express.static('public')); adminApp.use('/output', express.static('output')); adminApp.use('/uploads', express.static('uploads'));
 publicApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'public.html')));
-publicApp.use(express.static('public')); publicApp.use('/output', express.static('output'));
+publicApp.use(express.static('public')); publicApp.use('/output', express.static('output')); publicApp.use('/uploads', express.static('uploads'));
 
 function reconcileUIConfig(analysis, existingConfig) {
-    const config = { visibleInputs: existingConfig?.visibleInputs || {}, visibleParams: existingConfig?.visibleParams || {}, inputOrder: existingConfig?.inputOrder || [], inputNames: existingConfig?.inputNames || {} };
+    const config = {
+        visibleInputs: existingConfig?.visibleInputs || {},
+        visibleParams: existingConfig?.visibleParams || {},
+        inputOrder: existingConfig?.inputOrder || [],
+        inputNames: existingConfig?.inputNames || {},
+        advancedConfig: {
+            segmented: existingConfig?.advancedConfig?.segmented || false,
+            sceneThreshold: existingConfig?.advancedConfig?.sceneThreshold ?? 0.2,
+            fallbackFrames: existingConfig?.advancedConfig?.fallbackFrames !== undefined ? parseInt(existingConfig.advancedConfig.fallbackFrames) : (existingConfig?.advancedConfig?.fallbackDuration ? Math.round(existingConfig.advancedConfig.fallbackDuration * 24) : 169),
+            maxSegmentFrames: existingConfig?.advancedConfig?.maxSegmentFrames !== undefined ? parseInt(existingConfig.advancedConfig.maxSegmentFrames) : (existingConfig?.advancedConfig?.maxSegmentDuration ? Math.round(existingConfig.advancedConfig.maxSegmentDuration * 24) : 169),
+            overlapFrames: existingConfig?.advancedConfig?.overlapFrames !== undefined ? parseInt(existingConfig.advancedConfig.overlapFrames) : (existingConfig?.advancedConfig?.overlapDuration ? Math.round(existingConfig.advancedConfig.overlapDuration * 24) : ((existingConfig?.advancedConfig?.segmentOverlap !== undefined) ? Math.round(parseFloat(existingConfig.advancedConfig.segmentOverlap) * 24) : 50)),
+            manualFrameOffset: parseInt(existingConfig?.advancedConfig?.manualFrameOffset) || 0
+        }
+    };
+    // Migration: If values are too low (likely were seconds), reset to frames
+    if (config.advancedConfig.maxSegmentFrames < 16) config.advancedConfig.maxSegmentFrames = 169;
+    if (config.advancedConfig.fallbackFrames < 16) config.advancedConfig.fallbackFrames = 169;
     const allKeys = [];
     analysis.inputs?.forEach(g => g.inputs.forEach(i => { allKeys.push(i.key); if (config.visibleInputs[i.key] === undefined) config.visibleInputs[i.key] = true; }));
     analysis.advancedInputs?.forEach(g => g.inputs.forEach(p => { allKeys.push(p.key); if (config.visibleParams[p.key] === undefined) config.visibleParams[p.key] = true; }));
@@ -359,11 +403,87 @@ adminApp.post('/api/config/save', (req, res) => {
     fs.writeFileSync(path.join('workflows', 'ui_config.json'), JSON.stringify(uiConfig, null, 2)); res.json({ success: true });
 });
 
+const handleChunkUpload = async (req, res) => {
+    try {
+        const { uploadId, chunkIndex, totalChunks, filename } = req.body;
+        if (!req.file) return res.status(400).json({ error: 'No chunk file' });
+
+        // SECURITY: Validate uploadId to prevent path traversal
+        if (!uploadId || !/^[a-z0-9-]+$/i.test(uploadId)) {
+            return res.status(400).json({ error: 'Invalid upload ID' });
+        }
+
+        const chunkDir = path.join('uploads', 'chunks', uploadId);
+        if (!fs.existsSync(chunkDir)) fs.mkdirSync(chunkDir, { recursive: true });
+
+        const chunkPath = path.join(chunkDir, `chunk-${chunkIndex}`);
+        try {
+            fs.renameSync(req.file.path, chunkPath);
+        } catch (e) {
+            fs.copyFileSync(req.file.path, chunkPath);
+            fs.unlinkSync(req.file.path);
+        }
+
+        const receivedChunks = fs.readdirSync(chunkDir).length;
+        if (receivedChunks === parseInt(totalChunks)) {
+            const finalFn = `${generateId()}${path.extname(filename)}`;
+            const finalPath = path.join('uploads', 'media', finalFn);
+            const writeStream = fs.createWriteStream(finalPath);
+
+            const sortedChunks = fs.readdirSync(chunkDir).sort((a, b) => {
+                return parseInt(a.split('-')[1]) - parseInt(b.split('-')[1]);
+            });
+
+            for (const chunkFile of sortedChunks) {
+                const partPath = path.join(chunkDir, chunkFile);
+                await new Promise((resolve, reject) => {
+                    const readStream = fs.createReadStream(partPath);
+                    readStream.pipe(writeStream, { end: false });
+                    readStream.on('end', resolve);
+                    readStream.on('error', reject);
+                });
+            }
+            writeStream.end();
+
+            await new Promise((resolve, reject) => {
+                writeStream.on('finish', resolve);
+                writeStream.on('error', reject);
+            });
+
+            mediaStore[finalFn] = { path: finalPath, originalName: filename, mimetype: filename.endsWith('.mp4') ? 'video/mp4' : 'image/png' };
+
+            // Cleanup
+            fs.rmSync(chunkDir, { recursive: true, force: true });
+
+            return res.json({ success: true, filename: finalFn, type: finalFn.endsWith('.mp4') ? 'video' : 'image', completed: true, url: `/uploads/media/${finalFn}` });
+        }
+
+        res.json({ success: true, chunkIndex, completed: false });
+    } catch (e) {
+        console.error('Chunk upload error:', e);
+        res.status(500).json({ error: e.message });
+    }
+};
+
+adminApp.post('/api/upload/chunk', upload.single('chunk'), handleChunkUpload);
+publicApp.post('/api/upload/chunk', upload.single('chunk'), handleChunkUpload);
+
 adminApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file' });
-    const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn); fs.renameSync(req.file.path, p);
-    mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
-    res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file' });
+        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('uploads', 'media', fn);
+        try {
+            fs.renameSync(req.file.path, p);
+        } catch (e) {
+            fs.copyFileSync(req.file.path, p);
+            fs.unlinkSync(req.file.path);
+        }
+        mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
+        res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image', url: `/uploads/media/${fn}` });
+    } catch (e) {
+        console.error('Upload API error:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 async function runWorkflowLogic(req, res, isPublic = false) {
@@ -446,7 +566,8 @@ async function runWorkflowLogic(req, res, isPublic = false) {
             for (const item of [...(output.images || []), ...(output.videos || [])]) {
                 const fileRes = await fetch(`${target}/view?filename=${encodeURIComponent(item.filename)}&type=${item.type}&subfolder=${item.subfolder || ''}`);
                 const localFn = `${generateId()}${path.extname(item.filename) || (item.type === 'video' ? '.mp4' : '.png')}`;
-                fs.writeFileSync(path.join('output', localFn), await fileRes.buffer());
+                const buffer = await fileRes.arrayBuffer();
+                fs.writeFileSync(path.join('output', localFn), Buffer.from(buffer));
                 outputFiles.push({ filename: localFn, url: `/output/${localFn}`, type: item.type === 'video' || localFn.endsWith('.mp4') ? 'video' : 'image' });
             }
         }
@@ -460,7 +581,7 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
         if (!workflowId) return res.status(400).json({ error: 'ID missing' });
         const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
         if (!file) return res.status(404).json({ error: 'Not found' });
-        const filePath = path.join(savedDir = path.join('workflows', 'saved'), file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        const filePath = path.join(path.join('workflows', 'saved'), file), data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
         if (data.analysis?.workflowApi) {
             const workflow = data.analysis.workflowApi;
             Object.entries(parameters || {}).forEach(([key, value]) => {
@@ -488,23 +609,38 @@ adminApp.post('/api/workflows/save-parameters', (req, res) => {
 adminApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res));
 publicApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res, true));
 
-async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNodes, targetInstance) {
-    // 1. Upload segment to instance
+async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNodes, targetInstance, extraSegments = {}) {
+    // 1. Upload primary segment to instance
     const uploadRes = await uploadFileToInstance(targetInstance, segmentPath, path.basename(segmentPath), 'video/mp4');
-    const filename = uploadRes.name;
+    const primaryFilename = uploadRes.name;
+
+    const segmentMap = { ...extraSegments };
+    // Also upload extra segments
+    for (const [key, p] of Object.entries(segmentMap)) {
+        const res = await uploadFileToInstance(targetInstance, p, path.basename(p), 'video/mp4');
+        segmentMap[key] = res.name;
+    }
 
     // 2. Prepare workflow
-    const file = fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId));
-    const d = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8'));
-    let workflow = JSON.parse(JSON.stringify(d.analysis.workflowApi || d.workflow));
-    const analysis = d.analysis;
+    let workflow, analysis;
+    const file = workflowId ? fs.readdirSync(path.join('workflows', 'saved')).find(f => f.includes(workflowId)) : null;
+    if (file) {
+        const d = JSON.parse(fs.readFileSync(path.join('workflows', 'saved', file), 'utf8'));
+        workflow = JSON.parse(JSON.stringify(d.analysis.workflowApi || d.workflow));
+        analysis = d.analysis;
+    } else if (currentWorkflowData) {
+        workflow = JSON.parse(JSON.stringify(currentWorkflowData.workflowApi));
+        analysis = currentWorkflowData.analysis;
+    } else {
+        throw new Error('Workflow not found for segmentation');
+    }
 
     workflow = applyBypass(workflow, bypassedNodes);
 
     // Map segment filename to all video inputs
     analysis.inputs?.forEach(g => g.inputs?.forEach(i => {
         if (i.valueType === 'video' && workflow[i.nodeId]) {
-            workflow[i.nodeId].inputs[i.inputName] = filename;
+            workflow[i.nodeId].inputs[i.inputName] = segmentMap[i.key] || primaryFilename;
         }
     }));
 
@@ -528,126 +664,342 @@ async function runSingleSegment(segmentPath, workflowId, parameters, bypassedNod
     const qData = await qRes.json();
     if (qData.error) throw new Error(qData.error.message || JSON.stringify(qData.error));
 
-    let result = null;
-    while (!result) {
+    let result = null, attempts = 0;
+    while (!result && attempts < 300) { // 10 min timeout
         await new Promise(r => setTimeout(r, 2000));
         const h = await (await fetch(`${targetInstance}/history`)).json();
         if (h[qData.prompt_id]) result = h[qData.prompt_id];
+        attempts++;
     }
+
+    if (!result) throw new Error(`Segment timeout after 10 minutes (ID: ${qData.prompt_id})`);
 
     // Download result
     let outputFn = null;
     for (const [nodeId, output] of Object.entries(result.outputs || {})) {
-        const item = (output.videos || output.images || [])[0];
+        const item = (output.videos || output.images || output.gifs || [])[0];
         if (item) {
             const fileRes = await fetch(`${targetInstance}/view?filename=${encodeURIComponent(item.filename)}&type=${item.type}&subfolder=${item.subfolder || ''}`);
+            if (!fileRes.ok) throw new Error(`Failed to download result for segment: ${fileRes.status}`);
             outputFn = path.join('temp_segments', `processed_${generateId()}.mp4`);
-            fs.writeFileSync(outputFn, await fileRes.buffer());
+            fs.writeFileSync(outputFn, Buffer.from(await fileRes.arrayBuffer()));
             break;
         }
     }
+
+    if (!outputFn) {
+        console.error(`[Segmented] Node outputs missing for ${qData.prompt_id}:`, JSON.stringify(result.outputs));
+        throw new Error(`Segment produced no output files (Prompt ID: ${qData.prompt_id})`);
+    }
+
     return outputFn;
 }
 
-adminApp.post('/api/video/process-segmented', async (req, res) => {
-    const { mediaFiles, parameters, bypassedNodes, workflowId } = req.body;
-    const currentId = currentWorkflowId || workflowId;
-    if (!currentId) return res.status(400).json({ error: 'No workflow' });
+async function segmentVideo(inputVideo, segmentDir, advancedConfig) {
+    const videoMetadata = await new Promise((res, rej) => { ffmpeg.ffprobe(path.resolve(inputVideo), (err, m) => err ? rej(err) : res(m)); });
+    const videoDuration = parseFloat(videoMetadata.format.duration);
+    const vstream = videoMetadata.streams?.find(s => s.codec_type === 'video');
+    const videoFpsStr = vstream?.r_frame_rate || '24/1';
+    const videoFps = eval(videoFpsStr);
 
-    res.setHeader('Content-Type', 'application/json');
-    const sendUpdate = (data) => res.write(JSON.stringify(data) + '\n');
+    console.log(`[Segment] Input: ${inputVideo}, Duration: ${videoDuration}, FPS: ${videoFpsStr}`);
 
-    try {
-        const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
-        let inputVideo = path.join('output', mediaFiles[videoKey]);
-        if (!fs.existsSync(inputVideo)) {
-            // Check in mediaStore if not in output (e.g. freshly uploaded)
-            const fn = mediaFiles[videoKey];
-            if (mediaStore[fn]) inputVideo = mediaStore[fn].path;
-            else throw new Error(`Video file not found: ${fn}`);
+    const segmentFrames = parseInt(advancedConfig?.maxSegmentFrames) || 169;
+    const overlapFrames = Math.min(segmentFrames - 1, (advancedConfig?.overlapFrames !== undefined) ? parseInt(advancedConfig.overlapFrames) : 50);
+    const maxSegmentDuration = segmentFrames / videoFps;
+    const segmentOverlap = overlapFrames / videoFps;
+
+    const sceneThreshold = parseFloat(advancedConfig?.sceneThreshold ?? 0.2);
+    const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
+    await new Promise((resolve, reject) => {
+        ffmpeg(path.resolve(inputVideo))
+            .outputOptions('-vf', `select='gt(scene,${sceneThreshold})',showinfo`)
+            .outputOptions('-f', 'null')
+            .output('-')
+            .on('stderr', line => { const m = line.match(/pts_time:([\d.]+)/); if (m) fs.appendFileSync(sceneChangeFile, m[1] + ','); })
+            .on('end', resolve).on('error', reject).run();
+    });
+
+    let segmentTimes = [];
+    if (fs.existsSync(sceneChangeFile)) {
+        segmentTimes = fs.readFileSync(sceneChangeFile, 'utf8').split(',').filter(t => t.trim()).map(t => parseFloat(t));
+    }
+
+    const refinedTimes = [];
+    let lastTime = 0;
+    const allSplits = [...new Set([...segmentTimes, videoDuration])].sort((a, b) => a - b);
+    for (const st of allSplits) {
+        while (st - lastTime > maxSegmentDuration + 0.1) {
+            lastTime += maxSegmentDuration;
+            refinedTimes.push(lastTime);
         }
+        if (st < videoDuration && st > lastTime + 0.1) {
+            lastTime = st;
+            refinedTimes.push(lastTime);
+        }
+    }
+
+    const segments = [];
+    if (videoDuration > maxSegmentDuration) {
+        let start = 0;
+        const safeOverlap = Math.max(0.1, Math.min(segmentOverlap, maxSegmentDuration - 0.5));
+        while (start < videoDuration) {
+            let end = Math.min(start + maxSegmentDuration, videoDuration);
+            segments.push({ start, duration: end - start });
+            if (end >= videoDuration) break;
+            let nextStart = end - safeOverlap;
+            if (nextStart <= start) nextStart = start + 0.1;
+            start = nextStart;
+        }
+    } else {
+        segments.push({ start: 0, duration: videoDuration });
+    }
+
+    const filePaths = [];
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const outputIdx = String(i).padStart(3, '0');
+        const outputPath = path.join(segmentDir, `seg_${outputIdx}.mp4`);
+        filePaths.push(outputPath);
+
+        await new Promise((resolve, reject) => {
+            ffmpeg(path.resolve(inputVideo))
+                .setStartTime(seg.start)
+                .setDuration(seg.duration)
+                .outputOptions('-map', '0')
+                .outputOptions('-c:v', 'libx264')
+                .outputOptions('-preset', 'superfast')
+                .outputOptions('-crf', '18')
+                .outputOptions('-c:a', 'aac')
+                .outputOptions('-avoid_negative_ts', 'make_zero')
+                .output(path.resolve(outputPath))
+                .on('end', resolve)
+                .on('error', (err) => {
+                    console.error(`[Segment] Failed segment ${i}:`, err.message);
+                    reject(err);
+                })
+                .run();
+        });
+    }
+
+    const metadata = { videoDuration, videoFpsStr, videoFps, segmentFrames, overlapFrames, segments };
+    fs.writeFileSync(path.join(segmentDir, 'metadata.json'), JSON.stringify(metadata, null, 2));
+    return { segmentDir, segments, filePaths, metadata };
+}
+
+async function reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig, originalAudioSource = null) {
+    const metaPath = path.join(segmentDir, 'metadata.json');
+    if (!fs.existsSync(metaPath)) throw new Error('Segmentation metadata not found');
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+
+    const cmd = ffmpeg();
+    processedSegments.forEach(p => cmd.input(path.resolve(p.path)));
+
+    let filters = [];
+    const resolutions = [], durations = [];
+    for (const p of processedSegments) {
+        const probeMeta = await new Promise((res) => { ffmpeg.ffprobe(path.resolve(p.path), (err, m) => res(m)); });
+        durations.push(parseFloat(probeMeta?.format?.duration || 0));
+        const vstream = probeMeta?.streams?.find(s => s.codec_type === 'video');
+        resolutions.push({ width: vstream?.width || 0, height: vstream?.height || 0 });
+    }
+
+    const targetWidth = Math.ceil(Math.max(...resolutions.map(r => r.width || 0), 128) / 2) * 2;
+    const targetHeight = Math.ceil(Math.max(...resolutions.map(r => r.height || 0), 128) / 2) * 2;
+
+    console.log(`[Reassemble] Target Resolution: ${targetWidth}x${targetHeight}`);
+
+    const segmentOverlap = meta.overlapFrames / meta.videoFps;
+    const manualOffset = (parseInt(advancedConfig?.manualFrameOffset) || 0) / meta.videoFps;
+
+    // Pre-process all inputs to the same resolution and pixel format
+    processedSegments.forEach((p, i) => {
+        filters.push(`[${i}:v]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,tpad=stop_mode=clone:stop_duration=10[pv${i}]`);
+    });
+
+    let offset = 0;
+    for (let i = 0; i < processedSegments.length - 1; i++) {
+        const fadeDuration = segmentOverlap;
+        if (i === 0) {
+            offset = durations[0] - fadeDuration + manualOffset;
+            filters.push(`[pv0][pv1]xfade=transition=fade:duration=${fadeDuration}:offset=${Math.max(0, offset)}[v1]`);
+        } else {
+            offset = offset + durations[i] - fadeDuration;
+            filters.push(`[v${i}][pv${i + 1}]xfade=transition=fade:duration=${fadeDuration}:offset=${Math.max(0, offset)}[v${i + 1}]`);
+        }
+    }
+
+    const lastIdx = processedSegments.length - 1;
+    const finalV = lastIdx > 0 ? `v${lastIdx}` : 'pv0';
+
+    const originalMetadata = originalAudioSource ? await new Promise((res) => { ffmpeg.ffprobe(path.resolve(originalAudioSource), (err, m) => res(m)); }) : null;
+    const originalDuration = originalMetadata ? parseFloat(originalMetadata.format.duration) : null;
+
+    await new Promise(async (resolve, reject) => {
+        const finalCmd = cmd.complexFilter(filters.join('; ')).map(`[${finalV}]`);
+
+        if (originalAudioSource && fs.existsSync(originalAudioSource) && await hasAudio(originalAudioSource)) {
+            finalCmd.input(path.resolve(originalAudioSource));
+            finalCmd.map(`[${processedSegments.length}:a]`);
+        }
+
+        if (originalDuration) {
+            finalCmd.outputOptions('-t', originalDuration);
+        }
+
+        finalCmd
+            .videoCodec('libx264')
+            .audioCodec('aac')
+            .outputOptions('-pix_fmt', 'yuv420p')
+            .outputOptions('-crf', '18')
+            .save(path.resolve(finalPath))
+            .on('start', (cmdLine) => console.log('[Reassemble] FFmpeg command:', cmdLine))
+            .on('end', resolve)
+            .on('error', (err) => {
+                console.error('[Reassemble] FFmpeg failed:', err.message);
+                reject(err);
+            });
+    });
+}
+
+const preSegmentHandler = async (req, res) => {
+    try {
+        const { filename, advancedConfig } = req.body;
+        let inputVideo = path.join('uploads', 'media', filename);
+        if (!fs.existsSync(inputVideo)) {
+            inputVideo = path.join('output', filename);
+        }
+        if (!fs.existsSync(inputVideo)) throw new Error('File not found');
 
         const runId = generateId();
         const segmentDir = path.join('temp_segments', runId);
         fs.mkdirSync(segmentDir, { recursive: true });
 
-        sendUpdate({ status: 'Analyzing scenes...' });
+        const { segments } = await segmentVideo(inputVideo, segmentDir, advancedConfig);
+        res.json({ success: true, runId, segments: segments.map((_, i) => `seg_${String(i).padStart(3, '0')}.mp4`) });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+};
 
-        // 1. Detect scene changes
-        const sceneChangeFile = path.join(segmentDir, 'scenes.txt');
-        await new Promise((resolve, reject) => {
-            ffmpeg(inputVideo)
-                .outputOptions([
-                    '-vf', 'select=\'gt(scene,0.2)\',showinfo',
-                    '-f', 'null'
-                ])
-                .output('-')
-                .on('stderr', (line) => {
-                    const match = line.match(/pts_time:([\d.]+)/);
-                    if (match) {
-                        fs.appendFileSync(sceneChangeFile, match[1] + ',');
-                    }
-                })
-                .on('end', resolve)
-                .on('error', reject)
-                .run();
-        });
+const processSegmentedHandler = async (req, res) => {
+    const { mediaFiles, parameters, bypassedNodes, workflowId, advancedConfig, runId, segmentedInputs } = req.body;
+    const currentId = workflowId || currentWorkflowId;
 
-        let segmentTimes = '';
-        if (fs.existsSync(sceneChangeFile)) {
-            segmentTimes = fs.readFileSync(sceneChangeFile, 'utf8').replace(/,$/, '');
+    if (!currentId && !currentWorkflowData) return res.status(400).json({ error: 'No workflow' });
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const sendUpdate = (data) => { if (!res.writableEnded) res.write(JSON.stringify(data) + '\n'); };
+    const heartbeat = setInterval(() => sendUpdate({ type: 'heartbeat' }), 15000);
+
+    try {
+        let activeRunId = runId || (segmentedInputs ? Object.values(segmentedInputs)[0] : null);
+        let segmentDir = activeRunId ? path.join('temp_segments', activeRunId) : null;
+        let segmentsMetadata = [];
+
+        const videoKey = Object.keys(mediaFiles || {}).find(k => k.startsWith('media_') || k.includes('file') || k.includes('video'));
+        let primaryInputVideo = null;
+        if (videoKey) {
+            primaryInputVideo = path.join('uploads', 'media', mediaFiles[videoKey]);
+            if (!fs.existsSync(primaryInputVideo)) primaryInputVideo = path.join('output', mediaFiles[videoKey]);
+            if (!fs.existsSync(primaryInputVideo) && mediaStore[mediaFiles[videoKey]]) primaryInputVideo = mediaStore[mediaFiles[videoKey]].path;
         }
 
-        // 2. Segment based on detected times or fallback
-        await new Promise((resolve, reject) => {
-            const cmd = ffmpeg(inputVideo).outputOptions(['-reset_timestamps 1', '-map 0', '-c copy']);
-            if (segmentTimes) {
-                cmd.outputOptions(['-f segment', '-segment_times', segmentTimes]);
+        if (!activeRunId) {
+            if (!primaryInputVideo || !fs.existsSync(primaryInputVideo)) throw new Error('No video input found');
+            activeRunId = generateId();
+            segmentDir = path.join('temp_segments', activeRunId);
+            fs.mkdirSync(segmentDir, { recursive: true });
+            sendUpdate({ status: 'Segmenting...' });
+            const { metadata } = await segmentVideo(primaryInputVideo, segmentDir, advancedConfig);
+            segmentsMetadata = metadata.segments;
+        } else {
+            const metaPath = path.join(segmentDir, 'metadata.json');
+            if (fs.existsSync(metaPath)) {
+                const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+                segmentsMetadata = meta.segments;
             } else {
-                cmd.outputOptions(['-f segment', '-segment_time 10']);
+                throw new Error('Segmentation metadata missing for active run');
             }
-            cmd.output(path.join(segmentDir, 'seg_%03d.mp4'))
-                .on('end', resolve)
-                .on('error', reject)
-                .run();
-        });
+        }
 
-        const segments = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
+        const allSegmentsRaw = fs.readdirSync(segmentDir).filter(f => f.startsWith('seg_')).sort().map(f => path.join(segmentDir, f));
         const processedSegments = [];
         const target = await getFreestInstance();
 
-        for (let i = 0; i < segments.length; i++) {
-            sendUpdate({ status: `Processing segment ${i + 1}/${segments.length}...` });
-            const processed = await runSingleSegment(segments[i], currentId, parameters, bypassedNodes, target);
-            processedSegments.push(processed);
+        for (let i = 0; i < allSegmentsRaw.length; i++) {
+            if (activeRunId && cancelledRuns.has(activeRunId)) { cancelledRuns.delete(activeRunId); throw new Error('Cancelled'); }
+            sendUpdate({ status: `Processing segment ${i + 1}/${allSegmentsRaw.length}...`, progress: { current: i + 1, total: allSegmentsRaw.length, percent: Math.round(((i + 1) / allSegmentsRaw.length) * 100) } });
+
+            const extraSegments = {};
+            if (segmentedInputs) {
+                Object.entries(segmentedInputs).forEach(([inputKey, rId]) => {
+                    const otherDir = path.join('temp_segments', rId);
+                    const otherSegments = fs.readdirSync(otherDir).filter(f => f.startsWith('seg_')).sort();
+                    if (otherSegments[i]) extraSegments[inputKey] = path.join(otherDir, otherSegments[i]);
+                });
+            }
+
+            try {
+                const processed = await runSingleSegment(allSegmentsRaw[i], currentId, parameters, bypassedNodes, target, extraSegments);
+                processedSegments.push({ path: processed || allSegmentsRaw[i] });
+            } catch (e) {
+                console.error(`Segment ${i} failed:`, e);
+                processedSegments.push({ path: allSegmentsRaw[i], isOriginal: true });
+            }
         }
 
-        sendUpdate({ status: 'Reassembling final video...' });
-        const listFile = path.join(segmentDir, 'list.txt');
-        fs.writeFileSync(listFile, processedSegments.map(p => `file '${path.resolve(p)}'`).join('\n'));
-
+        sendUpdate({ status: 'Reassembling...' });
         const finalName = `upscaled_${generateId()}.mp4`;
         const finalPath = path.join('output', finalName);
 
-        await new Promise((resolve, reject) => {
-            ffmpeg()
-                .input(listFile)
-                .inputOptions(['-f concat', '-safe 0'])
-                .outputOptions('-c copy')
-                .save(finalPath)
-                .on('end', resolve)
-                .on('error', reject);
-        });
+        await reassembleVideo(processedSegments, segmentDir, finalPath, advancedConfig, primaryInputVideo);
 
-        sendUpdate({ success: true, files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }] });
+        if (!fs.existsSync(finalPath)) {
+            throw new Error(`Final upscaled video was not created at ${finalPath}`);
+        }
+        console.log(`[Segmented] Successfully created final video: ${finalName} (${fs.statSync(finalPath).size} bytes)`);
+
+        sendUpdate({ success: true, files: [{ filename: finalName, url: `/output/${finalName}`, type: 'video' }], progress: { current: allSegmentsRaw.length, total: allSegmentsRaw.length, percent: 100 } });
+        clearInterval(heartbeat);
         res.end();
-
-        // Cleanup
         setTimeout(() => fs.rmSync(segmentDir, { recursive: true, force: true }), 60000);
     } catch (e) {
+        clearInterval(heartbeat);
         sendUpdate({ error: e.message });
         res.end();
     }
+};
+
+adminApp.post('/api/video/pre-segment', preSegmentHandler);
+adminApp.post('/api/video/process-segmented', processSegmentedHandler);
+adminApp.post('/api/video/cancel-segmented', (req, res) => {
+    const { runId } = req.body;
+    if (runId) cancelledRuns.add(runId);
+    res.json({ success: true });
+});
+adminApp.post('/api/workflow/interrupt', async (req, res) => {
+    try {
+        const target = await getFreestInstance();
+        await fetch(`${target}/interrupt`, { method: 'POST' });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+publicApp.post('/api/video/pre-segment', preSegmentHandler);
+publicApp.post('/api/video/process-segmented', processSegmentedHandler);
+publicApp.post('/api/video/cancel-segmented', (req, res) => {
+    const { runId } = req.body;
+    if (runId) cancelledRuns.add(runId);
+    res.json({ success: true });
+});
+publicApp.post('/api/workflow/interrupt', async (req, res) => {
+    try {
+        const target = await getFreestInstance();
+        await fetch(`${target}/interrupt`, { method: 'POST' });
+        res.json({ success: true });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 adminApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
@@ -762,9 +1114,21 @@ publicApp.post('/api/workflows/load/:id', (req, res) => {
     res.json({ success: true, analysis: d.analysis, presets: d.metadata?.presets || [], uiConfig: reconcileUIConfig(d.analysis, d.uiConfig), originalValues: extractOriginalWorkflowValues(d.analysis.workflowApi) });
 });
 publicApp.post('/api/upload/media/:inputKey', upload.single('media'), (req, res) => {
-    const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('output', fn); fs.renameSync(req.file.path, p);
-    mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
-    res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image' });
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file' });
+        const fn = `${generateId()}${path.extname(req.file.originalname)}`, p = path.join('uploads', 'media', fn);
+        try {
+            fs.renameSync(req.file.path, p);
+        } catch (e) {
+            fs.copyFileSync(req.file.path, p);
+            fs.unlinkSync(req.file.path);
+        }
+        mediaStore[fn] = { path: p, originalName: req.file.originalname, mimetype: req.file.mimetype };
+        res.json({ success: true, filename: fn, type: req.file.mimetype.startsWith('video/') ? 'video' : 'image', url: `/uploads/media/${fn}` });
+    } catch (e) {
+        console.error('Public Upload API error:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 publicApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));
 publicApp.get('/api/outputs', (req, res) => {
@@ -795,6 +1159,16 @@ publicApp.get('/api/outputs', (req, res) => {
     } catch (e) { res.status(400).json({ error: e.message }); }
 });
 publicApp.get('/api/health', async (req, res) => { const inst = await Promise.all(COMFYUI_URLS.map(async u => { try { return { url: u, status: (await fetch(`${u}/system_stats`, { timeout: 2000 })).ok ? 'connected' : 'disconnected' }; } catch(e){ return { url: u, status: 'disconnected' }; } })); res.json({ status: inst.some(i => i.status === 'connected') ? 'ok' : 'error', comfyui: inst.some(i => i.status === 'connected') ? 'connected' : 'disconnected', instances: inst }); });
+
+// Error handlers
+adminApp.use((err, req, res, next) => {
+    console.error('[Admin] Uncaught error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Internal Server Error' });
+});
+publicApp.use((err, req, res, next) => {
+    console.error('[Public] Uncaught error:', err);
+    if (!res.headersSent) res.status(500).json({ error: err.message || 'Internal Server Error' });
+});
 
 // ============ START ============
 

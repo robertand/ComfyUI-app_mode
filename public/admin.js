@@ -1,9 +1,10 @@
 let currentWorkflow = null;
 let currentWorkflowId = null;
-let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {} };
+let uiConfig = { visibleInputs: {}, visibleParams: {}, inputOrder: [], inputNames: {}, advancedConfig: { segmented: false, sceneThreshold: 0.2, fallbackFrames: 169, maxSegmentFrames: 169, overlapFrames: 50 } };
 window._pixaroma_session_previews = {};
 window.mediaFiles = {};
 let mediaFiles = window.mediaFiles;
+let segmentedRuns = {};
 let parameters = {};
 let bypassedNodes = {};
 let originalValues = {};
@@ -12,6 +13,31 @@ let currentOutputPath = '';
 let selectedItems = new Set();
 
 function initIcons() { if (window.lucide) window.lucide.createIcons(); }
+
+async function chunkedUpload(file, key, onProgress) {
+    const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+    const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+    const uploadId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+    let result = null;
+
+    for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, file.size);
+        const chunk = file.slice(start, end);
+        const formData = new FormData();
+        formData.append('chunk', chunk);
+        formData.append('uploadId', uploadId);
+        formData.append('chunkIndex', i);
+        formData.append('totalChunks', totalChunks);
+        formData.append('filename', file.name);
+
+        const res = await fetch('/api/upload/chunk', { method: 'POST', body: formData });
+        result = await res.json();
+        if (!result.success) throw new Error(result.error || 'Chunk upload failed');
+        if (onProgress) onProgress(Math.round(((i + 1) / totalChunks) * 100));
+    }
+    return result;
+}
 
 async function loadWorkflows() {
     try {
@@ -48,7 +74,28 @@ async function loadWorkflow(id) {
 
 function setupWorkflow(data) {
     currentWorkflow = data.analysis;
-    uiConfig = data.uiConfig;
+    uiConfig = data.uiConfig || uiConfig;
+    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = { segmented: false, sceneThreshold: 0.2, fallbackFrames: 169, maxSegmentFrames: 169, overlapFrames: 50 };
+
+    // Sync UI with advancedConfig
+    const segToggles = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];
+    segToggles.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = uiConfig.advancedConfig.segmented;
+    });
+    const thresholdInput = document.getElementById('scene-threshold');
+    if (thresholdInput) thresholdInput.value = uiConfig.advancedConfig.sceneThreshold;
+    const durationInput = document.getElementById('fallback-duration');
+    if (durationInput) durationInput.value = uiConfig.advancedConfig.fallbackFrames;
+    const maxDurationInput = document.getElementById('max-segment-duration');
+    if (maxDurationInput) maxDurationInput.value = uiConfig.advancedConfig.maxSegmentFrames;
+    const overlapInput = document.getElementById('segment-overlap');
+    if (overlapInput) overlapInput.value = uiConfig.advancedConfig.overlapFrames;
+    const offsetSlider = document.getElementById('frame-offset-slider');
+    if (offsetSlider) offsetSlider.value = uiConfig.advancedConfig.manualFrameOffset || 0;
+    const offsetVal = document.getElementById('frame-offset-val');
+    if (offsetVal) offsetVal.textContent = uiConfig.advancedConfig.manualFrameOffset || 0;
+
     originalValues = data.originalValues || {};
 
     // POPULATE SHIM WITH SAVED DATA IMMEDIATELY
@@ -80,8 +127,39 @@ function setupWorkflow(data) {
 
 function refreshUI() {
     renderMediaConfig(); renderParametersConfig(); renderLiveUI(); renderPresets(currentPresets);
+
+    // Sync threshold and duration inputs to uiConfig
+    const thresholdInput = document.getElementById('scene-threshold');
+    if (thresholdInput) thresholdInput.onchange = (e) => uiConfig.advancedConfig.sceneThreshold = parseFloat(e.target.value);
+    const durationInput = document.getElementById('fallback-duration');
+    if (durationInput) durationInput.onchange = (e) => uiConfig.advancedConfig.fallbackFrames = parseInt(e.target.value);
+    const maxDurationInput = document.getElementById('max-segment-duration');
+    if (maxDurationInput) maxDurationInput.onchange = (e) => uiConfig.advancedConfig.maxSegmentFrames = parseInt(e.target.value);
+    const overlapInput = document.getElementById('segment-overlap');
+    if (overlapInput) overlapInput.onchange = (e) => uiConfig.advancedConfig.overlapFrames = parseInt(e.target.value);
+
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }
+
+function updateFrameOffset(val) {
+    if (!uiConfig.advancedConfig) uiConfig.advancedConfig = {};
+    uiConfig.advancedConfig.manualFrameOffset = parseInt(val);
+    const v = document.getElementById('frame-offset-val');
+    if (v) v.textContent = val;
+    const s = document.getElementById('frame-offset-slider');
+    if (s) s.value = val;
+}
+window.updateFrameOffset = updateFrameOffset;
+
+function syncSegmentedToggles(checked) {
+    uiConfig.advancedConfig.segmented = checked;
+    const ids = ['sidebar-segmented-toggle', 'segmented-processing-toggle'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.checked = checked;
+    });
+}
+window.syncSegmentedToggles = syncSegmentedToggles;
 
 function moveNode(key, direction) {
     const idx = uiConfig.inputOrder.indexOf(key);
@@ -233,7 +311,34 @@ function renderLiveUI() {
         div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
 
         if (obj.type === 'media') {
-            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div><div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"><input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')"><div id="preview-${key}" class="text-center p-4"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p></div></div>`;
+            const isSegmented = uiConfig.advancedConfig?.segmented && obj.data.valueType === 'video';
+            const runInfo = segmentedRuns[key];
+            const segmentedHtml = isSegmented ? `
+                <div class="mt-4 pt-4 border-t border-slate-700/50">
+                    <div class="flex items-center justify-between gap-4">
+                        <div class="flex-1">
+                            <label class="block text-[8px] font-bold text-slate-500 uppercase mb-1">Segmented Upload</label>
+                            <div class="relative group aspect-video bg-slate-800 rounded-lg border border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer">
+                                <input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleSegmentedUpload(this.files[0], '${key}')">
+                                <div id="segmented-preview-${key}" class="text-center p-2">
+                                    <i data-lucide="split" class="w-6 h-6 mb-1 mx-auto text-slate-600"></i>
+                                    <p class="text-[8px] text-slate-500">Click to Upload & Segment</p>
+                                </div>
+                                <div id="segmented-progress-container-${key}" class="hidden absolute inset-x-0 bottom-0 p-2 bg-slate-900/80">
+                                    <div class="w-full bg-slate-700 h-1 rounded-full overflow-hidden">
+                                        <div id="segmented-progress-bar-${key}" class="bg-blue-500 h-full transition-all" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="status-card-${key}" class="hidden flex-1 p-3 bg-slate-900/50 rounded-lg border border-slate-700">
+                             <div class="text-[10px] font-bold text-blue-400 mb-1" id="status-text-${key}">Ready</div>
+                             <div class="text-[8px] text-slate-500" id="status-sub-${key}">0 segments</div>
+                        </div>
+                    </div>
+                </div>` : '';
+
+            div.innerHTML = `<div class="flex items-center justify-between mb-2"><label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label><button onclick="toggleBypass('${obj.data.nodeId}', 'media')" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div><div class="relative group aspect-video bg-slate-900 rounded-lg border-2 border-dashed border-slate-700 hover:border-blue-500 transition-all overflow-hidden flex items-center justify-center cursor-pointer ${isBypassed ? 'opacity-30 pointer-events-none' : ''}"><input type="file" class="absolute inset-0 opacity-0 cursor-pointer z-10" onchange="handleMediaUpload(this.files[0], '${key}')"><div id="preview-${key}" class="text-center p-4"><i data-lucide="${obj.data.valueType === 'video' ? 'video' : 'image'}" class="w-10 h-10 mb-2 mx-auto text-slate-600"></i><p class="text-xs text-slate-500" data-i18n="click_or_drag">Click or drag</p></div><div id="media-progress-container-${key}" class="hidden absolute inset-x-0 bottom-0 p-4 bg-slate-900/80"><div class="w-full bg-slate-700 h-1.5 rounded-full overflow-hidden"><div id="media-progress-bar-${key}" class="bg-blue-500 h-full transition-all" style="width: 0%"></div></div></div></div>${segmentedHtml}`;
         } else {
             const cur = parameters[key] !== undefined ? parameters[key] : obj.data.defaultValue;
             const isRandom = parameters['_autoRandomSeed']?.[key] === true;
@@ -268,6 +373,59 @@ function renderLiveUI() {
     initIcons();
 }
 
+async function handleSegmentedUpload(file, key) {
+    if (!file) return;
+    const p = document.getElementById(`segmented-preview-${key}`);
+    const card = document.getElementById(`status-card-${key}`);
+    const stext = document.getElementById(`status-text-${key}`);
+    const ssub = document.getElementById(`status-sub-${key}`);
+    const progCont = document.getElementById(`segmented-progress-container-${key}`);
+    const progBar = document.getElementById(`segmented-progress-bar-${key}`);
+
+    p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-4 w-4 mx-auto"></div>';
+
+    try {
+        let upData;
+        if (file.size > 10 * 1024 * 1024) {
+            progCont.classList.remove('hidden');
+            upData = await chunkedUpload(file, key, (percent) => {
+                progBar.style.width = percent + '%';
+            });
+            progCont.classList.add('hidden');
+        } else {
+            const fd = new FormData(); fd.append('media', file);
+            const upRes = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
+            if (!upRes.ok) throw new Error('Upload failed');
+            upData = await upRes.json();
+        }
+
+        stext.textContent = 'Segmenting...';
+        card.classList.remove('hidden');
+
+        const segRes = await fetch('/api/video/pre-segment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: upData.filename, advancedConfig: uiConfig.advancedConfig })
+        });
+        const segData = await segRes.json();
+        if (segData.success) {
+            window.mediaFiles[key] = upData.filename;
+            segmentedRuns[key] = { runId: segData.runId, segments: segData.segments };
+            stext.textContent = 'READY';
+            stext.className = 'text-[10px] font-bold text-emerald-400 mb-1';
+            ssub.textContent = `${segData.segments.length} segments`;
+            p.innerHTML = `<video src="${upData.url || `/output/${upData.filename}`}" class="w-full h-full object-cover"></video>`;
+        } else throw new Error(segData.error);
+    } catch (e) {
+        console.error(e);
+        stext.textContent = 'FAILED';
+        stext.className = 'text-[10px] font-bold text-red-400 mb-1';
+        ssub.textContent = e.message;
+        p.innerHTML = '<i data-lucide="alert-circle" class="w-6 h-6 text-red-500 mx-auto"></i>';
+        initIcons();
+    }
+}
+
 async function handleMediaUpload(file, key) {
     if (!file) return;
 
@@ -283,14 +441,47 @@ async function handleMediaUpload(file, key) {
     }
 
     const p = document.getElementById(`preview-${key}`);
+    const progCont = document.getElementById(`media-progress-container-${key}`);
+    const progBar = document.getElementById(`media-progress-bar-${key}`);
+
     p.innerHTML = '<div class="loader ease-linear rounded-full border-2 border-t-2 border-blue-500 h-6 w-6 mx-auto"></div>';
-    const fd = new FormData(); fd.append('media', file);
+
     try {
-        const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
-        const data = await res.json();
-        window.mediaFiles[key] = data.filename;
-        p.innerHTML = data.type === 'video' ? `<video src="/output/${data.filename}" class="w-full h-full object-cover"></video>` : `<img src="/output/${data.filename}" class="w-full h-full object-cover">`;
-    } catch (e) { p.innerHTML = '<i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i>'; initIcons(); }
+        let data;
+        if (file.size > 10 * 1024 * 1024) {
+            progCont.classList.remove('hidden');
+            data = await chunkedUpload(file, key, (percent) => {
+                progBar.style.width = percent + '%';
+            });
+            progCont.classList.add('hidden');
+        } else {
+            const fd = new FormData(); fd.append('media', file);
+            const res = await fetch(`/api/upload/media/${key}`, { method: 'POST', body: fd });
+            data = await res.json();
+        }
+
+        if (data.success) {
+            window.mediaFiles[key] = data.filename;
+            const mediaUrl = data.url || `/output/${data.filename}`;
+            if (data.type === 'video') {
+                p.innerHTML = `<video src="${mediaUrl}" class="w-full h-full object-cover"></video>
+                <div class="absolute bottom-2 right-2 flex gap-2">
+                    <button onclick="preSegmentVideo('${data.filename}', '${key}', event)" class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-[8px] font-bold rounded shadow-lg transition-all flex items-center gap-1">
+                        <i data-lucide="split" class="w-3 h-3"></i>
+                        <span>PROCESS & SEGMENT</span>
+                    </button>
+                </div>`;
+            } else {
+                p.innerHTML = `<img src="${mediaUrl}" class="w-full h-full object-cover">`;
+            }
+        } else {
+            throw new Error(data.error || 'Upload failed');
+        }
+    } catch (e) {
+        console.error('Upload error:', e);
+        p.innerHTML = `<div class="text-center"><i data-lucide="alert-circle" class="w-8 h-8 text-red-500 mx-auto"></i><p class="text-[8px] text-red-500 mt-1">${e.message}</p></div>`;
+        initIcons();
+    }
 }
 
 function toggleBypass(id, src) {
@@ -305,10 +496,49 @@ function toggleRandom(key) {
     renderLiveUI();
 }
 
+let lastPreSegmentRunId = null;
+
+async function preSegmentVideo(filename, key, ev) {
+    const btn = ev.currentTarget;
+    const originalContent = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader" class="w-3 h-3 animate-spin"></i><span>ANALYZING...</span>';
+    initIcons();
+
+    const statusMini = document.getElementById('segment-status-mini');
+    if (statusMini) { statusMini.classList.remove('hidden'); statusMini.textContent = 'Analyzing & Segmenting...'; }
+
+    try {
+        const res = await fetch('/api/video/pre-segment', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename, advancedConfig: uiConfig.advancedConfig })
+        });
+        const data = await res.json();
+        if (data.success) {
+            lastPreSegmentRunId = data.runId;
+            segmentedRuns[key] = { runId: data.runId, segments: data.segments };
+            alert(`Video split into ${data.segments.length} segments.`);
+            if (statusMini) statusMini.textContent = `Ready: ${data.segments.length} segments`;
+            btn.innerHTML = `<i data-lucide="check" class="w-3 h-3"></i><span>${data.segments.length} SEGMENTS</span>`;
+        } else {
+            alert('Segmentation failed: ' + data.error);
+            btn.innerHTML = originalContent;
+            btn.disabled = false;
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+        btn.innerHTML = originalContent;
+        btn.disabled = false;
+    }
+    initIcons();
+}
+window.preSegmentVideo = preSegmentVideo;
+
 async function runWorkflow() {
     const btn = document.getElementById('generate-btn');
     const ov = document.getElementById('loading-overlay');
-    const isSegmented = document.getElementById('segmented-processing-toggle')?.checked;
+    const isSegmented = uiConfig.advancedConfig?.segmented;
 
     btn.disabled = true;
     ov.classList.remove('hidden');
@@ -317,6 +547,12 @@ async function runWorkflow() {
 
     try {
         if (isSegmented) {
+            // Check for per-input segments first
+            const segmentedInputs = {};
+            Object.entries(segmentedRuns).forEach(([k, v]) => {
+                if (window.mediaFiles[k]) segmentedInputs[k] = v.runId;
+            });
+
             const statusMini = document.getElementById('segment-status-mini');
             statusMini.classList.remove('hidden');
             statusMini.textContent = 'Segmenting...';
@@ -325,36 +561,63 @@ async function runWorkflow() {
             const res = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mediaFiles, parameters, bypassedNodes })
+                body: JSON.stringify({ workflowId: currentWorkflowId, mediaFiles, parameters, bypassedNodes, advancedConfig: uiConfig.advancedConfig, runId: lastPreSegmentRunId, segmentedInputs })
             });
+
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.error || 'Server error');
+            }
 
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
+            let buffer = '';
 
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
 
-                const lines = decoder.decode(value).split('\n');
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // Keep the partial last line in the buffer
+
                 for (const line of lines) {
                     if (!line.trim()) continue;
                     try {
                         const update = JSON.parse(line);
+                        if (update.error) {
+                            alert('Error: ' + update.error);
+                            break;
+                        }
                         if (update.status) {
                             statusMini.textContent = update.status;
                             const hint = document.querySelector('[data-i18n="processing_hint"]');
                             if (hint) hint.textContent = update.status;
                         }
+                        if (update.progress) {
+                            const pCont = document.getElementById('overlay-progress-container');
+                            const pBar = document.getElementById('overlay-progress-bar');
+                            const pText = document.getElementById('overlay-progress-text');
+                            const pSub = document.getElementById('overlay-progress-sub');
+                            if (pCont) {
+                                pCont.classList.remove('hidden');
+                                pBar.style.width = update.progress.percent + '%';
+                                pText.textContent = update.progress.percent + '%';
+                                pSub.innerHTML = `<span data-i18n="step">${getTranslation('step')}</span> ${update.progress.current}/${update.progress.total}`;
+                            }
+                        }
                         if (update.success && update.files) {
+                            console.log('[Segmented] Success result:', update.files[0]);
                             const f = update.files[0];
                             const c = document.getElementById('output-media-container');
                             const ph = document.getElementById('output-placeholder');
                             ph.classList.add('hidden');
                             c.classList.remove('hidden');
                             c.innerHTML = `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>`;
+                            currentOutputPath = '';
                             refreshOutputs();
                         }
-                    } catch (e) {}
+                    } catch (e) { console.error('Stream parse error:', e, line); }
                 }
             }
             statusMini.classList.add('hidden');
@@ -372,14 +635,17 @@ async function runWorkflow() {
                 ph.classList.add('hidden');
                 c.classList.remove('hidden');
                 c.innerHTML = f.type === 'video' ? `<video src="${f.url}" controls autoplay class="max-w-full max-h-full rounded"></video>` : `<img src="${f.url}" class="max-w-full max-h-full object-contain cursor-pointer rounded" onclick="showModal('${f.url}', 'image')">`;
+                currentOutputPath = '';
                 refreshOutputs();
             } else if (data.error) alert('Error: ' + data.error);
         }
     } catch (e) {
-        alert('Connection error');
+        alert('Connection error: ' + e.message);
     } finally {
         btn.disabled = false;
         ov.classList.add('hidden');
+        const pCont = document.getElementById('overlay-progress-container');
+        if (pCont) pCont.classList.add('hidden');
         const hint = document.querySelector('[data-i18n="processing_hint"]');
         if (hint) hint.setAttribute('data-i18n', 'processing_hint');
     }
@@ -481,7 +747,7 @@ async function refreshOutputs() {
                     <span class="text-[10px] font-medium text-slate-300 truncate w-full text-center">${f.name}</span>
                 </div>`;
             } else if (f.type === 'video') {
-                content = `<video src="${f.url}" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>`;
+                content = `<video src="${f.url}#t=0.001" preload="metadata" class="w-full h-full object-cover"></video><div class="absolute inset-0 flex items-center justify-center bg-black/20"><i data-lucide="play" class="text-white w-8 h-8"></i></div>`;
             } else {
                 content = `<img src="${f.url}" class="w-full h-full object-cover">`;
             }
@@ -648,6 +914,34 @@ function showModal(url, type) {
     m.classList.remove('hidden');
 }
 
+async function cancelProcessing() {
+    if (!confirm(getTranslation('confirm_cancel') || 'Cancel current process?')) return;
+
+    try {
+        // 1. Interrupt current ComfyUI job
+        await fetch('/api/workflow/interrupt', { method: 'POST' });
+
+        // 2. Mark segmented run as cancelled
+        const runId = lastPreSegmentRunId || (Object.values(segmentedRuns)[0]?.runId);
+        if (runId) {
+            await fetch('/api/video/cancel-segmented', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ runId })
+            });
+        }
+
+        alert(getTranslation('processing_cancelled') || 'Processing cancelled.');
+    } catch (e) {
+        console.error('Cancel error:', e);
+    } finally {
+        document.getElementById('loading-overlay').classList.add('hidden');
+        document.getElementById('generate-btn').disabled = false;
+        const statusMini = document.getElementById('segment-status-mini');
+        if (statusMini) statusMini.classList.add('hidden');
+    }
+}
+
 function toggleCollapse(id) {
     const el = document.getElementById(id); const ch = document.getElementById(id.replace('container', 'chevron'));
     if (el.style.maxHeight === '0px' || el.style.display === 'none') { el.style.display = 'block'; el.style.maxHeight = '2000px'; if (ch) ch.style.transform = 'rotate(0deg)'; }
@@ -671,6 +965,7 @@ function initAdmin() {
     if (document.getElementById('save-ui-config')) document.getElementById('save-ui-config').onclick = saveUIConfig;
     if (document.getElementById('generate-btn')) document.getElementById('generate-btn').onclick = runWorkflow;
     if (document.getElementById('refresh-outputs-btn')) document.getElementById('refresh-outputs-btn').onclick = refreshOutputs;
+    if (document.getElementById('cancel-processing-btn')) document.getElementById('cancel-processing-btn').onclick = cancelProcessing;
     if (document.getElementById('mkdir-btn')) document.getElementById('mkdir-btn').onclick = createFolder;
     if (document.getElementById('move-batch-btn')) document.getElementById('move-batch-btn').onclick = moveBatch;
     if (document.getElementById('delete-batch-btn')) document.getElementById('delete-batch-btn').onclick = deleteBatch;
