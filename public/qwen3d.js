@@ -1,9 +1,12 @@
 // Registry to store refresh functions for each 3D instance
 window.qwen3DRefreshRegistry = {};
 
-window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes) {
+window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes, mediaFiles) {
     const containerEl = document.getElementById(containerId);
     if (!containerEl || !window.THREE) return;
+
+    let controlMode = 'orbit'; // 'orbit' or 'manual'
+    let lastLoadedImage = null; // Track last loaded image to avoid redundant loads
 
     const getVal = (name) => {
         const key = `node_${nodeId}_${name}`;
@@ -40,37 +43,143 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
     const initialFov = 2 * Math.atan(18 / initialFocal) * (180 / Math.PI); // 18mm is half of 35mm film width
 
     const camera = new THREE.PerspectiveCamera(initialFov, 1, 0.1, 1000);
+    const overviewCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 2000);
+    overviewCamera.position.set(40, 40, 40);
+    overviewCamera.lookAt(0, 5, 0);
+
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
     containerEl.appendChild(renderer.domElement);
 
-    const grid = new THREE.GridHelper(10, 10, 0x334155, 0x1e293b);
+    const grid = new THREE.GridHelper(40, 40, 0x334155, 0x1e293b);
     scene.add(grid);
 
-    // Subject: Plane
-    const geometry = new THREE.PlaneGeometry(2.5, 2.5);
-    const material = new THREE.MeshPhongMaterial({
+    // Create TWO planes - one for main image and one for additional texture support
+    const geometry = new THREE.PlaneGeometry(30, 30);
+    
+    // Main subject plane
+    const mainMaterial = new THREE.MeshPhongMaterial({
         color: 0xffffff,
         side: THREE.DoubleSide,
         transparent: true
     });
-    const subject = new THREE.Mesh(geometry, material);
-    subject.position.y = 1.25;
+    const subject = new THREE.Mesh(geometry, mainMaterial);
+    subject.position.y = 5;
     scene.add(subject);
+
+    // Second plane for backup/redundancy (ensures texture appears)
+    const backupMaterial = new THREE.MeshPhongMaterial({
+        color: 0x888888,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.5
+    });
+    const backupPlane = new THREE.Mesh(geometry, backupMaterial);
+    backupPlane.position.y = 5;
+    backupPlane.position.z = 0.01; // Slight offset to prevent z-fighting
+    scene.add(backupPlane);
 
     // Lights
     const light = new THREE.DirectionalLight(0xffffff, 1.2);
     light.position.set(5, 10, 7.5);
     scene.add(light);
     scene.add(new THREE.AmbientLight(0x606060));
+    
+    // Add fill light from below
+    const fillLight = new THREE.PointLight(0x4466cc, 0.3);
+    fillLight.position.set(0, -2, 0);
+    scene.add(fillLight);
 
     // Camera Marker
     const camMarker = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.3), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
-    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.2), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-    lens.rotateX(Math.PI/2); lens.position.z = 0.2;
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.2, 1.2), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 0.8), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    lens.rotateX(Math.PI/2); lens.position.z = 0.8;
     camMarker.add(body); camMarker.add(lens);
     scene.add(camMarker);
+
+    // --- SPECIALIZED HANDLES ---
+    const handleGroup = new THREE.Group();
+    scene.add(handleGroup);
+
+    // 1. Azimuth Ring (Pink)
+    const ringGeo = new THREE.TorusGeometry(3.5, 0.05, 8, 100);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xff00ff, transparent: true, opacity: 0.6 });
+    const azimuthRing = new THREE.Mesh(ringGeo, ringMat);
+    azimuthRing.rotation.x = Math.PI / 2;
+    azimuthRing.position.y = 1.25;
+    handleGroup.add(azimuthRing);
+
+    // 2. Elevation Arc (Cyan) - Will be updated dynamically
+    const arcMat = new THREE.MeshBasicMaterial({ color: 0x00ffff, transparent: true, opacity: 0.6, side: THREE.DoubleSide });
+    let elevationArc = new THREE.Mesh(new THREE.BufferGeometry(), arcMat);
+    handleGroup.add(elevationArc);
+
+    // 3. Zoom Line (Gold)
+    const zoomLineGeo = new THREE.CylinderGeometry(0.03, 0.03, 10);
+    const zoomLineMat = new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true, opacity: 0.4 });
+    const zoomLine = new THREE.Mesh(zoomLineGeo, zoomLineMat);
+    zoomLine.position.y = 1.25;
+    handleGroup.add(zoomLine);
+
+    // Drag indicators
+    const sphereGeo = new THREE.SphereGeometry(0.4, 16, 16);
+    const coneGeo = new THREE.ConeGeometry(0.4, 0.8, 16);
+    const hIndicator = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: 0xff00ff }));
+    const vIndicator = new THREE.Mesh(sphereGeo, new THREE.MeshBasicMaterial({ color: 0x00ffff }));
+    const zIndicator = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({ color: 0xffd700 }));
+    handleGroup.add(hIndicator, vIndicator, zIndicator);
+
+    function updateHandles() {
+        const h = parseFloat(getVal('horizontal_angle')) || 0;
+        const v = parseFloat(getVal('vertical_angle')) || 0;
+        const z = parseFloat(getVal('zoom')) || 5;
+        const radius = 11 - z;
+
+        const phi = (90 - v) * (Math.PI / 180);
+        const theta = (-h + 90) * (Math.PI / 180);
+
+        // Update indicators (scaled 4x)
+        const azimuthRadius = 14;
+        hIndicator.position.set(azimuthRadius * Math.cos(theta), 5, azimuthRadius * Math.sin(theta));
+
+        const currentRadius = radius * 4;
+        vIndicator.position.set(currentRadius * Math.sin(phi) * Math.cos(theta), currentRadius * Math.cos(phi) + 5, currentRadius * Math.sin(phi) * Math.sin(theta));
+
+        // Separate zoom handle: place it at the end of the line
+        zIndicator.position.copy(vIndicator.position).normalize().multiplyScalar(44); // At grid edge
+        zIndicator.position.y = 5;
+        zIndicator.lookAt(0, 5, 0);
+        zIndicator.rotateX(Math.PI/2);
+
+        // Update Elevation Arc
+        handleGroup.remove(elevationArc);
+        const arcGeo = new THREE.TorusGeometry(currentRadius, 0.08, 8, 50, (120 * Math.PI / 180));
+        elevationArc = new THREE.Mesh(arcGeo, arcMat);
+        elevationArc.position.y = 5;
+        elevationArc.rotation.y = theta;
+        elevationArc.rotation.z = Math.PI / 2 + (30 * Math.PI / 180);
+        handleGroup.add(elevationArc);
+
+        // Update Azimuth Ring
+        azimuthRing.geometry.dispose();
+        azimuthRing.geometry = new THREE.TorusGeometry(azimuthRadius, 0.2, 8, 100);
+        azimuthRing.position.y = 5;
+
+        // Update Zoom Line Orientation
+        zoomLine.lookAt(vIndicator.position.x, vIndicator.position.y, vIndicator.position.z);
+        zoomLine.rotateX(Math.PI/2);
+        zoomLine.position.set(vIndicator.position.x/2, (vIndicator.position.y + 5)/2, vIndicator.position.z/2);
+        zoomLine.scale.y = currentRadius / 5; // Updated scale
+    }
+
+    function updateCamera() {
+        if (controlMode === 'orbit') {
+            camera.position.copy(camMarker.position).multiplyScalar(1.4);
+            camera.position.y += 4; // Adjust offset for larger scale
+            camera.lookAt(0, 5, 0);
+        }
+    }
 
     function updateMarker() {
         const h = parseFloat(getVal('horizontal_angle')) || 0;
@@ -84,95 +193,277 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
 
         const phi = (90 - v) * (Math.PI / 180);
         const theta = (-h + 90) * (Math.PI / 180);
-        const radius = 11 - z;
+        const radius = (11 - z) * 4;
 
         camMarker.position.set(
             radius * Math.sin(phi) * Math.cos(theta),
-            radius * Math.cos(phi) + 1.25,
+            radius * Math.cos(phi) + 5,
             radius * Math.sin(phi) * Math.sin(theta)
         );
-        camMarker.lookAt(0, 1.25, 0);
-
-        camera.position.copy(camMarker.position).multiplyScalar(1.4);
-        camera.position.y += 1;
-        camera.lookAt(0, 1.25, 0);
+        camMarker.lookAt(0, 5, 0);
+        updateCamera();
     }
 
-    // Texture logic
+    // Texture logic - IMPROVED to find image from mediaFiles
     const textureLoader = new THREE.TextureLoader();
     let currentTexturePath = null;
 
     function findLinkedImageNode() {
+        // First try to find from workflowApi
         const api = currentWorkflow.workflowApi || (currentWorkflow.raw && currentWorkflow.raw.workflow);
         const node = api ? api[nodeId] : null;
-        if (!node || !node.inputs) return null;
-        for (const [name, val] of Object.entries(node.inputs)) {
-            if (Array.isArray(val) && (name.toLowerCase().includes('image') || name.toLowerCase().includes('pixels'))) {
-                return val[0];
+        
+        if (node && node.inputs) {
+            // Look for image input
+            for (const [name, val] of Object.entries(node.inputs)) {
+                if (Array.isArray(val) && (name.toLowerCase().includes('image') || name.toLowerCase().includes('pixels'))) {
+                    return val[0];
+                }
+            }
+            // Also check for any array input that might be an image link
+            for (const val of Object.values(node.inputs)) {
+                if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'string') {
+                    return val[0];
+                }
             }
         }
-        for (const val of Object.values(node.inputs)) {
-            if (Array.isArray(val)) return val[0];
+        
+        // Try to find from the node group in workflow structure
+        const nodeGroup = currentWorkflow.advancedInputs?.find(g => g.nodeId === nodeId);
+        if (nodeGroup && nodeGroup.inputs) {
+            for (const input of nodeGroup.inputs) {
+                if (input.valueType === 'image' || input.inputName?.toLowerCase().includes('image')) {
+                    // Return a marker that this input exists
+                    return input.key;
+                }
+            }
         }
+        
         return null;
     }
 
-    const linkedNodeId = findLinkedImageNode();
-
-    function updateTexture(force = false) {
-        if (!linkedNodeId || !window.mediaFiles) return;
-        const filename = window.mediaFiles[`media_${linkedNodeId}`] ||
-                         window.mediaFiles[`node_${linkedNodeId}_image`] ||
-                         window.mediaFiles[`node_${linkedNodeId}_file`] ||
-                         window.mediaFiles[`node_${linkedNodeId}_pixels`];
-
-        if (filename && (filename !== currentTexturePath || force)) {
-            currentTexturePath = filename;
-            const textureUrl = `/output/${filename}${filename.includes('?') ? '&' : '?'}${force ? 't=' + Date.now() : ''}`;
-            textureLoader.load(textureUrl, (txt) => {
-                subject.material.map = txt;
-                subject.material.needsUpdate = true;
-                subject.material.color.set(0xffffff);
-                if (txt.image) {
-                    const aspect = txt.image.width / txt.image.height;
-                    subject.scale.set(aspect > 1 ? 1 : aspect, aspect > 1 ? 1/aspect : 1, 1);
-                }
-            });
+    const linkedNodeInfo = findLinkedImageNode();
+    let linkedNodeId = null;
+    let linkedInputKey = null;
+    
+    // Parse the linked node info
+    if (linkedNodeInfo) {
+        if (typeof linkedNodeInfo === 'string' && linkedNodeInfo.startsWith('node_')) {
+            // Format: node_123_image
+            const parts = linkedNodeInfo.split('_');
+            if (parts.length >= 2) {
+                linkedNodeId = parts[1];
+                linkedInputKey = linkedNodeInfo;
+            }
+        } else if (typeof linkedNodeInfo === 'string' && !isNaN(parseInt(linkedNodeInfo))) {
+            linkedNodeId = linkedNodeInfo;
         }
     }
 
+    function updateTexture(force = false) {
+        let imageUrl = null;
+        
+        // Try to get image from mediaFiles using various key formats
+        if (window.mediaFiles) {
+            // Try direct media_${nodeId} pattern
+            if (linkedNodeId && window.mediaFiles[`media_${linkedNodeId}`]) {
+                imageUrl = window.mediaFiles[`media_${linkedNodeId}`];
+            }
+            // Try with the input key
+            else if (linkedInputKey && window.mediaFiles[linkedInputKey]) {
+                imageUrl = window.mediaFiles[linkedInputKey];
+            }
+            // Try with node_${nodeId}_image pattern
+            else if (linkedNodeId && window.mediaFiles[`node_${linkedNodeId}_image`]) {
+                imageUrl = window.mediaFiles[`node_${linkedNodeId}_image`];
+            }
+            // Try with node_${nodeId}_file pattern
+            else if (linkedNodeId && window.mediaFiles[`node_${linkedNodeId}_file`]) {
+                imageUrl = window.mediaFiles[`node_${linkedNodeId}_file`];
+            }
+            // Try with node_${nodeId}_pixels pattern
+            else if (linkedNodeId && window.mediaFiles[`node_${linkedNodeId}_pixels`]) {
+                imageUrl = window.mediaFiles[`node_${linkedNodeId}_pixels`];
+            }
+            // Also check if any media file has a matching node ID in its key
+            else if (linkedNodeId) {
+                for (const [key, value] of Object.entries(window.mediaFiles)) {
+                    if (key.includes(linkedNodeId) && (key.includes('image') || key.includes('file') || key.includes('media'))) {
+                        imageUrl = value;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Also check parameters for the image path (in case it was set there)
+        if (!imageUrl && linkedNodeId) {
+            const paramKey = `node_${linkedNodeId}_image`;
+            if (parameters[paramKey]) {
+                imageUrl = parameters[paramKey];
+            }
+        }
+        
+        if (imageUrl && (imageUrl !== currentTexturePath || force)) {
+            currentTexturePath = imageUrl;
+            // Construct proper URL - check if it's already a full URL or just filename
+            let textureUrl = imageUrl;
+            if (!imageUrl.startsWith('http') && !imageUrl.startsWith('/output/') && !imageUrl.startsWith('/uploads/')) {
+                textureUrl = `/output/${imageUrl}`;
+            }
+            // Add cache-buster for force reload
+            if (force) {
+                textureUrl += (textureUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+            }
+            
+            console.log('[Qwen3D] Loading texture from:', textureUrl);
+            
+            textureLoader.load(textureUrl, 
+                (txt) => {
+                    // Apply texture to main plane
+                    subject.material.map = txt;
+                    subject.material.needsUpdate = true;
+                    subject.material.color.set(0xffffff);
+                    
+                    // Also apply to backup plane for redundancy
+                    backupPlane.material.map = txt;
+                    backupPlane.material.needsUpdate = true;
+                    backupPlane.material.color.set(0xffffff);
+                    backupPlane.material.opacity = 0.8;
+                    
+                    // Adjust plane scale based on image aspect ratio
+                    if (txt.image) {
+                        const aspect = txt.image.width / txt.image.height;
+                        const targetWidth = PLANE_SIZE;
+                        const targetHeight = PLANE_SIZE;
+                        if (aspect > 1) {
+                            subject.scale.set(targetWidth, targetWidth / aspect, 1);
+                            backupPlane.scale.set(targetWidth, targetWidth / aspect, 1);
+                        } else {
+                            subject.scale.set(targetHeight * aspect, targetHeight, 1);
+                            backupPlane.scale.set(targetHeight * aspect, targetHeight, 1);
+                        }
+                    }
+                    console.log('[Qwen3D] Texture loaded successfully');
+                },
+                (progress) => {
+                    console.log('[Qwen3D] Loading progress:', progress);
+                },
+                (error) => {
+                    console.error('[Qwen3D] Failed to load texture:', textureUrl, error);
+                    // Try alternative URL pattern
+                    if (!textureUrl.includes('/uploads/')) {
+                        const altUrl = `/uploads/media/${imageUrl}`;
+                        console.log('[Qwen3D] Trying alternative URL:', altUrl);
+                        textureLoader.load(altUrl, (txt) => {
+                            subject.material.map = txt;
+                            subject.material.needsUpdate = true;
+                            backupPlane.material.map = txt;
+                            backupPlane.material.needsUpdate = true;
+                        });
+                    }
+                }
+            );
+        }
+    }
+
+    // Register refresh function
     window.qwen3DRefreshRegistry[nodeId] = () => updateTexture(true);
+    
+    // Also expose method to update from mediaFiles
+    window.qwen3DRefreshRegistry[`${nodeId}_media`] = (mediaFilesObj) => {
+        if (mediaFilesObj) window.mediaFiles = mediaFilesObj;
+        updateTexture(true);
+    };
 
     let isDragging = false;
     let prevMouse = { x: 0, y: 0 };
 
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+    let activeHandle = null;
+
     const onMouseDown = e => {
-        isDragging = true;
-        prevMouse = { x: e.clientX, y: e.clientY };
-        e.preventDefault();
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+        if (controlMode === 'manual') {
+            raycaster.setFromCamera(mouse, overviewCamera);
+            const intersects = raycaster.intersectObjects([hIndicator, vIndicator, zIndicator]);
+            if (intersects.length > 0) {
+                activeHandle = intersects[0].object;
+                isDragging = true;
+                e.preventDefault();
+                return;
+            }
+        }
+
+        if (controlMode === 'orbit') {
+            isDragging = true;
+            prevMouse = { x: e.clientX, y: e.clientY };
+            e.preventDefault();
+        }
     };
 
     const onMouseMove = e => {
         if (!isDragging) return;
-        const dx = e.clientX - prevMouse.x;
-        const dy = e.clientY - prevMouse.y;
-        let h = (parseFloat(getVal('horizontal_angle')) || 0) - dx;
-        let v = (parseFloat(getVal('vertical_angle')) || 0) + dy;
-        if (h < 0) h += 360; if (h >= 360) h -= 360;
-        v = Math.max(-89, Math.min(89, v));
-        setVal('horizontal_angle', Math.round(h));
-        setVal('vertical_angle', Math.round(v));
-        updateMarker();
-        prevMouse = { x: e.clientX, y: e.clientY };
+
+        if (controlMode === 'manual' && activeHandle) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, overviewCamera);
+            const planeNormal = new THREE.Vector3(0, 1, 0);
+            const plane = new THREE.Plane(planeNormal, -1.25);
+            const intersectPoint = new THREE.Vector3();
+
+            if (activeHandle === hIndicator) {
+                if (raycaster.ray.intersectPlane(plane, intersectPoint)) {
+                    const angle = Math.atan2(intersectPoint.z, intersectPoint.x);
+                    let h = 90 - (angle * 180 / Math.PI);
+                    setVal('horizontal_angle', Math.round(((h % 360) + 360) % 360));
+                }
+            } else if (activeHandle === vIndicator) {
+                const dy = e.clientY - prevMouse.y;
+                let v = (parseFloat(getVal('vertical_angle')) || 0) - dy; // Inverted
+                setVal('vertical_angle', Math.round(Math.max(-30, Math.min(90, v))));
+            } else if (activeHandle === zIndicator) {
+                const dy = e.clientY - prevMouse.y;
+                let z = parseFloat(getVal('zoom')) || 5;
+                z = Math.max(0, Math.min(10, z - dy * 0.1));
+                setVal('zoom', parseFloat(z.toFixed(1)));
+            }
+            updateMarker();
+            updateHandles();
+            prevMouse = { x: e.clientX, y: e.clientY };
+            return;
+        }
+
+        if (controlMode === 'orbit') {
+            const dx = e.clientX - prevMouse.x;
+            const dy = e.clientY - prevMouse.y;
+            let h = (parseFloat(getVal('horizontal_angle')) || 0) - dx;
+            let v = (parseFloat(getVal('vertical_angle')) || 0) + dy;
+            if (h < 0) h += 360; if (h >= 360) h -= 360;
+            v = Math.max(-89, Math.min(89, v));
+            setVal('horizontal_angle', Math.round(h));
+            setVal('vertical_angle', Math.round(v));
+            updateMarker();
+            updateHandles();
+            prevMouse = { x: e.clientX, y: e.clientY };
+        }
     };
 
-    const onMouseUp = () => isDragging = false;
+    const onMouseUp = () => { isDragging = false; activeHandle = null; };
 
     renderer.domElement.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
 
     renderer.domElement.addEventListener('wheel', e => {
+        if (controlMode !== 'orbit') return;
         e.preventDefault();
         let z = parseFloat(getVal('zoom')) || 5;
         z = Math.max(0, Math.min(10, z - e.deltaY * 0.01));
@@ -180,23 +471,66 @@ window.initQwenCamera3D = function(containerId, nodeId, parameters, currentWorkf
         updateMarker();
     }, { passive: false });
 
+    // Mode Toggle Logic
+    const orbitBtn = document.getElementById(`btn-${nodeId}-orbit`);
+    const manualBtn = document.getElementById(`btn-${nodeId}-manual`);
+
+    const setMode = (mode) => {
+        controlMode = mode;
+        if (mode === 'orbit') {
+            if (orbitBtn) {
+                orbitBtn.classList.add('bg-blue-600', 'text-white');
+                orbitBtn.classList.remove('bg-slate-800', 'text-slate-400');
+            }
+            if (manualBtn) {
+                manualBtn.classList.add('bg-slate-800', 'text-slate-400');
+                manualBtn.classList.remove('bg-blue-600', 'text-white');
+            }
+            handleGroup.visible = false;
+            camMarker.visible = false;
+            renderer.domElement.style.cursor = 'move';
+        } else {
+            if (manualBtn) {
+                manualBtn.classList.add('bg-blue-600', 'text-white');
+                manualBtn.classList.remove('bg-slate-800', 'text-slate-400');
+            }
+            if (orbitBtn) {
+                orbitBtn.classList.add('bg-slate-800', 'text-slate-400');
+                orbitBtn.classList.remove('bg-blue-600', 'text-white');
+            }
+            handleGroup.visible = true;
+            camMarker.visible = true;
+            updateHandles();
+            renderer.domElement.style.cursor = 'default';
+        }
+    };
+
+    if (orbitBtn) orbitBtn.onclick = () => setMode('orbit');
+    if (manualBtn) manualBtn.onclick = () => setMode('manual');
+
     function animate() {
         if (!document.getElementById(containerId)) {
             window.removeEventListener('mousemove', onMouseMove);
             window.removeEventListener('mouseup', onMouseUp);
             delete window.qwen3DRefreshRegistry[nodeId];
+            delete window.qwen3DRefreshRegistry[`${nodeId}_media`];
             renderer.dispose();
             return;
         }
         updateTexture();
         requestAnimationFrame(animate);
-        renderer.render(scene, camera);
+        renderer.render(scene, controlMode === 'orbit' ? camera : overviewCamera);
     }
+    
+    // Initial load
     updateMarker();
+    updateHandles();
+    updateTexture(true); // Force initial texture load
+    setMode('orbit'); // Initialize mode
     animate();
 };
 
-window.renderQwen3DCard = function(container, nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes, toggleBypassFn) {
+window.renderQwen3DCard = function(container, nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes, toggleBypassFn, mediaFiles) {
     const div = document.createElement('div');
     div.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
     const nodeGroup = currentWorkflow.advancedInputs.find(g => g.nodeId === nodeId);
@@ -213,12 +547,24 @@ window.renderQwen3DCard = function(container, nodeId, parameters, currentWorkflo
         <div class="flex items-center justify-between mb-2">
             <div class="flex items-center gap-2">
                 <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider">${label}</label>
-                <button onclick="window.qwen3DRefreshRegistry['${nodeId}']?.()" class="p-1 hover:bg-slate-700 rounded text-blue-400 transition-colors" title="Load/Refresh Image">
+                <button id="refresh-img-${nodeId}" class="p-1 hover:bg-slate-700 rounded text-blue-400 transition-colors" title="Load/Refresh Image">
                     <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
                 </button>
             </div>
             <button id="bypass-btn-${nodeId}" class="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button>
         </div>
+
+        <div class="flex gap-2 mb-2 ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
+            <button id="btn-${nodeId}-orbit" class="flex-1 py-1.5 px-3 rounded bg-blue-600 text-white text-[10px] font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 uppercase tracking-wider">
+                <i data-lucide="camera" class="w-3.5 h-3.5"></i>
+                <span>Camera View</span>
+            </button>
+            <button id="btn-${nodeId}-manual" class="flex-1 py-1.5 px-3 rounded bg-slate-800 text-slate-400 text-[10px] font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 uppercase tracking-wider">
+                <i data-lucide="settings-2" class="w-3.5 h-3.5"></i>
+                <span>Manual Controls</span>
+            </button>
+        </div>
+
         <div id="qwen-3d-${nodeId}" class="w-full aspect-square bg-slate-900 rounded-lg overflow-hidden border border-slate-700 cursor-move relative ${isBypassed ? 'opacity-30 pointer-events-none' : ''}">
             <div class="absolute bottom-2 left-2 text-[9px] text-slate-500 pointer-events-none bg-slate-950/40 px-2 py-1 rounded tracking-wider uppercase">DRAG TO ROTATE • SCROLL TO ZOOM</div>
         </div>
@@ -252,16 +598,27 @@ window.renderQwen3DCard = function(container, nodeId, parameters, currentWorkflo
     const zIn = div.querySelector(`#input-${nodeId}-z`);
     const fIn = div.querySelector(`#input-${nodeId}-f`);
     const bpBtn = div.querySelector(`#bypass-btn-${nodeId}`);
+    const refreshBtn = div.querySelector(`#refresh-img-${nodeId}`);
 
     hIn.onchange = (e) => window.updateQwenFromInput(nodeId, 'horizontal_angle', e.target.value, parameters);
     vIn.onchange = (e) => window.updateQwenFromInput(nodeId, 'vertical_angle', e.target.value, parameters);
     zIn.onchange = (e) => window.updateQwenFromInput(nodeId, 'zoom', e.target.value, parameters);
     fIn.onchange = (e) => window.updateQwenFromInput(nodeId, 'focal_length', e.target.value, parameters);
     bpBtn.onclick = () => toggleBypassFn(nodeId);
+    
+    // Refresh button forces texture reload
+    refreshBtn.onclick = () => {
+        if (window.qwen3DRefreshRegistry[nodeId]) {
+            window.qwen3DRefreshRegistry[nodeId]();
+        }
+        if (window.qwen3DRefreshRegistry[`${nodeId}_media`] && window.mediaFiles) {
+            window.qwen3DRefreshRegistry[`${nodeId}_media`](window.mediaFiles);
+        }
+    };
 
     if (window.lucide) window.lucide.createIcons();
 
-    setTimeout(() => window.initQwenCamera3D(`qwen-3d-${nodeId}`, nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes), 50);
+    setTimeout(() => window.initQwenCamera3D(`qwen-3d-${nodeId}`, nodeId, parameters, currentWorkflow, uiConfig, bypassedNodes, window.mediaFiles), 50);
 };
 
 window.updateQwenFromInput = function(nodeId, name, val, parameters) {
@@ -269,6 +626,6 @@ window.updateQwenFromInput = function(nodeId, name, val, parameters) {
     parameters[key] = val;
     // Trigger update in THREE.js if instance exists
     if (window.qwen3DRefreshRegistry[nodeId]) {
-        // We don't need a full force refresh here, updateMarker will be called in animate loop
+        // updateMarker will be called in animate loop
     }
 };
