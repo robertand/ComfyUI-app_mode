@@ -139,7 +139,7 @@ function refreshUI() {
     const overlapInput = document.getElementById('segment-overlap');
     if (overlapInput) overlapInput.onchange = (e) => uiConfig.advancedConfig.overlapFrames = parseInt(e.target.value);
     const offsetInput = document.getElementById('manual-frame-offset');
-    if (offsetInput) offsetInput.onchange = (e) => uiConfig.advancedConfig.manualFrameOffset = parseInt(e.target.value);
+    if (offsetInput) offsetInput.oninput = (e) => syncManualOffset(e.target.value, 'sidebar');
 
     translatePage(localStorage.getItem('preferredLanguage') || 'en');
 }
@@ -183,8 +183,27 @@ function renderParametersConfig() {
         div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" data-key="${param.key}" data-type="param" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleParams['${param.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${param.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${param.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${param.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${param.nodeId}', 'params')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[param.key] || param.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${param.key}'] = this.value; renderLiveUI();">`;
         container.appendChild(div);
     });
+
     initIcons();
 }
+
+function syncManualOffset(val, source) {
+    const value = parseInt(val);
+    uiConfig.advancedConfig.manualFrameOffset = value;
+
+    // Update sidebar slider if it exists
+    const sidebarSlider = document.getElementById('manual-frame-offset');
+    const sidebarVal = document.getElementById('frame-offset-val');
+    if (sidebarSlider) sidebarSlider.value = value;
+    if (sidebarVal) sidebarVal.textContent = value;
+
+    // Update live slider if it exists
+    const liveSlider = document.getElementById('live-manual-frame-offset');
+    const liveVal = document.getElementById('live-frame-offset-val');
+    if (liveSlider) liveSlider.value = value;
+    if (liveVal) liveVal.textContent = value;
+}
+window.syncManualOffset = syncManualOffset;
 
 function renderMediaConfig() {
     const container = document.getElementById('media-config-container');
@@ -204,6 +223,31 @@ function renderMediaConfig() {
         div.innerHTML = `<div class="flex items-center justify-between"><div class="flex items-center gap-2 min-w-0"><input type="checkbox" class="param-visibility-check w-3.5 h-3.5 rounded bg-slate-800 border-slate-700 text-blue-600" data-key="${input.key}" data-type="media" ${isVisible ? 'checked' : ''} onchange="uiConfig.visibleInputs['${input.key}'] = this.checked; renderLiveUI();"><span class="text-[10px] font-bold text-slate-400 truncate">${input.title} <span class="text-slate-600 font-normal">(${techInfo})</span></span></div><div class="flex items-center gap-1 shrink-0"><button onclick="moveNode('${input.key}', -1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-up" class="w-3 h-3"></i></button><button onclick="moveNode('${input.key}', 1)" class="p-0.5 hover:bg-slate-700 rounded"><i data-lucide="chevron-down" class="w-3 h-3"></i></button><button onclick="toggleBypass('${input.nodeId}', 'media')" class="text-[8px] font-bold px-1 py-0.5 rounded border border-slate-700 ${isBypassed ? 'bg-red-900/50 text-red-400 border-red-500/50' : 'text-slate-500'}">BYPASS</button></div></div><input type="text" value="${uiConfig.inputNames?.[input.key] || input.title}" class="w-full bg-slate-900/50 border border-slate-700 rounded px-2 py-1 text-[10px] outline-none" onchange="uiConfig.inputNames['${input.key}'] = this.value; renderLiveUI();">`;
         container.appendChild(div);
     });
+
+    // Add Manual Frame Offset slider to the main UI if segmented is active
+    if (uiConfig.advancedConfig?.segmented) {
+        const offsetDiv = document.createElement('div');
+        offsetDiv.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
+        const currentOffset = uiConfig.advancedConfig.manualFrameOffset || 0;
+        offsetDiv.innerHTML = `
+            <div class="flex items-center justify-between mb-2">
+                <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider" data-i18n="manual_frame_offset">Manual Frame Offset</label>
+                <span id="live-frame-offset-val" class="text-xs font-bold text-blue-400">${currentOffset}</span>
+            </div>
+            <div class="space-y-4">
+                <input type="range" id="live-manual-frame-offset" min="-48" max="48" step="1" value="${currentOffset}"
+                    class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    oninput="syncManualOffset(this.value, 'live')">
+                <div class="flex justify-between text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                    <span>-48 frames</span>
+                    <span>0</span>
+                    <span>+48 frames</span>
+                </div>
+            </div>
+        `;
+        container.appendChild(offsetDiv);
+    }
+
     initIcons();
 }
 
@@ -363,6 +407,31 @@ function renderLiveUI() {
         }
         container.appendChild(div);
     });
+
+    // Add Manual Frame Offset slider to the main UI if segmented is active
+    if (uiConfig.advancedConfig?.segmented) {
+        const offsetDiv = document.createElement('div');
+        offsetDiv.className = 'slate-card p-6 rounded-xl space-y-4 shadow-lg';
+        const currentOffset = uiConfig.advancedConfig.manualFrameOffset || 0;
+        offsetDiv.innerHTML = `
+            <div class="flex items-center justify-between mb-2">
+                <label class="block text-sm font-bold text-slate-300 uppercase tracking-wider" data-i18n="manual_frame_offset">Manual Frame Offset</label>
+                <span id="live-frame-offset-val" class="text-xs font-bold text-blue-400">${currentOffset}</span>
+            </div>
+            <div class="space-y-4">
+                <input type="range" id="live-manual-frame-offset" min="-48" max="48" step="1" value="${currentOffset}"
+                    class="w-full h-2 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                    oninput="syncManualOffset(this.value, 'live')">
+                <div class="flex justify-between text-[10px] text-slate-500 font-bold uppercase tracking-widest">
+                    <span>-48 frames</span>
+                    <span>0</span>
+                    <span>+48 frames</span>
+                </div>
+            </div>
+        `;
+        container.appendChild(offsetDiv);
+    }
+
     initIcons();
 }
 

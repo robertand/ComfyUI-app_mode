@@ -73,7 +73,8 @@ const translations = {
         step: "Step",
         cancel_processing: "Cancel Processing",
         processing_cancelled: "Processing cancelled.",
-        confirm_cancel: "Cancel current process?"
+        confirm_cancel: "Cancel current process?",
+        manual_frame_offset: "Manual Frame Offset"
     },
     hr: {
         app_title: "ComfyUI Remote Generator",
@@ -139,7 +140,8 @@ const translations = {
         root: "Korijen",
         move: "Premjesti",
         move_selected: "Premjesti odabrano",
-        move_to: "Premjesti u (putanja mape):"
+        move_to: "Premjesti u (putanja mape):",
+        manual_frame_offset: "Ručni pomak okvira"
     },
     sl: {
         app_title: "ComfyUI Remote Generator",
@@ -205,7 +207,8 @@ const translations = {
         root: "Koren",
         move: "Premakni",
         move_selected: "Premakni izbrano",
-        move_to: "Premakni v (pot mape):"
+        move_to: "Premakni v (pot mape):",
+        manual_frame_offset: "Ročni odmik sličic"
     },
     sk: {
         app_title: "ComfyUI Remote Generator",
@@ -271,7 +274,8 @@ const translations = {
         root: "Koreň",
         move: "Presunúť",
         move_selected: "Presunúť vybrané",
-        move_to: "Presunúť do (cesta k priečinku):"
+        move_to: "Presunúť do (cesta k priečinku):",
+        manual_frame_offset: "Ručný posun snímok"
     },
     ro: {
         app_title: "ComfyUI Remote Generator",
@@ -347,7 +351,8 @@ const translations = {
         step: "Pas",
         cancel_processing: "Anulează Procesarea",
         processing_cancelled: "Procesarea a fost anulată.",
-        confirm_cancel: "Anulezi procesul curent?"
+        confirm_cancel: "Anulezi procesul curent?",
+        manual_frame_offset: "Offset Frame-uri Manual"
     }
 };
 
