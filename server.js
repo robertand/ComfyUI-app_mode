@@ -122,12 +122,23 @@ function applyBypass(workflow, bypassedNodes) {
         if (node.class_type?.includes('Save') || node.class_type?.includes('Preview') || node.class_type?.includes('Combine')) {
             delete workflow[nodeId]; return;
         }
-        let sourceLink = node.inputs ? Object.values(node.inputs).find(v => Array.isArray(v)) : null;
+        let sourceLink = null;
+        if (node.inputs) {
+            // Find the most likely main input link (usually the first one or one with common name)
+            const links = Object.entries(node.inputs).filter(([_, v]) => Array.isArray(v));
+            if (links.length > 0) {
+                const mainLink = links.find(([k, _]) => k.includes('image') || k.includes('latent') || k.includes('model') || k.includes('vae') || k.includes('clip')) || links[0];
+                sourceLink = mainLink[1];
+            }
+        }
+
         Object.values(workflow).forEach(other => {
             if (!other.inputs) return;
             Object.entries(other.inputs).forEach(([k, v]) => {
                 if (Array.isArray(v) && String(v[0]) === String(nodeId)) {
-                    if (sourceLink) other.inputs[k] = sourceLink; else delete other.inputs[k];
+                    // Try to match input/output types if we have source link
+                    if (sourceLink) other.inputs[k] = sourceLink;
+                    else delete other.inputs[k];
                 }
             });
         });
@@ -140,25 +151,14 @@ function validateWorkflowParameters(workflow) {
     const warnings = [];
     Object.entries(workflow).forEach(([nodeId, node]) => {
         if (!node.inputs) return;
-        const isVideoNode = node.class_type && (node.class_type.includes('LTX') || node.class_type.includes('Video') || node.class_type.includes('VHS_VideoCombine') || node.class_type === 'SaveVideo' || node.class_type.includes('Sampler'));
         
-        const check = (key, def, min, max, isInt = false) => {
-            if (node.inputs[key] === undefined || Array.isArray(node.inputs[key])) return;
-            let val = isInt ? parseInt(node.inputs[key]) : parseFloat(node.inputs[key]);
-            if (isNaN(val) || (min !== undefined && val < min) || (max !== undefined && val > max)) {
-                node.inputs[key] = def;
-                warnings.push(`[${node.class_type}] ${key} invalid: ${val} -> ${def}`);
-            }
-        };
-
-        if (isVideoNode) {
-            check('length', 25, 1, 300); check('num_frames', 25, 1, 300);
-            check('frame_rate', 24, 0.1, 120); check('width', 768, 64, 2048, true); check('height', 512, 64, 2048, true);
-        }
-        check('batch_size', 1, 1, 16, true); check('steps', 20, 1, 100, true);
-        check('cfg', 7.0, 0, 100); check('denoise', 1.0, 0, 1.0);
+        // Ensure seeds are valid if present
         if (node.inputs.seed !== undefined && !Array.isArray(node.inputs.seed)) {
-            if (isNaN(parseInt(node.inputs.seed)) || node.inputs.seed < 0) node.inputs.seed = generateRandomSeed();
+            const seedVal = parseInt(node.inputs.seed);
+            if (isNaN(seedVal) || seedVal < 0) {
+                node.inputs.seed = generateRandomSeed();
+                warnings.push(`[Node ${nodeId}] Reset invalid seed to ${node.inputs.seed}`);
+            }
         }
     });
     return { workflow, warnings };
@@ -199,14 +199,14 @@ function analyzeWorkflow(workflowJson) {
                     const nodeTypeLower = nodeType.toLowerCase();
                     const inputNameLower = inputName.toLowerCase();
 
-                    const isPixaromaWidget = (nodeTypeLower.includes('pixaroma') || nodeTypeLower.includes('pxf')) &&
+                    const isPixaromaWidget = (nodeTypeLower.includes('pixaroma') || nodeTypeLower.includes('pxf') || nodeTypeLower.includes('composition')) &&
                         (inputNameLower.includes('widget') || inputNameLower.includes('scene') || inputNameLower.includes('paint') ||
                          inputNameLower.includes('compare') || inputNameLower.includes('builder') || inputNameLower.includes('studio') ||
                          inputNameLower.includes('composer') || inputNameLower.includes('canvas') || inputNameLower.includes('editor') ||
                          inputNameLower.includes('project') || inputNameLower.includes('config') || inputNameLower.includes('data') ||
-                         inputNameLower === 'scene' || inputNameLower === 'paint');
+                         inputNameLower === 'scene' || inputNameLower === 'paint' || inputNameLower === 'images');
 
-                    if (!isPixaromaWidget && inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
+                    if (inputValue && typeof inputValue === 'object' && (inputValue[0] || inputValue.hasOwnProperty('0'))) return;
                     if (!isPixaromaWidget && (inputName === 'image' || inputName === 'video' || inputName.toLowerCase().includes('file') || inputName === 'filename')) return;
                     if ((nodeTypeLower.includes('pixaroma') || nodeTypeLower.includes('pxf')) && (inputNameLower.startsWith('open') || inputNameLower.includes('builder') || inputNameLower.includes('studio'))) return;
                     
@@ -268,12 +268,17 @@ async function proxyToComfy(req, res) {
         delete fetchOptions.headers.host;
         fetchOptions.headers['origin'] = parsedTarget.origin;
         fetchOptions.headers['referer'] = parsedTarget.origin + '/';
+        fetchOptions.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
         if (['POST', 'PUT', 'PATCH'].includes(req.method)) {
             fetchOptions.body = (req.headers['content-type']?.includes('application/json') && req.body && Object.keys(req.body).length > 0) ? JSON.stringify(req.body) : req;
         }
 
         let response = await fetch(`${targetInstance}${targetPath}`, fetchOptions);
+
+        if (response.status === 403) {
+            console.warn(`[Proxy] 403 Forbidden from ComfyUI for ${targetPath}. Check ComfyUI security settings.`);
+        }
 
         // Cache success responses for Pixaroma assets locally if they are missing
         if (response.ok && (targetPath.toLowerCase().includes('pixaroma') || targetPath.toLowerCase().includes('pxf'))) {
@@ -448,10 +453,17 @@ async function runWorkflowLogic(req, res, isPublic = false) {
         for (const [pk, v] of Object.entries(finalParams)) {
             if (shouldGenerateRandomSeed(pk, v, auto)) finalParams[pk] = generateRandomSeed();
             analysis.advancedInputs.forEach(g => g.inputs?.forEach(p => {
-                if (p.key === pk && workflow[p.nodeId]) {
+                if (p.key === pk && workflow[p.nodeId] && workflow[p.nodeId].inputs) {
                     if ((p.nodeType?.toLowerCase().includes('pixaroma') || p.nodeType?.toLowerCase().includes('pxf')) && p.inputName?.startsWith('Open')) return;
+                    // Double check we are not overwriting a link
+                    const existingInput = workflow[p.nodeId].inputs[p.inputName];
+                    if (existingInput && typeof existingInput === 'object' && (existingInput[0] || existingInput.hasOwnProperty('0'))) return;
+
                     let fv = finalParams[pk];
-                    if (p.valueType === 'number') fv = parseFloat(fv);
+                    if (p.valueType === 'number') {
+                        fv = parseFloat(fv);
+                        if (isNaN(fv)) fv = p.defaultValue || 0;
+                    }
                     else if (p.valueType === 'boolean') fv = (fv === 'true' || fv === true);
                     else if (p.valueType === 'pixaroma_editor') { if (typeof fv === 'string' && (fv.startsWith('{') || fv.startsWith('['))) { try { fv = JSON.parse(fv); } catch(e) {} } }
                     workflow[p.nodeId].inputs[p.inputName] = fv;
@@ -516,19 +528,47 @@ publicApp.post('/api/workflow/run', (req, res) => runWorkflowLogic(req, res, tru
 
 adminApp.post('/api/extensions/sync', async (req, res) => {
     try {
-        const extDir = path.join(__dirname, 'extensions', 'ComfyUI-Pixaroma');
-        if (!fs.existsSync(extDir)) fs.mkdirSync(extDir, { recursive: true });
+        const target = await getFreestInstance();
+        const baseExtDir = path.join(__dirname, 'extensions', 'ComfyUI-Pixaroma');
+        if (!fs.existsSync(baseExtDir)) fs.mkdirSync(baseExtDir, { recursive: true });
 
-        const files = [
-            { folder: '3d', name: 'index.js' }, { folder: 'paint', name: 'index.js' },
-            { folder: 'composer', name: 'index.js' }, { folder: 'crop', name: 'index.js' },
-            { folder: 'compare', name: 'index.js' }
-        ];
+        const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'comfyui-pixaroma'];
+        const folders = ['3d', 'paint', 'composer', 'crop', 'compare', 'studio', 'composition'];
+        let count = 0;
 
-        // This is a simplified downloader. In a real scenario, we'd clone the repo.
-        // For now, we'll proxy and save to cache if they don't exist locally.
-        res.json({ success: true, message: 'Extensions ready' });
-    } catch (e) { res.status(500).json({ error: e.message }); }
+        for (const f of folders) {
+            const subDir = path.join(baseExtDir, 'js', f);
+            if (!fs.existsSync(subDir)) fs.mkdirSync(subDir, { recursive: true });
+
+            let found = false;
+            for (const v of variants) {
+                if (found) break;
+                const paths = [
+                    `/extensions/${v}/js/${f}/index.js`,
+                    `/extensions/${v}/${f}/index.js`,
+                    `/pixaroma/assets/${f}/index.js`
+                ];
+
+                for (const p of paths) {
+                    try {
+                        const response = await fetch(`${target}${p}`, { timeout: 5000 });
+                        if (response.ok) {
+                            const buffer = await response.buffer();
+                            fs.writeFileSync(path.join(subDir, 'index.js'), buffer);
+                            console.log(`[Sync] Downloaded ${f}/index.js from ${p}`);
+                            count++;
+                            found = true;
+                            break;
+                        }
+                    } catch (e) {}
+                }
+            }
+        }
+        res.json({ success: true, message: `Synced ${count} folders successfully.` });
+    } catch (e) {
+        console.error('[Sync] Error:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 adminApp.get('/api/config', (req, res) => res.json({ adminPort: ADMIN_PORT, publicPort: PUBLIC_PORT, comfyuiUrls: COMFYUI_URLS }));

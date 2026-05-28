@@ -96,10 +96,22 @@ window.LiteGraph = window.LiteGraph || {
 let activeEditorCallback = null;
 
 function applyDataToEditor(instance, data) {
-    if (!instance || !data || Object.keys(data).length === 0) {
-        if (loading.style.display !== 'none') loading.style.display = 'none';
+    if (!instance) return;
+
+    // Reliability: Always hide loading after a short delay if we have an instance
+    setTimeout(() => {
+        if (loading.style.display !== 'none') {
+            console.log("[Shim] Hiding overlay via safety timeout");
+            loading.style.display = 'none';
+            if (window._pxf_load_timer) clearTimeout(window._pxf_load_timer);
+        }
+    }, 1500);
+
+    if (!data || Object.keys(data).length === 0) {
+        loading.style.display = 'none';
         return;
     }
+
     try {
         if (instance.scene && instance.scene.traverse) {
             const toRemove = [];
@@ -171,6 +183,12 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
     if (!ext) throw new Error(`Extension ${extName} not found`);
 
     const editorClassName = getEditorClass(nodeType);
+
+    // Safety check: ensure we try to load the extension if it's missing or corrupted
+    if (!window._pixaroma_classes[editorClassName]) {
+        try { await loadPixaromaExtension(nodeType); } catch(e) { console.error("[Shim] Extension recovery failed:", e); }
+    }
+
     const OriginalClass = window._pixaroma_classes[editorClassName];
 
     let parsedData = initialData;
@@ -189,6 +207,7 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
             const openData = (latestData && Object.keys(latestData).length > 0) ? latestData : (data || sessionData);
 
             console.log(`[Shim] ${editorClassName}.open() called for Node ${targetId}`);
+            if (loading.style.display === 'none') loading.style.display = 'flex';
             this._nodeId = targetId;
 
             applyDataToEditor(this, openData);
@@ -234,7 +253,8 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
         serialize: function() { return { widgets_values: this.widgets.map(w => w.value) }; },
         addWidget: function(type, name, value, callback, options) {
             const data = window._pixaroma_node_data.get(this.id);
-            const isTarget = name.toLowerCase().includes('widget') || name.toLowerCase().includes('scene') || name.toLowerCase().includes('paint') || name.toLowerCase().includes('compare');
+            const lowName = name.toLowerCase();
+            const isTarget = lowName.includes('widget') || lowName.includes('scene') || lowName.includes('paint') || lowName.includes('compare') || lowName.includes('images') || lowName.includes('composition') || lowName.includes('canvas');
             const finalValue = isTarget ? (data || value) : value;
             const w = { type, name, value: finalValue || '', callback, options };
             this.widgets.push(w);
@@ -242,7 +262,8 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
         },
         addDOMWidget: function(name, type, element, options) {
             const data = window._pixaroma_node_data.get(this.id);
-            const isTarget = name.toLowerCase().includes('widget') || name.toLowerCase().includes('scene') || name.toLowerCase().includes('paint') || name.toLowerCase().includes('compare');
+            const lowName = name.toLowerCase();
+            const isTarget = lowName.includes('widget') || lowName.includes('scene') || lowName.includes('paint') || lowName.includes('compare') || lowName.includes('images') || lowName.includes('composition') || lowName.includes('canvas');
             const finalValue = isTarget ? (data || initialData) : initialData;
             const w = { name, type, element, options, value: finalValue };
             this.widgets.push(w);
@@ -258,7 +279,8 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
     // Sync widgets
     mockNode.widgets.forEach(w => {
         const data = window._pixaroma_node_data.get(sid);
-        const isTarget = w.name.toLowerCase().includes('widget') || w.name.toLowerCase().includes('scene') || w.name.toLowerCase().includes('paint') || w.name.toLowerCase().includes('composer') || w.name.toLowerCase().includes('compare');
+        const lowName = w.name.toLowerCase();
+        const isTarget = lowName.includes('widget') || lowName.includes('scene') || lowName.includes('paint') || lowName.includes('composer') || lowName.includes('compare') || lowName.includes('images') || lowName.includes('composition') || lowName.includes('canvas');
         if (isTarget && data) {
             w.value = data;
             if (typeof w.callback === 'function') w.callback.call(mockNode, data, mockNode);
@@ -268,7 +290,9 @@ export async function openPixaromaEditor(nodeType, nodeId, initialData, onSave) 
     const openButton = mockNode.widgets.find(w => w.type === 'button' &&
         (w.name.toLowerCase().includes('open') || w.name.toLowerCase().includes('editor') ||
          w.name.toLowerCase().includes('builder') || w.name.toLowerCase().includes('studio') ||
-         w.name.toLowerCase().includes('composer') || w.name.toLowerCase().includes('compare')));
+         w.name.toLowerCase().includes('composer') || w.name.toLowerCase().includes('compare') ||
+         w.name.toLowerCase().includes('canvas') || w.name.toLowerCase().includes('edit') ||
+         w.name.toLowerCase().includes('launch')));
     if (openButton && typeof openButton.callback === 'function') {
         const OriginalClass = window._pixaroma_classes[editorClassName];
         if (OriginalClass) {
@@ -319,7 +343,11 @@ async function loadPixaromaExtension(nodeType) {
     const variants = ['ComfyUI-Pixaroma', 'ComfyUI_Pixaroma', 'pixaroma', 'Pixaroma', 'comfyui-pixaroma'];
     const editorClassName = getEditorClass(nodeType);
     const sub = nodeType.replace('Pixaroma', '').toLowerCase();
-    const folderMap = { '3d': '3d', 'paint': 'paint', 'imagecomposition': 'composer', 'crop': 'crop', 'imagecompare': 'compare', '3dbuilder': '3d' };
+    const folderMap = {
+        '3d': '3d', 'paint': 'paint', 'paintstudio': 'paint', 'imagecomposition': 'composer',
+        'imagecomposer': 'composer', 'crop': 'crop', 'imagecompare': 'compare',
+        'compare': 'compare', '3dbuilder': '3d', 'composition': 'composer', 'studio': 'paint'
+    };
     const subFolder = folderMap[sub] || sub;
 
     for (const v of variants) {
@@ -333,8 +361,17 @@ async function loadPixaromaExtension(nodeType) {
         ];
         for (const p of paths) {
             try {
-                const module = await import(p);
-                let exportedClass = module[editorClassName] || module['PaintEditor'] || module['ComposerEditor'] || module['CompareEditor'] || module['PixaromaPaintStudio'] || module['Pixaroma3DBuilder'] || module['PaintStudio'] || module['ComposerStudio'];
+                console.log(`[Shim] Attempting import: ${p}`);
+                const module = await Promise.race([
+                    import(p),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+                ]);
+
+                let exportedClass = module[editorClassName] || module['PaintEditor'] || module['ComposerEditor'] || module['CompareEditor'] || module['PixaromaPaintStudio'] || module['Pixaroma3DBuilder'] || module['PaintStudio'] || module['ComposerStudio'] || module.default;
+
+                if (!exportedClass && module.default) {
+                    exportedClass = module.default[editorClassName] || module.default;
+                }
 
                 if (!exportedClass) {
                     for (const key of Object.keys(module)) {
