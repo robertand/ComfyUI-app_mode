@@ -315,7 +315,7 @@ apps.forEach(app => {
 // ============ ROUTES ============
 
 adminApp.use(express.static('public')); adminApp.use('/output', express.static('output')); adminApp.use('/uploads', express.static('uploads'));
-publicApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'public.html')));
+publicApp.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 publicApp.use(express.static('public')); publicApp.use('/output', express.static('output')); publicApp.use('/uploads', express.static('uploads'));
 
 function reconcileUIConfig(analysis, existingConfig) {
