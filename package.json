@@ -7,10 +7,13 @@
     "dev": "node server.js"
   },
   "dependencies": {
-    "express": "^4.22.1",
+    "express": "^4.22.2",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0",
+    "fluent-ffmpeg": "^2.1.3",
     "form-data": "^4.0.5",
     "multer": "^1.4.5-lts.1",
     "node-fetch": "^2.7.0",
-    "ws": "^8.20.0"
+    "ws": "^8.21.0"
   }
 }
